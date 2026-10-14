@@ -117,6 +117,51 @@ def get_os_icon(oslist: Optional[str]) -> Optional[QIcon]:
     return icon
 
 
+def extract_arch_code(depot_data: dict, desc: str = "") -> Optional[str]:
+    """Detects architecture tag ('x64' or 'x86') from metadata or description."""
+    if not isinstance(depot_data, dict):
+        depot_data = {}
+
+    # 1. Direct metadata field (from PICS config.osarch or direct osarch)
+    arch = str(
+        depot_data.get("osarch")
+        or (depot_data.get("config", {}).get("osarch") if isinstance(depot_data.get("config"), dict) else None)
+        or ""
+    ).strip().lower()
+
+    if arch in ("64", "x64", "amd64", "x86_64", "win64", "linux64"):
+        return "x64"
+    if arch in ("32", "86", "x86", "win32", "i386", "i686"):
+        return "x86"
+
+    # 2. Check description and name
+    text = f"{desc} {depot_data.get('desc', '')} {depot_data.get('name', '')}".lower()
+    if any(k in text for k in ("64-bit", "64 bit", "x64", "win64", "[64]", "[x64]")):
+        return "x64"
+    if any(k in text for k in ("32-bit", "32 bit", "x86", "win32", "[32]", "[x86]")):
+        return "x86"
+
+    return None
+
+
+def get_os_tag(oslist: Optional[str]) -> str:
+    """Returns standardized [WINDOWS], [LINUX], [MACOS] or empty string."""
+    if not oslist:
+        return ""
+    os_str = str(oslist).strip().lower()
+    if "windows" in os_str or "win" in os_str:
+        return "[WINDOWS]"
+    if "linux" in os_str:
+        return "[LINUX]"
+    if "macos" in os_str or "macosx" in os_str or "apple" in os_str:
+        return "[MACOS]"
+    if "android" in os_str:
+        return "[ANDROID]"
+    if "all" in os_str or "shared" in os_str:
+        return ""
+    return f"[{oslist.upper()}]"
+
+
 def get_os_display_name(oslist: Optional[str]) -> str:
     """Returns platform name if no logo is available."""
     if not oslist:
@@ -131,51 +176,66 @@ def format_depot_row_label(
     depot_id: str,
     depot_data: dict,
     base_desc: str,
-    has_os_icon: bool = True,
+    has_os_icon: bool = False,
+    show_os_badge: bool = True,
 ) -> str:
     """
-    Builds clean, compact depot description string:
-    - Replaces '[DLC <id>]' with '[DLC]'
-    - Inserts language badge '[AR]', '[BR]', etc. right upfront next to [DLC]
-    - Omits OS tag if has_os_icon is True (unless OS has no icon)
+    Builds clean, structured depot description string with tags:
+    Tag order: [OS] [ARCH] [LANG] [DLC]  Depot Name
+    e.g. [WINDOWS] [x64] [EN] [DLC]  Metro 2033 Redux Content
     """
     if not isinstance(depot_data, dict):
         depot_data = {}
 
+    dlc_appid = depot_data.get("dlcappid")
     is_dlc = (
         depot_data.get("is_dlc", False)
-        or bool(depot_data.get("dlcappid"))
+        or bool(dlc_appid)
         or "[dlc" in base_desc.lower()
         or bool(re.search(r"\bDLC\s+\d+", base_desc, re.IGNORECASE))
     )
 
     clean_desc = base_desc
-    # Strip existing [Windows], [Linux], [DLC ...], [lang] tags from base_desc
+    # Strip existing platform, arch, dlc, and language tags from clean_desc
     clean_desc = re.sub(
         r"\[(?:Windows|Linux|macOS|All)(?:,\s*(?:Windows|Linux|macOS))*\]\s*",
         "",
         clean_desc,
         flags=re.IGNORECASE,
     )
+    clean_desc = re.sub(r"\[(?:x64|x86|64-bit|32-bit|64|32)\]\s*", "", clean_desc, flags=re.IGNORECASE)
     clean_desc = re.sub(r"\[DLC(?:\s+\d+)?\]\s*", "", clean_desc, flags=re.IGNORECASE)
     clean_desc = re.sub(r"^DLC\s+\d+\s*[-–:]?\s*", "", clean_desc, flags=re.IGNORECASE)
 
     tags = []
-    if not has_os_icon:
+
+    # 1. [OS] badge
+    if show_os_badge:
+        os_tag = get_os_tag(depot_data.get("oslist"))
+        if os_tag:
+            tags.append(os_tag)
+    elif not has_os_icon:
         os_name = get_os_display_name(depot_data.get("oslist"))
         if os_name:
             tags.append(os_name)
 
-    if is_dlc:
-        tags.append("[DLC]")
+    # 2. [ARCH] badge
+    arch_code = extract_arch_code(depot_data, base_desc)
+    if arch_code:
+        tags.append(f"[{arch_code}]")
 
+    # 3. [LANG] badge
     lang_code = extract_language_code(depot_data, clean_desc)
     if lang_code:
-        # Strip redundant [lang] tag from clean_desc if already extracted
         clean_desc = re.sub(
             r"\[" + re.escape(lang_code) + r"\]\s*", "", clean_desc, flags=re.IGNORECASE
         )
         tags.append(f"[{lang_code}]")
+
+    # 4. [DLC] badge
+    if is_dlc:
+        dlc_tag = f"[DLC {dlc_appid}]" if dlc_appid and str(dlc_appid).isdigit() else "[DLC]"
+        tags.append(dlc_tag)
 
     tag_str = " ".join(tags)
     clean_desc = clean_desc.strip()

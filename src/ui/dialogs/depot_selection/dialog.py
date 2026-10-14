@@ -835,6 +835,7 @@ class DepotSelectionDialog(QDialog):
             d_data,
             final_desc,
             has_os_icon=bool(os_icon),
+            show_os_badge=True,
         )
         return cfg_text
 
@@ -1705,6 +1706,8 @@ class DepotSelectionDialog(QDialog):
                             d_data["size_str"] = info["size_str"]
                         if info.get("oslist") and not d_data.get("oslist"):
                             d_data["oslist"] = info["oslist"]
+                        if info.get("osarch") and not d_data.get("osarch"):
+                            d_data["osarch"] = info["osarch"]
                         if info.get("is_dlc") or d_data.get("dlcappid"):
                             d_data["is_dlc"] = True
         finally:
@@ -1809,17 +1812,16 @@ class DepotSelectionDialog(QDialog):
                     if not clean_curr or re.match(r"^(?:Depot|DLC)\s+\d+$", clean_curr, re.IGNORECASE):
                         name = info.get("name", "")
                         if name:
-                            d_data = self.depots.get(depot_id, {})
-                            dlc_id = info.get("dlcappid") or d_data.get("dlcappid")
-                            is_dlc = info.get("is_dlc") or bool(dlc_id)
-                            os_val = info.get("oslist") or d_data.get("oslist")
-                            os_prefix = f"[{os_val.upper()}]" if os_val else ""
-                            dlc_tag = f"[DLC {dlc_id}]" if dlc_id else "[DLC]"
-                            if is_dlc:
-                                tags = f"{os_prefix} {dlc_tag}".strip()
-                            else:
-                                tags = os_prefix
-                            new_text = f"{tags}  {name}".strip() if tags else name
+                            d_data = dict(self.depots.get(depot_id, {}))
+                            d_data.update(info)
+                            from utils.depot_tag_helpers import format_depot_row_label
+                            new_text = format_depot_row_label(
+                                str(depot_id),
+                                d_data,
+                                name,
+                                has_os_icon=True,
+                                show_os_badge=True,
+                            )
                             if config_item:
                                 config_item.setText(new_text)
 

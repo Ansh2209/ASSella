@@ -89,6 +89,10 @@ def _format_enriched_depot_desc(depot_id: str, fallback_desc: str, enrich_data: 
     elif "all" in oslist:
         os_tag = "[All]"
 
+    from utils.depot_tag_helpers import extract_arch_code
+    arch = extract_arch_code(enrich_data, base_desc)
+    arch_tag = f"[{arch}]" if arch else ""
+
     lang = str(enrich_data.get("language") or "").strip()
     lang_tag = f"[{lang.capitalize()}]" if lang and lang.lower() not in ("english", "none", "") else ""
 
@@ -102,6 +106,8 @@ def _format_enriched_depot_desc(depot_id: str, fallback_desc: str, enrich_data: 
     base_lower = base_desc.lower()
     if os_tag and os_tag.lower() not in base_lower:
         tags.append(os_tag)
+    if arch_tag and arch_tag.lower() not in base_lower:
+        tags.append(arch_tag)
     if lang_tag and lang_tag.lower() not in base_lower:
         tags.append(lang_tag)
     if dlc_tag and dlc_tag.lower() not in base_lower:
