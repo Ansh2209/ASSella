@@ -5,9 +5,13 @@ The classification rules are the part most likely to break silently - they
 decide which depots get ticked by default - and they are now free of Qt, so
 they can be tested directly rather than through a dialog.
 
-Also pins the two structural guarantees of the split:
-  * every moved definition is byte-identical to the pre-split source
+Also pins the structural guarantees of the split:
+  * the layout stayed thin - a small composer plus one mixin per behaviour
   * the facade still exports every symbol the nine importers use
+
+The Tier 1 split moved definitions byte-for-byte; anything deepened since (the
+manifest dump in manifest_dump.py) is covered by its own suite instead of by
+identity.
 
     QT_QPA_PLATFORM=offscreen python3 scripts/test_depot_selection.py
 """

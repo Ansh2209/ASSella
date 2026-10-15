@@ -155,6 +155,11 @@ def main() -> int:
     check(isinstance(dlg.header_view, DepotHeaderView), "custom header view installed")
     check(dlg.table_widget.rowCount() == 5, f"all 5 depots listed (got {dlg.table_widget.rowCount()})")
 
+    # Browse Files has to name one depot, and it takes the first checked one.
+    first_depot = dlg._first_checked_depot_id()
+    check(first_depot in {"1000", "1001"},
+          f"the first checked depot is the one Browse Files offers ({first_depot!r})")
+
     check(dlg.title_label is not None, "title label created")
     check("Two Point Museum" in dlg.title_label.text(), "game name on the title label")
     check(dlg.builds_btn is not None, "Build button created")
@@ -271,6 +276,18 @@ def main() -> int:
           "supplied missing depot metadata preserved")
     check(dlg5.table_widget.rowCount() == 6,
           f"the missing depot is listed too (got {dlg5.table_widget.rowCount()} rows)")
+
+    # A missing depot has no manifest to dump, so it must never be the depot
+    # Browse Files offers, even if something ticks its box.
+    from PyQt6.QtCore import Qt
+    table = dlg5.table_widget
+    missing_rows = [i for i in range(table.rowCount())
+                    if table.item(i, 0).data(Qt.ItemDataRole.UserRole + 2) == "missing"]
+    check(len(missing_rows) == 1, "the missing depot carries the 'missing' role")
+    table.item(missing_rows[0], 0).setCheckState(Qt.CheckState.Checked)
+    offered = dlg5._first_checked_depot_id()
+    check(offered != "1004",
+          f"a ticked missing depot is not offered to Browse Files ({offered!r})")
     dlg5.close()
 
     # ------------------------------------------- missing depots, no metadata

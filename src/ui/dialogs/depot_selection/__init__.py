@@ -6,6 +6,10 @@
     dialog.py    DepotSelectionDialog: routing, state, accessors, Qt events
     _mixins/     the dialog's behaviour, one module per capability
 
+Browse Files is not a mixin-shaped capability: ``manifest_dump.py`` prepares a
+dump (Qt-free) and ``dump_runner.py`` runs it, and both the multi-depot and the
+single-depot dialog use them.
+
 Both ``ui.dialogs.depot_selection`` and the legacy facade
 ``ui.dialogs.depotselection`` export the full public API.
 """
