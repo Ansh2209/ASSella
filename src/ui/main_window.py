@@ -32,12 +32,6 @@ from managers.job_queue_manager import JobQueueManager
 from managers.task_manager import TaskManager
 from managers.ui_state_manager import UIStateManager
 from ui.bottom_titlebar import BottomTitleBar
-from ui.dialogs.credits import CreditsDialog
-from ui.dialogs.fetchmanifest import FetchManifestDialog
-from ui.dialogs.gamelibrary import GameLibraryDialog
-from ui.dialogs.lain import LainMinigameDialog
-from ui.dialogs.settings import SettingsDialog
-from ui.dialogs.status import StatusDialog
 from ui.widgets import (
     ResizeHandle,
     SimplifiedTerminalWidget,
@@ -48,7 +42,6 @@ from queue import Queue
 from utils.web_server import WebServerManager, get_local_ip
 from utils.settings import get_settings
 from utils.task_runner import TaskRunner
-from core.morrenus_api import get_all_hubcap_stats
 from datetime import datetime, timezone
 from utils.version import app_version
 
@@ -471,6 +464,8 @@ class MainWindow(QMainWindow):
 
     def open_lain_minigame(self) -> None:
         """Open the Serial Experiments Lain minigame."""
+        from ui.dialogs.lain import LainMinigameDialog
+
         dialog = LainMinigameDialog(self)
         dialog.game_completed.connect(self.on_minigame_completed)
         dialog.exec()
@@ -1214,26 +1209,36 @@ class MainWindow(QMainWindow):
             self.progress_bar.update()
 
     def open_settings(self, initial_tab: Optional[str] = None) -> None:
+        from ui.dialogs.settings import SettingsDialog
+
         dialog = SettingsDialog(self, initial_tab=initial_tab)
         dialog.exec()
         self._check_network_connections_async()
         self.refresh_hubcap_stats()
 
     def open_fetch_dialog(self) -> None:
+        from ui.dialogs.fetchmanifest import FetchManifestDialog
+
         self.ui_state.fetch_dialog = FetchManifestDialog(self)
         self.ui_state.fetch_dialog.exec()
         self.ui_state.fetch_dialog = None
 
 
     def open_game_library(self) -> None:
+        from ui.dialogs.gamelibrary import GameLibraryDialog
+
         dialog = GameLibraryDialog(self)
         dialog.exec()
 
     def open_status_dialog(self) -> None:
+        from ui.dialogs.status import StatusDialog
+
         dialog = StatusDialog(self)
         dialog.exec()
 
     def open_credits_dialog(self) -> None:
+        from ui.dialogs.credits import CreditsDialog
+
         dialog = CreditsDialog(self)
         dialog.exec()
 
@@ -1620,6 +1625,8 @@ class MainWindow(QMainWindow):
             self.hubcap_api_value.setText("Loading...")
         if hasattr(self, "active_hubcap_label") and self.active_hubcap_label:
             self.active_hubcap_label.setText("Hubcap: Loading...")
+
+        from core.morrenus_api import get_all_hubcap_stats
 
         worker = self.stats_task_runner.run(get_all_hubcap_stats)
         worker.finished.connect(self._on_user_stats_loaded)

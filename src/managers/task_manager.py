@@ -22,10 +22,6 @@ except ImportError:
     psutil = None
 
 from core import steam_helpers
-from core.tasks.download_depots_task import DownloadDepotsTask
-from core.tasks.download_workshop_task import DownloadWorkshopTask
-from core.tasks.native_steam_download_task import NativeSteamDownloadTask
-from core.tasks.process_zip_task import ProcessZipTask
 
 from utils.steam_manifest import get_game_directory
 from utils.yaml_config_manager import is_slssteam_mode_enabled
@@ -234,6 +230,8 @@ class TaskManager(
             self.main_window.drop_text_label.setText(
                 f"Processing: {os.path.basename(zip_path)}"
             )
+
+        from core.tasks.process_zip_task import ProcessZipTask
 
         self.zip_task = ProcessZipTask()
         self.zip_task_runner = TaskRunner()
@@ -976,8 +974,12 @@ class TaskManager(
                 return
             else:
                 logger.info("[TaskManager] Using monitored native Steam client download backend")
+                from core.tasks.native_steam_download_task import NativeSteamDownloadTask
+
                 self.download_task = NativeSteamDownloadTask()
         else:
+            from core.tasks.download_depots_task import DownloadDepotsTask
+
             self.download_task = DownloadDepotsTask()
         self.download_task.progress.connect(logger.info)
         self.download_task.progress_percentage.connect(
@@ -1081,6 +1083,8 @@ class TaskManager(
         self.main_window.progress_bar.setVisible(True)
         self.main_window.progress_bar.setValue(0)
         self.main_window.speed_label.setVisible(False)
+
+        from core.tasks.download_workshop_task import DownloadWorkshopTask
 
         self.workshop_task = DownloadWorkshopTask()
         self.workshop_task.progress.connect(logger.info)

@@ -6,7 +6,6 @@ import logging
 import tempfile
 
 from ui.assets import DEPOT_BLACKLIST
-from core.steam_api import get_depot_info_from_api
 from core.ini_parser import parse_depots_ini
 from utils.helpers import get_base_path
 from utils.lua_parsing import (
@@ -214,6 +213,10 @@ class ProcessZipTask:
     def run(self, zip_path, metadata=None):
         logger.info(f"Starting zip processing task for: {zip_path}")
         metadata = metadata or {}
+
+        # Imported lazily (not at module import) to keep startup light.
+        from core.steam_api import get_depot_info_from_api
+
 
         try:
             known_depot_descriptions = parse_depots_ini()

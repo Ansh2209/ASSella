@@ -11,7 +11,6 @@ from core.steam_helpers import (
     get_library_index,
     find_steam_install,
 )
-from core.tasks.manifest_check_task import ManifestCheckTask
 from utils.helpers import get_base_path
 from utils.lua_parsing import is_placeholder_key, iter_live_matches
 from utils.task_runner import TaskRunner
@@ -334,6 +333,8 @@ class GameManager(QObject):
             logger.debug(f"Error launching At0mUpdateChecker: {e}")
 
         # Create new task with trigger provenance
+        from core.tasks.manifest_check_task import ManifestCheckTask
+
         trigger = "USER_MANUAL" if force_refresh else ("AUTO_TIMER" if is_periodic else "BACKGROUND_SCAN")
         self.manifest_check_task = ManifestCheckTask(self._games_to_check, trigger=trigger)
         self.update_check_progress.emit(0, len(self._games_to_check))
@@ -426,6 +427,8 @@ class GameManager(QObject):
         game["hubcap_needs_update"] = False
         game["hubcap_update_in_progress"] = False
         self.game_update_status_changed.emit(appid, UPDATE_STATUS["CHECKING"])
+
+        from core.tasks.manifest_check_task import ManifestCheckTask
 
         task = ManifestCheckTask([game])
         runner = TaskRunner()
