@@ -305,7 +305,7 @@ class MainWindow(QMainWindow):
         # Show the Canary welcome slideshow on first launch. This replaced the
         # older Training Wheels Protocol dialog, which was removed: every action
         # it offered (recommended settings, config check/repair, SLS install +
-        # version tiles, SLS inheritance) already exists in Settings -> Health.
+        # version tiles) already exists in Settings -> Health.
         from utils.settings import is_canary_welcome_needed
         if is_canary_welcome_needed():
             QTimer.singleShot(1000, self._show_canary_welcome)
@@ -356,7 +356,7 @@ class MainWindow(QMainWindow):
             layout.setContentsMargins(20, 20, 20, 20)
             layout.setSpacing(10)
 
-            title_lbl = QLabel("🚀 Try ASSella Experimental Features!", dlg)
+            title_lbl = QLabel("Try ASSella Experimental Features!", dlg)
             title_lbl.setStyleSheet("font-size: 16px; font-weight: bold; color: #7aa2f7;")
             layout.addWidget(title_lbl)
 

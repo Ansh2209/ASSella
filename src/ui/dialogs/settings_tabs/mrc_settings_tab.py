@@ -59,7 +59,7 @@ def create_mrc_settings_tab(dialog) -> QWidget:
     guard_desc = QLabel(
         f"<b>MRC Customization Inactive:</b> Active plugin is currently <code>{active_plugin or 'None'}</code>.<br><br>"
         "Manifest Request Code (MRC) authority hierarchy, secondary rescue routing, and race parameters require "
-        "<b><code>download-1.4.0-spacetest.lua</code></b> (SpaceBunny / SpaceTest). Standard <code>download.lua</code> "
+        "<b><code>spacebunny1.5.lua</code></b> (SpaceBunny). Standard <code>download.lua</code> "
         "does not read these parameters.<br><br>"
         "These options are hidden to prevent incompatible configuration overrides."
     )
@@ -67,7 +67,7 @@ def create_mrc_settings_tab(dialog) -> QWidget:
     guard_desc.setWordWrap(True)
     guard_layout.addWidget(guard_desc)
 
-    goto_atom_btn = QPushButton("Go to at0-m Settings (Deploy SpaceTest)")
+    goto_atom_btn = QPushButton("Go to at0-m Settings (Deploy SpaceBunny 1.5)")
     goto_atom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
     goto_atom_btn.setStyleSheet("""
         QPushButton {
@@ -298,7 +298,7 @@ def create_mrc_settings_tab(dialog) -> QWidget:
             guard_desc.setText(
                 f"<b>MRC Customization Inactive:</b> Active plugin is currently <code>{cur_act or 'None'}</code>.<br><br>"
                 "Manifest Request Code (MRC) authority hierarchy, secondary rescue routing, and race parameters require "
-                "<b><code>download-1.4.0-spacetest.lua</code></b> (SpaceBunny / SpaceTest). Standard <code>download.lua</code> "
+                "<b><code>spacebunny1.5.lua</code></b> (SpaceBunny). Standard <code>download.lua</code> "
                 "does not read these parameters.<br><br>"
                 "These options are hidden to prevent incompatible configuration overrides."
             )

@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from utils.paths import Paths
+from utils.qt_utils import clear_layout
 
 logger = logging.getLogger(__name__)
 
@@ -1657,6 +1658,7 @@ class FontSelectionDialog(QDialog):
         if result == QDialog.DialogCode.Accepted:
             return dialog.get_selected_font(), True
         return initial_font, False
+
 
 
 

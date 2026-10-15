@@ -103,6 +103,13 @@ class LibraryFilterSortMixin:
                 s.setValue("konami_settings_unlocked", True)
                 s.sync()
                 logger.info("[GameLibrary] Keyboard cheat code unlocked Settings tab.")
+        elif query == "luatools":
+            from utils.settings import get_settings
+            s = self.settings or get_settings()
+            if not s.value("luatools_unlocked", False, type=bool):
+                s.setValue("luatools_unlocked", True)
+                s.sync()
+                logger.info("[GameLibrary] Search secret code unlocked LuaTools feature.")
         self.search_timer.start(300)
 
     def _refresh_game_list(self) -> None:

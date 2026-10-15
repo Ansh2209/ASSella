@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 from core.steam_helpers import get_steam_libraries, find_steam_install
 from utils.workshop_helpers import fetch_workshop_details, strip_emojis, delete_workshop_item
 from utils.color_utils import get_best_foreground_color, make_svg_icon
+from utils.qt_utils import clear_layout
 from utils.paths import Paths
 from utils.settings import get_settings
 
@@ -145,10 +146,7 @@ def on_workshop_mods_scanned(dialog, ws_mods: list) -> None:
         return
 
     # Clear existing layout items safely
-    while dialog.ws_layout.count() > 0:
-        item = dialog.ws_layout.takeAt(0)
-        if item.widget():
-            item.widget().deleteLater()
+    clear_layout(dialog.ws_layout)
 
     btn_fg = get_best_foreground_color(dialog.accent_color)
 

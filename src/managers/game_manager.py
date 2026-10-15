@@ -1882,7 +1882,7 @@ class GameManager(QObject):
         from utils.paths import Paths
         from utils.helpers import get_dotnet_path, get_dotnet_env
         
-        depotdownloader_path = Paths.deps("depot-downloader/DepotDownloader.dll")
+        depotdownloader_path = Paths.depot_downloader_dll()
         if not depotdownloader_path.exists():
             logger.warning("DepotDownloader.dll not found, cannot delete DLC files")
             return

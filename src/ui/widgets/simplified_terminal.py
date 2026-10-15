@@ -1,9 +1,11 @@
 import logging
 import os
 import re
+import threading
 from typing import TYPE_CHECKING, Optional
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6 import sip
+from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -18,6 +20,7 @@ from PyQt6.QtWidgets import (
 from ui.widgets.active_game_card import ActiveGameCard
 from ui.widgets.recent_activity_item import RecentActivityItemWidget
 from ui.widgets.updates_panel import UpdatesPanel, UpdateItemWidget
+from utils.qt_utils import clear_layout
 from utils.paths import Paths
 
 if TYPE_CHECKING:
@@ -47,28 +50,59 @@ class SimplifiedTerminalWidget(QWidget):
         # Connect signals from GameManager to update stats & loading state
         if hasattr(self.main_window, "game_manager") and self.main_window.game_manager:
             gm = self.main_window.game_manager
-            gm.library_updated.connect(lambda: self.update_stats(immediate=True))
+            gm.library_updated.connect(self._on_library_updated, Qt.ConnectionType.QueuedConnection)
             gm.game_update_status_changed.connect(
-                lambda appid, status: self.update_stats(immediate=False)
+                self._on_game_update_status_changed, Qt.ConnectionType.QueuedConnection
             )
-            gm.scan_complete.connect(lambda _: self.update_stats(immediate=True))
-            gm.update_check_started.connect(self._on_update_check_started)
-            gm.all_updates_checked.connect(self._on_update_check_finished)
+            gm.scan_complete.connect(self._on_scan_complete, Qt.ConnectionType.QueuedConnection)
+            gm.update_check_started.connect(self._on_update_check_started, Qt.ConnectionType.QueuedConnection)
+            gm.all_updates_checked.connect(self._on_update_check_finished, Qt.ConnectionType.QueuedConnection)
 
         self._do_update_stats()
         self.update_history_display()
         self.update_style()
 
+    @pyqtSlot()
+    def _on_library_updated(self):
+        self.update_stats(immediate=True)
+
+    @pyqtSlot(str, str)
+    def _on_game_update_status_changed(self, appid: str, status: str):
+        self.update_stats(immediate=False)
+
+    @pyqtSlot(int)
+    @pyqtSlot()
+    def _on_scan_complete(self, count: int = 0):
+        self.update_stats(immediate=True)
+
+    @pyqtSlot()
     def _on_update_check_started(self):
         if hasattr(self, "refresh_updates_btn") and self.refresh_updates_btn:
             self.refresh_updates_btn.set_loading(True)
             self.refresh_updates_btn.setToolTip("Checking for updates...")
 
+    @pyqtSlot()
     def _on_update_check_finished(self):
         if hasattr(self, "refresh_updates_btn") and self.refresh_updates_btn:
             self.refresh_updates_btn.set_loading(False)
             self.refresh_updates_btn.setToolTip("Force re-check updates for all games")
         self.update_stats(immediate=True)
+
+    def disconnect_signals(self):
+        """Disconnect signals from GameManager on widget teardown."""
+        if hasattr(self.main_window, "game_manager") and self.main_window.game_manager:
+            gm = self.main_window.game_manager
+            for sig, slot in [
+                (gm.library_updated, self._on_library_updated),
+                (gm.game_update_status_changed, self._on_game_update_status_changed),
+                (gm.scan_complete, self._on_scan_complete),
+                (gm.update_check_started, self._on_update_check_started),
+                (gm.all_updates_checked, self._on_update_check_finished),
+            ]:
+                try:
+                    sig.disconnect(slot)
+                except Exception:
+                    pass
 
     def init_ui(self):
         self.layout = QStackedLayout(self)
@@ -239,6 +273,11 @@ class SimplifiedTerminalWidget(QWidget):
 
     def update_stats(self, immediate: bool = False):
         """Request stats update. Debounced by default to prevent UI freezes during batch checks."""
+        if threading.current_thread() is not threading.main_thread():
+            from utils.main_thread import post_to_main_thread
+            post_to_main_thread(self.update_stats, immediate)
+            return
+
         if immediate:
             self._stats_timer.stop()
             self._do_update_stats()
@@ -247,6 +286,9 @@ class SimplifiedTerminalWidget(QWidget):
                 self._stats_timer.start(120)
 
     def _do_update_stats(self):
+        if sip.isdeleted(self):
+            return
+
         if not hasattr(self.main_window, "game_manager") or not self.main_window.game_manager:
             return
 
@@ -262,10 +304,7 @@ class SimplifiedTerminalWidget(QWidget):
         # If scan is currently running and no games have been populated yet
         is_scanning = getattr(gm, "is_scanning", False)
         if total_games == 0 and is_scanning:
-            while self.updates_scroll_layout.count():
-                child = self.updates_scroll_layout.takeAt(0)
-                if child.widget():
-                    child.widget().deleteLater()
+            clear_layout(self.updates_scroll_layout)
             lbl = QLabel("Scanning installed games...")
             lbl.setStyleSheet("color: #888888; font-style: italic; font-size: 9pt;")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -382,10 +421,7 @@ class SimplifiedTerminalWidget(QWidget):
         self.main_window.position_update_all_btn()
 
         # Clear existing updates list
-        while self.updates_scroll_layout.count():
-            child = self.updates_scroll_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        clear_layout(self.updates_scroll_layout)
 
         self._total_updates = total_updates
         if hasattr(self, "panel_mid") and self.panel_mid:
@@ -418,10 +454,7 @@ class SimplifiedTerminalWidget(QWidget):
         from utils.history_cache import get_history_cache
         history = get_history_cache().get_history()
 
-        while self.history_scroll_layout.count():
-            child = self.history_scroll_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+        clear_layout(self.history_scroll_layout)
 
         if not history:
             lbl = QLabel("No recent installation activity")
@@ -445,12 +478,17 @@ class SimplifiedTerminalWidget(QWidget):
         """Open Game Details page for a game clicked in the recent activity list."""
         if not appid or not str(appid).isdigit() or str(appid).lower() == "workshop":
             return
-        try:
-            from ui.dialogs.gamelibrary import GameLibraryDialog
-            dialog = GameLibraryDialog(self.main_window, show_details_for_appid=str(appid))
-            dialog.exec()
-        except Exception as e:
-            logger.error(f"Failed to open game details from recent activity for {appid}: {e}")
+
+        def _open():
+            try:
+                from ui.dialogs.gamelibrary import GameLibraryDialog
+                dialog = GameLibraryDialog(self.main_window, show_details_for_appid=str(appid))
+                dialog.exec()
+            except Exception as e:
+                logger.error(f"Failed to open game details from recent activity for {appid}: {e}")
+
+        from PyQt6.QtCore import QTimer
+        QTimer.singleShot(0, _open)
 
     @staticmethod
     def _format_size(size_bytes: int) -> str:

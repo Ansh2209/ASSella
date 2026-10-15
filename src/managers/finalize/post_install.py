@@ -414,7 +414,7 @@ class PostInstallMixin:
                                 final_bid = meta_bid or new_bid
                                 logger.info(f"[DEBUG_DEV] Rollback/manual install detected. Using manual build ID as final_bid: {final_bid}")
                             else:
-                                final_bid = meta_bid or target_bid or new_bid
+                                final_bid = new_bid or meta_bid or target_bid
                                 logger.info(f"[DEBUG_DEV] Standard install completed. final_bid: {final_bid}")
                             if final_bid:
                                 # Store per-branch: installed_buildid/appid/branch

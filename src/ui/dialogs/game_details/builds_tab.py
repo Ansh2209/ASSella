@@ -23,9 +23,30 @@ from PyQt6.QtWidgets import (
     QCheckBox,
 )
 
+from PyQt6 import sip
 from ui.material_progress import MaterialSpinner
+from utils.qt_utils import clear_layout
 
 logger = logging.getLogger(__name__)
+
+
+class ClickableBuildCard(QFrame):
+    """QFrame subclass for build cards that safely handles clicks without monkey-patching."""
+    def __init__(self, dialog, idx: int, parent=None):
+        super().__init__(parent)
+        self.dialog = dialog
+        self.idx = idx
+        self._normal_style = None
+        self._selected_style = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            from PyQt6 import sip
+            if not sip.isdeleted(self.dialog):
+                on_build_card_clicked(self.dialog, self.idx)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
 
 def init_builds_tab(dialog) -> None:
@@ -193,7 +214,7 @@ def strip_build_title(title: str, game_name: str) -> str:
     return title
 
 
-def make_build_card(dialog, idx: int, item: dict, current_bid: str, game_name: str) -> QFrame:
+def make_build_card(dialog, idx: int, item: dict, current_bid: str, game_name: str) -> ClickableBuildCard:
     build_id = str(item.get("buildid", ""))
     title = item.get("title", "Update")
     date_str = item.get("date", "")
@@ -202,7 +223,7 @@ def make_build_card(dialog, idx: int, item: dict, current_bid: str, game_name: s
 
     short_title = strip_build_title(title, game_name)
 
-    card = QFrame()
+    card = ClickableBuildCard(dialog, idx)
     card.setObjectName("build_card")
     card.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -322,7 +343,7 @@ def make_build_card(dialog, idx: int, item: dict, current_bid: str, game_name: s
     row2.addStretch(1)
     layout.addLayout(row2)
 
-    # ─ Row 3: Depot badges with OS icons ─
+    # ─ Row 3: Depot badges with OS info ─
     card._depots_container = QWidget()
     card._depots_container.setObjectName("card_depots_container")
     card._depots_container.setStyleSheet("background: transparent; border: none;")
@@ -337,19 +358,15 @@ def make_build_card(dialog, idx: int, item: dict, current_bid: str, game_name: s
     if initial_depots:
         update_card_depots(dialog, card, build_id, initial_depots)
 
-    card.mousePressEvent = lambda _e, i=idx: on_build_card_clicked(dialog, i)
     return card
 
 
 def update_card_depots(dialog, card: QFrame, build_id: str, depots: dict) -> None:
     """Renders depot preview badges with OS logos, names, and manifest IDs on a build card."""
-    if not card or not hasattr(card, "_depots_layout"):
+    if not card or not hasattr(card, "_depots_layout") or sip.isdeleted(card):
         return
 
-    while card._depots_layout.count():
-        it = card._depots_layout.takeAt(0)
-        if it.widget():
-            it.widget().deleteLater()
+    clear_layout(card._depots_layout)
 
     if not depots:
         card._depots_container.setVisible(False)
@@ -382,7 +399,7 @@ def update_card_depots(dialog, card: QFrame, build_id: str, depots: dict) -> Non
     for did, dinfo in d_items[:max_pills]:
         det = dinfo.get("details") or {}
         mid = dinfo.get("manifest_id") or ""
-        os_icon = det.get("os_icon") or "📦"
+        os_badge = det.get("os_badge", "Content")
         dname = det.get("name") or f"Depot {did}"
 
         # Strip game name prefix if present to keep preview pill compact
@@ -394,9 +411,10 @@ def update_card_depots(dialog, card: QFrame, build_id: str, depots: dict) -> Non
                     break
 
         label_type = "DLC" if det.get("is_dlc") else did
-        pill_txt = f"{os_icon} {label_type} • {dname}"
-        if len(pill_txt) > 22:
-            pill_txt = pill_txt[:20] + "…"
+        os_str = f"[{os_badge}] " if os_badge and os_badge != "Content" else ""
+        pill_txt = f"{os_str}{label_type} • {dname}"
+        if len(pill_txt) > 24:
+            pill_txt = pill_txt[:22] + "…"
 
         lbl = QLabel(pill_txt)
         lbl.setStyleSheet("""
@@ -409,7 +427,7 @@ def update_card_depots(dialog, card: QFrame, build_id: str, depots: dict) -> Non
                 color: rgba(255, 255, 255, 0.85);
             }
         """)
-        lbl.setToolTip(f"Depot: {did} ({det.get('os_badge', 'Content')})\nName: {det.get('name', dname)}\nManifest: {mid}")
+        lbl.setToolTip(f"Depot: {did} ({os_badge})\nName: {det.get('name', dname)}\nManifest: {mid}")
         card._depots_layout.addWidget(lbl)
 
     if len(d_items) > max_pills:
@@ -431,6 +449,9 @@ def update_card_depots(dialog, card: QFrame, build_id: str, depots: dict) -> Non
 
 
 def fetch_steamdb_builds_async(dialog) -> None:
+    if sip.isdeleted(dialog):
+        return
+
     try:
         from core.steamdb_scraper import ByparrManager
         if not ByparrManager.find_byparr_dir():
@@ -450,15 +471,19 @@ def fetch_steamdb_builds_async(dialog) -> None:
         try:
             aid = int(dialog.appid) if dialog.appid.isdigit() else 0
             data = dialog.steamdb_scraper.get_patchnotes(aid, limit=20)
-            dialog.builds_loaded.emit(data)
+            if not sip.isdeleted(dialog):
+                dialog.builds_loaded.emit(data)
         except Exception as e:
             logger.error(f"Failed to fetch builds for {dialog.appid}: {e}")
-            dialog.builds_error.emit(str(e))
+            if not sip.isdeleted(dialog):
+                dialog.builds_error.emit(str(e))
 
     threading.Thread(target=_worker, daemon=True).start()
 
 
 def on_builds_loaded(dialog, builds: list) -> None:
+    if sip.isdeleted(dialog):
+        return
     from core.steamdb_scraper import ByparrManager
     has_byparr = ByparrManager.find_byparr_dir() is not None
     dialog.builds_refresh_btn.setText("⟳  Refresh")
@@ -482,6 +507,8 @@ def on_builds_loaded(dialog, builds: list) -> None:
 
 
 def on_builds_error(dialog, err_msg: str) -> None:
+    if sip.isdeleted(dialog):
+        return
     from core.steamdb_scraper import ByparrManager
     has_byparr = ByparrManager.find_byparr_dir() is not None
     dialog.builds_refresh_btn.setText("⟳  Refresh")
@@ -513,10 +540,18 @@ def get_build_action_label(dialog, build_id: str) -> str:
 
 
 def populate_builds_cards(dialog, data: list) -> None:
-    while dialog.builds_cards_layout.count() > 1:
-        item = dialog.builds_cards_layout.takeAt(0)
-        if item.widget():
-            item.widget().deleteLater()
+    if sip.isdeleted(dialog):
+        return
+
+    selected_bid = None
+    if 0 <= dialog._selected_build_idx < len(dialog._build_cards):
+        try:
+            _, old_item = dialog._build_cards[dialog._selected_build_idx]
+            selected_bid = str(old_item.get("buildid", ""))
+        except Exception:
+            selected_bid = None
+
+    clear_layout(dialog.builds_cards_layout, keep_trailing_stretch=True)
 
     dialog._build_cards = []
     dialog._selected_build_idx = -1
@@ -526,20 +561,32 @@ def populate_builds_cards(dialog, data: list) -> None:
     current_bid = dialog._get_installed_buildid()
     game_name = dialog.game_data.get("game_name", "")
 
+    reselected = False
     for idx, item in enumerate(data):
         card = make_build_card(dialog, idx, item, current_bid, game_name)
         dialog.builds_cards_layout.insertWidget(idx, card)
         dialog._build_cards.append((card, item))
+        if selected_bid and str(item.get("buildid")) == selected_bid and not reselected:
+            on_build_card_clicked(dialog, idx)
+            reselected = True
 
 
 def on_build_card_clicked(dialog, idx: int) -> None:
+    if sip.isdeleted(dialog):
+        return
+
     if 0 <= dialog._selected_build_idx < len(dialog._build_cards):
         prev_card, _ = dialog._build_cards[dialog._selected_build_idx]
-        prev_card.setStyleSheet(prev_card._normal_style())
+        if not sip.isdeleted(prev_card):
+            prev_card.setStyleSheet(prev_card._normal_style())
 
     dialog._selected_build_idx = idx
+    if idx < 0 or idx >= len(dialog._build_cards):
+        return
+
     card, item = dialog._build_cards[idx]
-    card.setStyleSheet(card._selected_style())
+    if not sip.isdeleted(card):
+        card.setStyleSheet(card._selected_style())
 
     build_id = str(item.get("buildid", ""))
     dialog.builds_download_btn.setEnabled(False)
@@ -561,15 +608,19 @@ def on_build_card_clicked(dialog, idx: int) -> None:
     def _depot_worker():
         try:
             depots = dialog.steamdb_scraper.get_patch_depots(build_id)
-            dialog.build_depots_loaded.emit(build_id, depots)
+            if not sip.isdeleted(dialog):
+                dialog.build_depots_loaded.emit(build_id, depots)
         except Exception as e:
             logger.error(f"Failed to fetch depots for build {build_id}: {e}")
-            dialog.build_depots_error.emit(f"Failed to resolve manifests for Build {build_id}.")
+            if not sip.isdeleted(dialog):
+                dialog.build_depots_error.emit(f"Failed to resolve manifests for Build {build_id}.")
 
     threading.Thread(target=_depot_worker, daemon=True).start()
 
 
 def on_build_depots_loaded(dialog, build_id: str, depots: dict) -> None:
+    if sip.isdeleted(dialog):
+        return
     dialog._cached_build_depots[build_id] = depots
     aid = int(dialog.appid) if dialog.appid.isdigit() else 0
     dialog.builds_cache.update_build_depots(aid, build_id, depots)
@@ -577,7 +628,8 @@ def on_build_depots_loaded(dialog, build_id: str, depots: dict) -> None:
     # Update depots badge preview on matching card
     for card, item in dialog._build_cards:
         if str(item.get("buildid")) == str(build_id):
-            update_card_depots(dialog, card, build_id, depots)
+            if not sip.isdeleted(card):
+                update_card_depots(dialog, card, build_id, depots)
             break
 
     if 0 <= dialog._selected_build_idx < len(dialog._build_cards):
@@ -587,12 +639,16 @@ def on_build_depots_loaded(dialog, build_id: str, depots: dict) -> None:
 
 
 def apply_depot_to_download_btn(dialog, build_id: str, depots: dict) -> None:
+    if sip.isdeleted(dialog):
+        return
     action = get_build_action_label(dialog, build_id)
     dialog.builds_download_btn.setText(f"{action} (Build {build_id})")
     dialog.builds_download_btn.setEnabled(bool(depots))
 
 
 def on_build_depots_error(dialog, err_msg: str) -> None:
+    if sip.isdeleted(dialog):
+        return
     logger.warning(f"[BuildsTab] Error resolving depots: {err_msg}")
     if hasattr(dialog, "builds_download_btn"):
         dialog.builds_download_btn.setText("Manifest Unavailable")
@@ -660,11 +716,10 @@ class BuildDepotsSelectionDialog(QDialog):
         for did, info in depots.items():
             det = info.get("details") or {}
             mid = info.get("manifest_id") or ""
-            os_icon = det.get("os_icon", "📦")
             os_badge = det.get("os_badge", "Content")
             dname = det.get("name", f"Depot {did}")
 
-            cb = QCheckBox(f"{os_icon} {os_badge} • Depot {did}: {dname}")
+            cb = QCheckBox(f"{os_badge} • Depot {did}: {dname}")
             cb.setToolTip(f"Manifest: {mid}\nDepot: {did}\nName: {dname}")
             cb.setChecked(True)
             self.checkboxes[str(did)] = (cb, str(mid))

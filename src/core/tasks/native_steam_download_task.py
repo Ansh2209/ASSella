@@ -214,7 +214,7 @@ class NativeSteamDownloadTask(QObject):
         # 4. Verify SLSsteam plugins are present
         from utils.plugin_manager import are_plugins_present, is_plugin_check_bypassed
         if not are_plugins_present():
-            msg = "AT0-M plugins (download.lua / spliced-tickets.lua) not found. Please enable and deploy plugin support from the AT0-M page in Settings, or enable 'I'm using custom plugins (Advanced)'."
+            msg = "AT0-M plugins (download interceptor / spliced-tickets.lua) not found. Please enable and deploy plugin support from the AT0-M page in Settings, or enable 'I'm using custom plugins (Advanced)'."
             self.progress.emit(f"[Native Steam] ERROR: {msg}")
             self._cleanup_failure()
             self.error.emit((RuntimeError, msg, None))
@@ -1089,7 +1089,7 @@ class NativeSteamDownloadTask(QObject):
                         with open(sls_log, "r", encoding="utf-8", errors="replace") as f:
                             f.seek(sls_log_offset)
                             for line in f:
-                                if "AuthenticateDepotID" in line or "download.lua" in line:
+                                if "AuthenticateDepotID" in line or ".lua" in line:
                                     self.progress.emit(f"[SLS] {line.strip()}")
                         sls_log_offset = s_size
                 except OSError:

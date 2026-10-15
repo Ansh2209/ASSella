@@ -178,9 +178,8 @@ class LibraryActionsMixin:
         if self._dialog_open:
             return
 
-        # Steam tab games: check if the selected game has DLCs, if so, launch DLC-only download flow!
+        # Steam tab games: single click only highlights/selects row. Double-click triggers fetch.
         if getattr(self, "_active_tab", "") == "steam" or game_data.get("is_steam_tab"):
-            self._handle_steam_tab_game_clicked(game_data)
             return
 
         # Debounce
@@ -188,6 +187,21 @@ class LibraryActionsMixin:
         QTimer.singleShot(500, lambda: setattr(self, "_dialog_open", False))
 
         self._show_game_details_dialog(game_data)
+
+    def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
+        """Handle double-click on game item:
+        For Steam tab games, initiates DLC-only manifest fetch and depot selection dialog.
+        """
+        if not item or getattr(self, "_batch_mode", False):
+            return
+        game_data = item.data(Qt.ItemDataRole.UserRole)
+        if not game_data:
+            return
+
+        if getattr(self, "_active_tab", "") == "steam" or game_data.get("is_steam_tab"):
+            self._handle_steam_tab_game_clicked(game_data)
+        else:
+            self._on_item_selected(item)
 
     def _handle_steam_tab_game_clicked(self, game_data: dict) -> None:
         """Handle click on an owned/installed Steam game:
@@ -396,6 +410,7 @@ class LibraryActionsMixin:
         parsed_data: dict,
         installed_depots: object = None,
         is_verify: bool = False,
+        is_dlc_only: bool = False,
     ) -> DepotSelection:
         """Decide which depots to use for a game, reusing the cached choice when valid.
 
@@ -407,9 +422,7 @@ class LibraryActionsMixin:
         * Cached choices are filtered against every depot that is actually
           fetchable: the parsed depots plus depots Hubcap was missing that we
           recovered, so a newly available DLC depot is not silently dropped.
-        * A verify always puts the dialog in front of the user. Silently
-          reusing the cached selection is what made "Verify" look like it had
-          done nothing.
+        * A verify or DLC-only action always puts the dialog in front of the user.
         """
         from utils.settings import get_settings
 
@@ -422,7 +435,7 @@ class LibraryActionsMixin:
         cached_selected: Optional[List[str]] = None
         should_prompt = True
 
-        if val:
+        if val and not is_dlc_only:
             try:
                 data = json.loads(val)
                 cached_selected = data.get("selected", [])
@@ -439,12 +452,12 @@ class LibraryActionsMixin:
         if not cached_selected and isinstance(installed_depots, list):
             cached_selected = [str(d) for d in installed_depots]
 
-        # A verify must always show the dialog, overriding the cache reuse above.
-        if is_verify:
+        # A verify or DLC-only action must always show the dialog, overriding the cache reuse above.
+        if is_verify or is_dlc_only:
             should_prompt = True
 
-        # A single depot with auto-skip needs no dialog, but never for a verify.
-        auto_skip = bool(auto_skip_setting and len(depots) == 1 and not is_verify)
+        # A single depot with auto-skip needs no dialog, but never for a verify or dlc-only.
+        auto_skip = bool(auto_skip_setting and len(depots) == 1 and not is_verify and not is_dlc_only)
         if auto_skip:
             selected_depots = list(depots.keys())
 
@@ -732,7 +745,7 @@ class LibraryActionsMixin:
                 f"Are you sure you want to remove SLS integrations for '{game_name}'?\n\n"
                 "• Removes game from SLS config (SLS Online and EOS Proxy integrations will be reset as well)\n"
                 "• Removes AppTokens, .DepotDownloader folder, and .depot tracking\n\n"
-                "🛡️ Game files, saves, achievements, and Proton prefix will NOT be deleted."
+                "Note: Game files, saves, achievements, and Proton prefix will NOT be deleted."
             )
             progress_title = "Removing integrations..."
         else:
@@ -1183,11 +1196,10 @@ class LibraryActionsMixin:
         if fpath.exists():
             self._show_depot_selection_dialog(str(fpath), game_data)
         else:
-            self._download_progress_dialog = QProgressDialog(
+            from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+            self._download_progress_dialog = ThemedProgressDialog(
                 f"Downloading manifest for {name}...", "Cancel", 0, 0, self
             )
-            self._download_progress_dialog.setWindowTitle("Downloading Manifest")
-            self._download_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             self._download_progress_dialog.show()
 
             self._configure_depots_after_download = game_data
@@ -1849,10 +1861,10 @@ class LibraryActionsMixin:
         has_dialog_spinner = bool(dialog and hasattr(dialog, "validate_btn") and dialog.validate_btn)
 
         if not download_only and not is_verify and not has_dialog_spinner:
-            self._download_progress_dialog = QProgressDialog(
+            from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+            self._download_progress_dialog = ThemedProgressDialog(
                 f"Downloading {name}...", "Cancel", 0, 0, self
             )
-            self._download_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             self._download_progress_dialog.show()
         else:
             self._download_progress_dialog = None
@@ -1919,7 +1931,7 @@ class LibraryActionsMixin:
                 name = game_data.get("game_name", f"App {appid}")
                 QMessageBox.information(self, "Refetch Manifest", f"Refetched manifest zip successfully for {name}!")
             
-            if not download_only and self._details_dialog:
+            if not download_only:
                 try:
                     self._submit_job(fpath, game_data, self._details_dialog)
                 except RuntimeError:
@@ -1950,9 +1962,8 @@ class LibraryActionsMixin:
 
     def _check_hubcap_status_first(self, app_id: str, game_data: dict, dialog: QDialog) -> None:
         """Runs the Stage 1 pre-download Hubcap status check asynchronously."""
-        check_progress = QProgressDialog("Checking Hubcap status...", None, 0, 0, self)
-        check_progress.setWindowModality(Qt.WindowModality.WindowModal)
-        check_progress.setCancelButton(None)
+        from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+        check_progress = ThemedProgressDialog("Checking Hubcap status...", None, 0, 0, self)
         check_progress.show()
 
         def _check_in_background():
@@ -2032,10 +2043,8 @@ class LibraryActionsMixin:
         if game_data.get("_smart_update"):
             logger.info(f"[Smart Update] _submit_job: using pre-assembled game_data, skipping zip parse for AppID {game_data.get('appid')}")
             if not has_dialog_spinner and not is_verify:
-                parse_progress = QProgressDialog("Applying manifest...", None, 0, 0, self)
-                parse_progress.setWindowModality(Qt.WindowModality.WindowModal)
-                parse_progress.setMinimumDuration(0)
-                parse_progress.setCancelButton(None)
+                from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+                parse_progress = ThemedProgressDialog("Applying manifest...", None, 0, 0, self)
                 parse_progress.show()
             else:
                 parse_progress = None
@@ -2043,10 +2052,8 @@ class LibraryActionsMixin:
             return
 
         if not has_dialog_spinner and not is_verify:
-            parse_progress = QProgressDialog("Reading manifest...", None, 0, 0, self)
-            parse_progress.setWindowModality(Qt.WindowModality.WindowModal)
-            parse_progress.setMinimumDuration(200)
-            parse_progress.setCancelButton(None)
+            from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+            parse_progress = ThemedProgressDialog("Reading manifest...", None, 0, 0, self)
             parse_progress.show()
         else:
             parse_progress = None
@@ -2088,6 +2095,9 @@ class LibraryActionsMixin:
             "job_type": "verify" if is_verify else "download",
             "branch": target_branch,
         })
+        if isinstance(parsed_data, dict) and parsed_data.get("buildid") and not game_data.get("_is_rollback"):
+            metadata["buildid"] = str(parsed_data["buildid"])
+
         if game_data.get("_is_rollback"):
             metadata["_is_rollback"] = True
             metadata["job_type"] = "verify"
@@ -2166,12 +2176,14 @@ class LibraryActionsMixin:
             appid = str(parsed_data["appid"])
             game_info = (metadata or {}).get("game_data") or {}
 
+            is_dlc_only = bool(game_data.get("_dlc_only") or game_data.get("_lock_dlc_only"))
             selection = self._resolve_depot_selection(
                 appid=appid,
                 depots=depots,
                 parsed_data=parsed_data,
                 installed_depots=game_info.get("installed_depots"),
                 is_verify=is_verify,
+                is_dlc_only=is_dlc_only,
             )
             selected_depots = selection.selected_depots
             cached_selected = selection.cached_selected

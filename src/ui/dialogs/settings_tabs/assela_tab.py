@@ -42,7 +42,6 @@ def create_assela_tab(dialog) -> QWidget:
 
     # Section 1 Card: ASSella Settings
     assella_card, assella_lay = dialog._create_card_frame("ASSella Settings")
-    dialog.smart_depot_selection_checkbox = None
     if dialog.settings.value("smart_depot_selection") is None:
         dialog.settings.setValue("smart_depot_selection", True)
 
@@ -99,7 +98,6 @@ def create_assela_tab(dialog) -> QWidget:
     )
     assella_lay.addWidget(dialog.enable_eosproxy_default_checkbox)
 
-    dialog.experimental_ddm_checkbox = None
     if dialog.settings.value("use_experimental_ddm") is None:
         dialog.settings.setValue("use_experimental_ddm", True)
 

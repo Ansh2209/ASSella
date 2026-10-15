@@ -36,6 +36,7 @@ from ui.dialogs.game_details.widgets import CenteredComboBox, MaterialTile
 from ui.dialogs.game_details.hero_header import thin_line, get_last_checked
 from ui.progress_button import ProgressButton
 from utils.helpers import get_base_path
+from utils.qt_utils import clear_layout
 from utils.lua_parsing import iter_live_matches
 from utils.yaml_config_manager import (
     get_user_config_path, add_fake_app_id, remove_fake_app_id,
@@ -1089,7 +1090,8 @@ def trigger_rollback_job(dialog, depot_id, build_id: str, manifest_id: str = Non
         do_package_and_submit_manual_job(dialog, None, None, depots_map, build_id, pin_build=pin_build)
         return
 
-    progress = QProgressDialog(f"Generating {len(missing_manifests)} manifest(s) from Hubcap...", None, 0, len(missing_manifests), dialog)
+    from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+    progress = ThemedProgressDialog(f"Generating {len(missing_manifests)} manifest(s) from Hubcap...", None, 0, len(missing_manifests), dialog)
     progress.setWindowModality(Qt.WindowModality.WindowModal)
     progress.setCancelButton(None)
     progress.show()
@@ -1288,10 +1290,7 @@ def do_package_and_submit_manual_job(dialog, src_manifest_path, manifest_filenam
 
 
 def build_uninstall_panel(dialog) -> None:
-    while dialog._uninstall_content.count():
-        item = dialog._uninstall_content.takeAt(0)
-        if item.widget():
-            item.widget().deleteLater()
+    clear_layout(dialog._uninstall_content)
 
     from utils.dlc_helpers import is_dlc_only_mode, get_dlc_only_info
     is_dlc = is_dlc_only_mode(dialog.appid)
@@ -2467,7 +2466,7 @@ def on_move_to_vapor_clicked(dialog) -> None:
         box = QMessageBox(dialog)
         box.setWindowTitle("AT0-M Plugins Required")
         box.setIcon(QMessageBox.Icon.Warning)
-        box.setText("AT0-M mode requires SLSsteam plugins (download.lua and spliced-tickets.lua).\n\nThe plugins were not found in your SLSsteam plugins directory.")
+        box.setText("AT0-M mode requires SLSsteam plugins (download interceptor and spliced-tickets.lua).\n\nThe plugins were not found in your SLSsteam plugins directory.")
         box.setInformativeText("Please go to Settings -> AT0-M and enable/deploy plugin support (or enable 'I'm using custom plugins (Advanced)') before moving games to AT0-M.")
         settings_btn = box.addButton("Open AT0-M Settings", QMessageBox.ButtonRole.ActionRole)
         box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)

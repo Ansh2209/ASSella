@@ -219,7 +219,7 @@ def create_health_tab(dialog) -> QWidget:
     if sys.platform == "linux":
         sls_cfg_card, sls_cfg_layout = dialog._create_card_frame("SLS Config")
 
-        sls_cfg_desc = QLabel("Validate and synchronize ~/.config/SLSsteam/config.yaml against upstream template, or manage ID inheritance.")
+        sls_cfg_desc = QLabel("Validate and synchronize ~/.config/SLSsteam/config.yaml against upstream template.")
         sls_cfg_desc.setStyleSheet("color: rgba(255, 255, 255, 0.6); font-size: 8.5pt; font-weight: 400; border: none; background: transparent;")
         sls_cfg_desc.setWordWrap(True)
         sls_cfg_layout.addWidget(sls_cfg_desc)
@@ -272,13 +272,6 @@ def create_health_tab(dialog) -> QWidget:
             dialog.assfixer_restore_btn.setEnabled(False)
         dialog.assfixer_restore_btn.clicked.connect(lambda: run_assfixer_restore(dialog))
         btn_row.addWidget(dialog.assfixer_restore_btn)
-
-        dialog.sls_inh_btn = QPushButton("Inheritance")
-        dialog.sls_inh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        dialog.sls_inh_btn.setStyleSheet(btn_style)
-        dialog.sls_inh_btn.clicked.connect(lambda: open_sls_inheritance_dialog(dialog))
-        dialog.sls_inh_btn.hide()
-        btn_row.addWidget(dialog.sls_inh_btn)
 
         btn_row.addStretch()
         sls_cfg_layout.addLayout(btn_row)
@@ -430,28 +423,6 @@ def refresh_health_tab_status(dialog) -> None:
         dialog.sls_version_check_signal.emit(res)
 
     threading.Thread(target=_ver_worker, daemon=True).start()
-
-    # 4. Check SLS Inheritance orphans in background
-    if hasattr(dialog, "sls_inh_btn") and dialog.sls_inh_btn:
-        def _inh_worker():
-            try:
-                from ui.dialogs.sls_inheritance import scan_sls_orphans
-                orphans = scan_sls_orphans()
-                count = len(orphans)
-            except Exception:
-                count = 0
-
-            def _apply_inh_visibility():
-                if hasattr(dialog, "sls_inh_btn") and dialog.sls_inh_btn:
-                    if count > 0:
-                        dialog.sls_inh_btn.setText(f"Inheritance ({count})")
-                        dialog.sls_inh_btn.show()
-                    else:
-                        dialog.sls_inh_btn.hide()
-
-            QTimer.singleShot(0, _apply_inh_visibility)
-
-        threading.Thread(target=_inh_worker, daemon=True).start()
 
     update_rec_score_badge(dialog)
 
@@ -620,16 +591,6 @@ def apply_health_recommended_settings(dialog) -> None:
     QMessageBox.information(dialog, "Settings Applied", "Recommended workflow settings applied successfully!")
 
 
-def open_sls_inheritance_dialog(dialog) -> None:
-    try:
-        from ui.dialogs.sls_inheritance import SlsInheritanceDialog
-        parent = dialog.parent() if dialog.parent() else dialog
-        dlg = SlsInheritanceDialog(parent)
-        dlg.exec()
-    except Exception as e:
-        logger.error(f"Error opening SLS Inheritance dialog: {e}", exc_info=True)
-
-
 def run_assfixer_check(dialog) -> None:
     logger.info("ASSfixer check triggered from Settings.")
     dialog.assfixer_check_btn.setEnabled(False)
@@ -655,13 +616,13 @@ def handle_assfixer_check_done(dialog, result) -> None:
     dialog.assfixer_check_btn.setEnabled(True)
     if needs_repair:
         dialog.assfixer_repair_btn.setEnabled(True)
-        dialog.assfixer_status_lbl.setText(f"🟡 {summary}")
+        dialog.assfixer_status_lbl.setText(f"[!] {summary}")
         dialog.assfixer_status_lbl.setStyleSheet("color: #e0af68; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
         if details:
             dialog.assfixer_status_lbl.setToolTip("\n".join(details))
     else:
         dialog.assfixer_repair_btn.setEnabled(True)
-        dialog.assfixer_status_lbl.setText(f"🟢 {summary}")
+        dialog.assfixer_status_lbl.setText(f"[OK] {summary}")
         dialog.assfixer_status_lbl.setStyleSheet("color: #9ece6a; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
         dialog.assfixer_status_lbl.setToolTip("")
 
@@ -698,11 +659,11 @@ def handle_assfixer_repair_done(dialog, result) -> None:
     dialog.assfixer_repair_btn.setEnabled(True)
     dialog.assfixer_restore_btn.setEnabled(has_bak)
     if success:
-        dialog.assfixer_status_lbl.setText(f"🟢 {msg}")
+        dialog.assfixer_status_lbl.setText(f"[OK] {msg}")
         dialog.assfixer_status_lbl.setStyleSheet("color: #9ece6a; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
         QMessageBox.information(dialog, "ASSfixer", msg)
     else:
-        dialog.assfixer_status_lbl.setText(f"🔴 {msg}")
+        dialog.assfixer_status_lbl.setText(f"[FAIL] {msg}")
         dialog.assfixer_status_lbl.setStyleSheet("color: #f7768e; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
         QMessageBox.warning(dialog, "ASSfixer", msg)
 
@@ -723,12 +684,12 @@ def run_assfixer_restore(dialog) -> None:
         success, msg, bak_path = restore_config_backup()
         dialog.assfixer_restore_btn.setEnabled(has_config_backup())
         if success:
-            dialog.assfixer_status_lbl.setText(f"🟢 {msg}")
+            dialog.assfixer_status_lbl.setText(f"[OK] {msg}")
             dialog.assfixer_status_lbl.setStyleSheet("color: #9ece6a; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
             dialog.assfixer_status_lbl.show()
             QMessageBox.information(dialog, "Backup Restored", msg)
         else:
-            dialog.assfixer_status_lbl.setText(f"🔴 {msg}")
+            dialog.assfixer_status_lbl.setText(f"[FAIL] {msg}")
             dialog.assfixer_status_lbl.setStyleSheet("color: #f7768e; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
             dialog.assfixer_status_lbl.show()
             QMessageBox.warning(dialog, "Restore Failed", msg)

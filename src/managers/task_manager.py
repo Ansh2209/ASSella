@@ -282,6 +282,12 @@ class TaskManager(
                         continue
                     if k not in merged or merged[k] is None:
                         merged[k] = v
+
+                # If game_data has a freshly parsed buildid and this is not a rollback/pin,
+                # adopt the fresh buildid from the zip package over stale metadata
+                if game_data.get("buildid") and not merged.get("pin_build") and not merged.get("is_rollback") and not merged.get("_is_rollback"):
+                    merged["buildid"] = game_data["buildid"]
+
             game_data = merged
 
             if "manifest_overrides" in merged and merged["manifest_overrides"]:
@@ -582,7 +588,8 @@ class TaskManager(
             if from_web or is_headless:
                 return libraries[0]
 
-            dialog = SteamLibraryDialog(libraries, self.main_window)
+            accent_c = self.settings.value("accent_color", "#6c5ce7", type=str)
+            dialog = SteamLibraryDialog(libraries, self.main_window, accent_color=accent_c)
             if dialog.exec():
                 return dialog.get_selected_path()
             else:
@@ -595,9 +602,14 @@ class TaskManager(
                 default_dir = os.path.expanduser("~/.local/share/ACCELA/downloads")
                 os.makedirs(default_dir, exist_ok=True)
                 return default_dir
-            return QFileDialog.getExistingDirectory(
-                self.main_window, "Select Destination Folder"
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self.main_window,
+                "No Steam Library Found",
+                "Steam has not initialized any library folders yet.\n\n"
+                "Please install at least one free game using the Steam client to generate your library folders, then restart ASSella to continue."
             )
+            return None
 
     def _handle_slssteam_mode(self):
         # Deferred import
@@ -834,6 +846,74 @@ class TaskManager(
             action_mode = self.settings.value("at0m_start_download_action", self.settings.value("vapor_start_download_action", "ask", type=str), type=str)
 
         if use_native_steam:
+            # Check platform compatibility (Linux host vs Windows-only depots in package)
+            try:
+                from core.native_steam.compat_tool import (
+                    check_native_steam_platform_mismatch,
+                    force_proton_for_app,
+                )
+                from ui.dialogs.platform_mismatch_dialog import (
+                    PlatformMismatchDialog,
+                    ACTION_FORCE_PROTON,
+                    ACTION_ASSELLA_DOWNLOAD,
+                    ACTION_CANCEL,
+                )
+                is_mismatch, mismatch_details = check_native_steam_platform_mismatch(
+                    appid=appid_str,
+                    available_depots=selected_depots,
+                    game_name=game_title,
+                )
+                if is_mismatch:
+                    m_dlg = PlatformMismatchDialog(
+                        parent=self.main_window,
+                        details=mismatch_details,
+                        accent_color=accent_c,
+                    )
+                    m_dlg.exec()
+                    m_act = m_dlg.get_action()
+                    if m_act == ACTION_FORCE_PROTON:
+                        pref_tool = mismatch_details.get("preferred_tool", "proton_experimental")
+                        force_proton_for_app(appid_str, tool_name=pref_tool, restart_steam_if_running=True)
+                    elif m_act == ACTION_ASSELLA_DOWNLOAD:
+                        use_native_steam = False
+                    else:  # ACTION_CANCEL
+                        logger.info("[TaskManager] User cancelled download on platform mismatch")
+                        self.job_finished()
+                        return
+            except Exception as e:
+                logger.debug(f"[TaskManager] Error during platform mismatch check: {e}")
+
+        if use_native_steam:
+            # Enforce that dest_path is strictly a valid Steam library
+            steam_libs = steam_helpers.get_steam_libraries()
+            if not steam_libs:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self.main_window,
+                    "No Steam Library Found",
+                    "Steam has not initialized any library folders yet.\n\n"
+                    "Please install at least one free game using the Steam client to generate your library folders, then restart ASSella to continue."
+                )
+                logger.warning("[TaskManager] Aborting native Steam download: No Steam libraries found.")
+                self.job_finished()
+                return
+
+            norm_libs = [os.path.normpath(p) for p in steam_libs]
+            if not dest_path or os.path.normpath(dest_path) not in norm_libs:
+                if len(steam_libs) == 1:
+                    dest_path = steam_libs[0]
+                    self.current_dest_path = dest_path
+                else:
+                    from ui.dialogs.steamlibrary import SteamLibraryDialog
+                    lib_dlg = SteamLibraryDialog(steam_libs, self.main_window, accent_color=accent_c)
+                    if lib_dlg.exec() and lib_dlg.get_selected_path():
+                        dest_path = lib_dlg.get_selected_path()
+                        self.current_dest_path = dest_path
+                    else:
+                        logger.info("[TaskManager] User cancelled Steam library selection")
+                        self.job_finished()
+                        return
+
             if action_mode == "ask":
                 from ui.dialogs.native_steam_action_dialog import (
                     NativeSteamActionDialog,
@@ -1050,8 +1130,22 @@ class TaskManager(
                                 text = acf_path.read_text(encoding="utf-8", errors="ignore")
                                 m = re.search(r'"StateFlags"\s+"(\d+)"', text)
                                 if m and m.group(1) == "4":
+                                    # Validate against 0-byte ghost installs
+                                    m_size = re.search(r'"SizeOnDisk"\s+"(\d+)"', text)
+                                    size_on_disk = int(m_size.group(1)) if m_size else 0
+                                    m_depots = re.search(r'"InstalledDepots"\s*\{([^}]*)\}', text, re.DOTALL)
+                                    depot_matches = re.findall(r'"(\d+)"\s*\{', m_depots.group(1)) if m_depots else []
+
+                                    if size_on_disk == 0 or not depot_matches:
+                                        logger.warning(
+                                            f"[VaporWatcher] AppID {appid} reached StateFlags=4 but SizeOnDisk={size_on_disk} "
+                                            f"and InstalledDepots={depot_matches}. Ghost/empty download detected. "
+                                            "Aborting watcher without marking up_to_date."
+                                        )
+                                        return
+
                                     logger.info(
-                                        f"[VaporWatcher] Steam download completed for AppID {appid} (StateFlags=4). "
+                                        f"[VaporWatcher] Steam download completed for AppID {appid} (StateFlags=4, SizeOnDisk={size_on_disk}). "
                                         "Marking up_to_date and refreshing library..."
                                     )
                                     # Now that Steam confirmed the download, set the status.
@@ -1109,6 +1203,70 @@ class TaskManager(
         app_id_str = str(app_id).strip()
         name = game_name or f"App {app_id_str}"
         logger.info(f"[TaskManager] start_native_steam_handoff: {name} ({app_id_str}), auto_install={auto_install}")
+
+        # Direct-call safeguard: platform compatibility check
+        try:
+            from core.native_steam.compat_tool import (
+                check_native_steam_platform_mismatch,
+                force_proton_for_app,
+            )
+            from ui.dialogs.platform_mismatch_dialog import (
+                PlatformMismatchDialog,
+                ACTION_FORCE_PROTON,
+                ACTION_ASSELLA_DOWNLOAD,
+                ACTION_CANCEL,
+            )
+            is_mismatch, mismatch_details = check_native_steam_platform_mismatch(
+                appid=app_id_str,
+                game_name=name,
+            )
+            if is_mismatch:
+                m_dlg = PlatformMismatchDialog(
+                    parent=self.main_window,
+                    details=mismatch_details,
+                )
+                m_dlg.exec()
+                m_act = m_dlg.get_action()
+                if m_act == ACTION_FORCE_PROTON:
+                    pref_tool = mismatch_details.get("preferred_tool", "proton_experimental")
+                    force_proton_for_app(app_id_str, tool_name=pref_tool, restart_steam_if_running=True)
+                elif m_act == ACTION_ASSELLA_DOWNLOAD:
+                    logger.info(f"[TaskManager] User chose ASSella downloader for {app_id_str}")
+                    if self.main_window and hasattr(self.main_window, "open_download_dialog"):
+                        self.main_window.open_download_dialog(app_id_str)
+                    return
+                else:  # ACTION_CANCEL
+                    logger.info(f"[TaskManager] Handoff cancelled due to platform mismatch: {app_id_str}")
+                    return
+        except Exception as e:
+            logger.debug(f"[TaskManager] Error checking mismatch in start_native_steam_handoff: {e}")
+
+        # Direct-call safeguard: ensure a valid Steam library is targeted
+        from core import steam_helpers
+        steam_libs = steam_helpers.get_steam_libraries()
+        if not steam_libs:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self.main_window,
+                "No Steam Library Found",
+                "Steam has not initialized any library folders yet.\n\n"
+                "Please install at least one free game using the Steam client to generate your library folders, then restart ASSella to continue."
+            )
+            return
+
+        norm_libs = [os.path.normpath(p) for p in steam_libs]
+        if not library_path or os.path.normpath(library_path) not in norm_libs:
+            if len(steam_libs) == 1:
+                library_path = steam_libs[0]
+            else:
+                from ui.dialogs.steamlibrary import SteamLibraryDialog
+                accent_c = self.settings.value("accent_color", "#6c5ce7", type=str)
+                lib_dlg = SteamLibraryDialog(steam_libs, self.main_window, accent_color=accent_c)
+                if lib_dlg.exec() and lib_dlg.get_selected_path():
+                    library_path = lib_dlg.get_selected_path()
+                else:
+                    logger.info("[TaskManager] User cancelled Steam library selection")
+                    return
 
         self.is_processing = True
         self._is_handoff_job = True

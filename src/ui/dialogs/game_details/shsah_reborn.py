@@ -28,6 +28,7 @@ from ui.dialogs.game_details.widgets import SwitchToggle
 from managers.shsah_reborn import SHSAHRebornManager, AchievementItem
 from utils.settings import get_settings
 from utils.color_utils import get_best_foreground_color
+from utils.qt_utils import clear_layout
 
 logger = logging.getLogger(__name__)
 
@@ -198,14 +199,15 @@ class AchievementCard(QFrame):
             self._set_placeholder_icon()
 
     def _set_placeholder_icon(self) -> None:
-        """Render a neat trophy placeholder."""
-        self.icon_label.setText("🏆" if self.item.unlocked else "🔒")
+        """Render a placeholder."""
+        self.icon_label.setText("[Achieved]" if self.item.unlocked else "[Locked]")
         self.icon_label.setStyleSheet("""
             QLabel {
                 background-color: rgba(0, 0, 0, 0.25);
                 border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 4px;
-                font-size: 18pt;
+                font-size: 8pt;
+                color: #888888;
             }
         """)
 
@@ -450,11 +452,7 @@ def _on_achievements_loaded(dialog, achievements: List[AchievementItem], user_st
         return
 
     # Clear any previous cards
-    while dialog.achievements_cards_layout.count() > 0:
-        item = dialog.achievements_cards_layout.takeAt(0)
-        widget = item.widget()
-        if widget:
-            widget.deleteLater()
+    clear_layout(dialog.achievements_cards_layout)
 
     dialog.achievement_cards.clear()
 
