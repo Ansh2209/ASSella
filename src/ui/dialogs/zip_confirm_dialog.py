@@ -24,6 +24,7 @@ import logging
 import threading
 import datetime
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
@@ -712,13 +713,56 @@ class ZipImportConfirmationDialog(QDialog):
         dest_layout.addWidget(self.dest_combo, 1)
         self.confirm_layout.addWidget(self.dest_frame)
 
-        # Bottom Button Row
+        # 7. Already Installed Info Frame (Compact read-only pills for method & storage)
+        self.installed_info_frame = QFrame()
+        self.installed_info_frame.setObjectName("installed_info_frame")
+        self.installed_info_frame.setStyleSheet("""
+            QFrame#installed_info_frame {
+                background: transparent;
+                border: none;
+            }
+        """)
+        installed_info_layout = QHBoxLayout(self.installed_info_frame)
+        installed_info_layout.setContentsMargins(0, 0, 0, 0)
+        installed_info_layout.setSpacing(8)
+
+        self.installed_method_pill = QLabel("Method: ASSella Downloader")
+        self.installed_method_pill.setStyleSheet("""
+            QLabel {
+                background-color: rgba(255, 255, 255, 0.04);
+                color: rgba(255, 255, 255, 0.65);
+                border: none;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 8.2pt;
+                font-weight: 500;
+            }
+        """)
+        installed_info_layout.addWidget(self.installed_method_pill)
+
+        self.installed_storage_pill = QLabel("Storage: Primary Drive")
+        self.installed_storage_pill.setStyleSheet("""
+            QLabel {
+                background-color: rgba(255, 255, 255, 0.04);
+                color: rgba(255, 255, 255, 0.65);
+                border: none;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 8.2pt;
+                font-weight: 500;
+            }
+        """)
+        installed_info_layout.addWidget(self.installed_storage_pill, 1)
+
+        self.installed_info_frame.setVisible(False)
+        self.confirm_layout.addWidget(self.installed_info_frame)
+
+        # Bottom Button Row (Full-width responsive buttons, zero unnecessary borders)
         bottom_row = QHBoxLayout()
         bottom_row.setSpacing(8)
-        bottom_row.addStretch(1)
 
         self.cancel_btn = QPushButton("Cancel")
-        self.cancel_btn.setFixedWidth(95)
+        self.cancel_btn.setFixedHeight(34)
         self.cancel_btn.setStyleSheet("""
             QPushButton {
                 background: rgba(255, 255, 255, 0.05);
@@ -734,10 +778,10 @@ class ZipImportConfirmationDialog(QDialog):
             }
         """)
         self.cancel_btn.clicked.connect(self.reject)
-        bottom_row.addWidget(self.cancel_btn)
+        bottom_row.addWidget(self.cancel_btn, 1)
 
         self.proceed_btn = QPushButton("Proceed")
-        self.proceed_btn.setMinimumWidth(150)
+        self.proceed_btn.setFixedHeight(34)
         dl_fg = get_best_foreground_color(self.accent_color)
         self.proceed_btn.setStyleSheet(f"""
             QPushButton {{
@@ -754,7 +798,7 @@ class ZipImportConfirmationDialog(QDialog):
             }}
         """)
         self.proceed_btn.clicked.connect(self._on_proceed_clicked)
-        bottom_row.addWidget(self.proceed_btn)
+        bottom_row.addWidget(self.proceed_btn, 2)
 
         self.confirm_layout.addLayout(bottom_row)
         self.stack.addWidget(self.page_confirm)
@@ -1357,34 +1401,33 @@ class ZipImportConfirmationDialog(QDialog):
         # 5. AT0-M / Backend Mode Frame Configuration
         is_atom_avail = bool(data.get("is_atom_available", False))
         is_atom_inst = bool(data.get("is_atom_installed", False))
+        is_game_installed = bool(data.get("is_installed", False))
 
         if is_atom_inst:
             self.atom_badge.setVisible(True)
         else:
             self.atom_badge.setVisible(False)
 
-        if is_atom_avail:
-            self.mode_frame.setVisible(True)
+        if is_game_installed:
+            # Already installed: hide the large interactive mode frame completely
+            self.mode_frame.setVisible(False)
             if is_atom_inst:
                 self.radio_mode_atom.setChecked(True)
-                self.mode_installed_tag.setText("Installed in AT0-M")
-                self.mode_installed_tag.setVisible(True)
-            elif data.get("is_installed"):
-                self.radio_mode_assella.setChecked(True)
-                self.mode_installed_tag.setText("Installed in ASSella")
-                self.mode_installed_tag.setVisible(True)
             else:
-                self.mode_installed_tag.setVisible(False)
-                def_action = get_settings().value("at0m_action", "ask", type=str)
-                if def_action == "native":
-                    self.radio_mode_atom.setChecked(True)
-                else:
-                    self.radio_mode_assella.setChecked(True)
+                self.radio_mode_assella.setChecked(True)
+        elif is_atom_avail:
+            self.mode_frame.setVisible(True)
+            self.mode_installed_tag.setVisible(False)
+            def_action = get_settings().value("at0m_action", "ask", type=str)
+            if def_action == "native":
+                self.radio_mode_atom.setChecked(True)
+            else:
+                self.radio_mode_assella.setChecked(True)
             self._update_mode_subtitles()
         else:
             self.mode_frame.setVisible(False)
 
-        # 5. Populate Destination Libraries
+        # 6. Populate Destination Libraries
         from core.steam_helpers import get_steam_libraries, find_steam_install
         from utils.paths import is_valid_download_directory
         import shutil
@@ -1451,9 +1494,47 @@ class ZipImportConfirmationDialog(QDialog):
 
         if self.dest_combo.count() > 0:
             self.dest_combo.setCurrentIndex(preselect_idx)
-            self.dest_frame.setVisible(True)
-        else:
+
+        if is_game_installed:
+            # Hide the interactive combobox frame and show compact read-only pill tabs
             self.dest_frame.setVisible(False)
+            self.installed_info_frame.setVisible(True)
+
+            if is_atom_inst:
+                self.installed_method_pill.setText("Method: AT0-M (Native Steam)")
+                self.installed_method_pill.setToolTip("Installed and managed via AT0-M / SLSsteam")
+            else:
+                self.installed_method_pill.setText("Method: ASSella Downloader")
+                self.installed_method_pill.setToolTip("Installed and managed via ASSella Downloader")
+
+            # Determine human-friendly storage label
+            storage_label = "Primary Drive"
+            target_lib = real_installed or (self.dest_combo.itemData(preselect_idx) if self.dest_combo.count() > 0 else "")
+            if target_lib:
+                t_obj = Path(target_lib)
+                t_lower = target_lib.lower()
+                if steam_root and os.path.realpath(target_lib) == os.path.realpath(steam_root):
+                    d_title = "Primary Drive"
+                elif "/.local/share/steam" in t_lower or "/.steam/steam" in t_lower:
+                    d_title = "Primary Drive"
+                elif "sdcard" in t_lower or "sd_card" in t_lower or "mmcblk" in t_lower or "/sd" in t_lower:
+                    d_title = "SD Card"
+                else:
+                    d_title = t_obj.name
+                    if d_title.lower() in ("steamlibrary", "steamapps", "common") and len(t_obj.parts) > 1:
+                        d_title = t_obj.parts[-2]
+                storage_label = f"{d_title} ({target_lib})"
+            elif self.dest_combo.count() > 0:
+                storage_label = self.dest_combo.currentText().split(" — ")[0]
+
+            self.installed_storage_pill.setText(f"Storage: {storage_label}")
+            self.installed_storage_pill.setToolTip(str(target_lib or storage_label))
+        else:
+            self.installed_info_frame.setVisible(False)
+            if self.dest_combo.count() > 0:
+                self.dest_frame.setVisible(True)
+            else:
+                self.dest_frame.setVisible(False)
 
         # Stop loading movie and switch to confirmation page with snug auto-fit
         if getattr(self, "movie", None):
@@ -1462,10 +1543,10 @@ class ZipImportConfirmationDialog(QDialog):
             except Exception:
                 pass
 
-        target_h = 470
+        target_h = 420
         if has_different_builds:
-            target_h += 80
-        if hasattr(self, "mode_frame") and not self.mode_frame.isHidden():
+            target_h += 75
+        if not is_game_installed and hasattr(self, "mode_frame") and not self.mode_frame.isHidden():
             target_h += 75
         self.setFixedSize(540, target_h)
         if self.parent():
@@ -1645,6 +1726,10 @@ class ZipImportConfirmationDialog(QDialog):
                     game_data["library_path"] = self.result_data["library_path"]
                 self.processed_game_data = game_data
 
+                # If already installed via AT0-M, perform smart injection of missing keys/depots/manifests
+                if self.result_data.get("is_installed") and self.result_data.get("is_atom_installed"):
+                    self._smart_inject_atom_missing_info(game_data)
+
             except Exception as e:
                 logger.error(f"[ZipConfirmDialog] Error preparing package in confirmation dialog: {e}", exc_info=True)
                 self.processed_game_data = {}
@@ -1652,6 +1737,138 @@ class ZipImportConfirmationDialog(QDialog):
             QMetaObject.invokeMethod(self, "accept", Qt.ConnectionType.QueuedConnection)
 
         threading.Thread(target=_prepare_worker, daemon=True).start()
+
+    def _smart_inject_atom_missing_info(self, game_data: Dict[str, Any]):
+        """
+        For an already-installed AT0-M game, compare package contents and Steam metadata
+        against SLSsteam config.yaml. Inject any genuinely missing depot keys, content
+        depots, or pinned manifests cleanly in-place using BatchConfigEditor.
+        """
+        try:
+            from utils.yaml_config_manager import (
+                get_user_config_path,
+                batch_config_edit,
+                _read_config_content,
+                _get_section_bounds,
+            )
+            from utils.plugin_games import load_plugin_library, save_plugin_library, SHARED_REDISTS, SLSBridge
+            from core.native_steam.steam_manifest_pinning import (
+                resolve_pinned_manifests,
+                set_manifest_ids,
+            )
+
+            cfg_path = get_user_config_path()
+            if not cfg_path.exists():
+                return
+
+            appid_str = str(self.result_data.get("appid", "")).strip()
+            if not appid_str or appid_str in ("0", "unknown"):
+                return
+
+            game_name = self.result_data.get("game_name", "") or game_data.get("game_name", f"App {appid_str}")
+
+            # 1. Parse current config.yaml to inspect existing state
+            cfg_text = _read_config_content(cfg_path) or ""
+
+            existing_keys = set()
+            bounds_keys = _get_section_bounds(cfg_text, "DecryptionKeys")
+            if bounds_keys:
+                sec_keys = cfg_text[bounds_keys[1] : bounds_keys[2]]
+                for m in re.finditer(r"^[ \t]*['\"]?(\d+)['\"]?[ \t]*:[ \t]*([0-9a-fA-F]{64})", sec_keys, re.MULTILINE):
+                    existing_keys.add(m.group(1))
+
+            existing_depots = set()
+            bounds_depots = _get_section_bounds(cfg_text, "AdditionalDepots")
+            if bounds_depots:
+                sec_depots = cfg_text[bounds_depots[1] : bounds_depots[2]]
+                for m in re.finditer(r"^[ \t]*-[ \t]*(\d+)", sec_depots, re.MULTILINE):
+                    existing_depots.add(m.group(1))
+
+            # 2. Extract keys and content depots from package game_data
+            candidate_keys = {}
+            if game_data.get("app_key"):
+                candidate_keys[appid_str] = str(game_data["app_key"]).strip().lower()
+            for d, k in (game_data.get("depot_keys") or {}).items():
+                if k:
+                    candidate_keys[str(d)] = str(k).strip().lower()
+            for d, dinfo in (game_data.get("depots") or {}).items():
+                if isinstance(dinfo, dict):
+                    k = dinfo.get("key") or dinfo.get("decryption_key")
+                    if k:
+                        candidate_keys[str(d)] = str(k).strip().lower()
+
+            candidate_depots = {}
+            for d, dinfo in (game_data.get("depots") or {}).items():
+                did_str = str(d).strip()
+                if did_str.isdigit() and did_str != appid_str:
+                    d_desc = ""
+                    if isinstance(dinfo, dict):
+                        d_desc = dinfo.get("desc") or dinfo.get("name") or ""
+                    candidate_depots[did_str] = d_desc
+
+            # 3. Determine missing keys and missing depots
+            missing_keys = {
+                d: k for d, k in candidate_keys.items()
+                if d not in existing_keys and len(k) == 64
+            }
+            missing_depots = {
+                d: desc for d, desc in candidate_depots.items()
+                if d not in existing_depots
+            }
+
+            # 4. Inject missing items cleanly in-place via BatchConfigEditor
+            if missing_keys or missing_depots:
+                logger.info(
+                    f"[ZipConfirmDialog] Injecting missing AT0-M info for {game_name} ({appid_str}): "
+                    f"{len(missing_keys)} key(s), {len(missing_depots)} depot(s)"
+                )
+                with batch_config_edit(cfg_path) as editor:
+                    # Invariant: AppID in AdditionalApps
+                    editor.add_app(appid_str, comment=game_name)
+
+                    # Invariant: Base AppID never in AdditionalDepots
+                    for did, d_desc in missing_depots.items():
+                        depot_comment = f"{game_name} - {d_desc} ({did})" if d_desc else f"{game_name} ({did})"
+                        if did in SHARED_REDISTS:
+                            depot_comment = "Steamworks Shared"
+                        editor.add_depot(did, comment=depot_comment, app_id=appid_str)
+
+                    # Invariant: Valid 64-hex keys in DecryptionKeys
+                    for did, k in missing_keys.items():
+                        if did == appid_str:
+                            k_comment = f"{game_name} [AppKey] ({appid_str})"
+                        elif did in SHARED_REDISTS:
+                            k_comment = "Steamworks Shared"
+                        else:
+                            d_desc = candidate_depots.get(did, "")
+                            k_comment = f"{game_name} - {d_desc}" if d_desc else game_name
+                        editor.add_key(did, k, comment=k_comment)
+
+                # Keep plugin_library.json in sync
+                try:
+                    plib = load_plugin_library()
+                    if appid_str in plib:
+                        rec = plib[appid_str]
+                        all_depots = list(set(rec.get("depots", []) + list(candidate_depots.keys())))
+                        all_keys = dict(rec.get("keys", {}))
+                        all_keys.update(candidate_keys)
+                        rec["depots"] = all_depots
+                        rec["keys"] = all_keys
+                        rec["updated_at"] = int(time.time())
+                        save_plugin_library(plib)
+                except Exception as _pl_err:
+                    logger.debug(f"[ZipConfirmDialog] Failed to update plugin_library.json: {_pl_err}")
+
+                SLSBridge.notify_reload()
+
+            # 5. Check pinned manifests if rollback / pin is selected
+            if self.pin_checkbox.isChecked() or self.result_data.get("intent") in ("Rollback", "Downgrade"):
+                pinned_manifests = resolve_pinned_manifests(game_data, appid_str)
+                if pinned_manifests:
+                    set_manifest_ids(cfg_path, pinned_manifests, comment=f"{game_name} Pinned Build")
+
+        except Exception as e:
+            logger.error(f"[ZipConfirmDialog] Error performing smart AT0-M injection: {e}", exc_info=True)
 
     def get_metadata(self) -> Dict[str, Any]:
         """
@@ -1671,12 +1888,15 @@ class ZipImportConfirmationDialog(QDialog):
             chosen_bid = self.result_data.get("imported_buildid", "") or self.result_data.get("live_buildid", "")
 
         is_rollback = (not use_latest) and (self.result_data.get("intent") in ("Rollback", "Downgrade"))
-        is_atom_selected = (
-            hasattr(self, "radio_mode_atom")
-            and self.radio_mode_atom.isChecked()
-            and hasattr(self, "mode_frame")
-            and not self.mode_frame.isHidden()
-        )
+        if self.result_data.get("is_installed"):
+            is_atom_selected = bool(self.result_data.get("is_atom_installed", False))
+        else:
+            is_atom_selected = (
+                hasattr(self, "radio_mode_atom")
+                and self.radio_mode_atom.isChecked()
+                and hasattr(self, "mode_frame")
+                and not self.mode_frame.isHidden()
+            )
 
         # Download backend and AT0-M link:
         # Native Steam can only fetch the live public branch. For downgrades/rollbacks,
@@ -1707,8 +1927,14 @@ class ZipImportConfirmationDialog(QDialog):
             "register_at0m": register_at0m,
             "is_atom": is_atom_selected,
         }
-        if self.result_data.get("library_path"):
-            meta["library_path"] = self.result_data["library_path"]
+        target_lib = ""
+        if self.result_data.get("is_installed") and self.result_data.get("library_path"):
+            target_lib = self.result_data["library_path"]
+        elif hasattr(self, "dest_combo") and self.dest_combo.currentData():
+            target_lib = self.dest_combo.currentData()
+        if target_lib:
+            meta["library_path"] = target_lib
+
         if self.processed_game_data:
             meta["preprocessed_game_data"] = self.processed_game_data
         return meta

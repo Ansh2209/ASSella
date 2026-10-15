@@ -473,7 +473,7 @@ class GameLibraryDialog(
         row_uninstall.setSpacing(8)
         lbl_uninstall = QLabel("Uninstall Selected")
         lbl_uninstall.setStyleSheet("background-color: #1a1a20; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 4px; padding: 4px 8px; color: #FFFFFF; font-size: 8.5pt;")
-        btn_uninstall = QPushButton("🗑")
+        btn_uninstall = QPushButton("✕")
         btn_uninstall.setFixedSize(32, 32)
         btn_uninstall.setCursor(Qt.CursorShape.PointingHandCursor)
         
@@ -522,6 +522,7 @@ class GameLibraryDialog(
         )
 
         self.games_list.itemClicked.connect(self._on_item_selected)
+        self.games_list.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.games_list.customContextMenuRequested.connect(self._show_games_list_context_menu)
         self.goldberg_check_complete.connect(self._on_goldberg_check_complete)
         self.manifest_download_complete.connect(self._on_manifest_download_complete)

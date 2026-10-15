@@ -639,7 +639,7 @@ class FetchManifestDialog(QDialog):
             if self.settings and not self.settings.value("konami_settings_unlocked", False, type=bool):
                 self.settings.setValue("konami_settings_unlocked", True)
                 self.settings.sync()
-                self.status_label.setText("🎮 Cheat Code Activated: Settings tab unlocked!")
+                self.status_label.setText("Cheat Code Activated: Settings tab unlocked!")
                 self.status_label.setStyleSheet("color: #81C784; font-weight: bold;")
                 logger.info("[FetchManifest] Keyboard cheat code unlocked Settings tab.")
 
@@ -1130,6 +1130,46 @@ class FetchManifestDialog(QDialog):
         aid_str = str(app_id).strip()
         name = game_name or f"App {aid_str}"
 
+        # Pre-handoff platform compatibility check (Linux host vs Windows-only depots in package)
+        try:
+            from core.native_steam.compat_tool import (
+                check_native_steam_platform_mismatch,
+                force_proton_for_app,
+            )
+            from ui.dialogs.platform_mismatch_dialog import (
+                PlatformMismatchDialog,
+                ACTION_FORCE_PROTON,
+                ACTION_ASSELLA_DOWNLOAD,
+                ACTION_CANCEL,
+            )
+            is_mismatch, mismatch_details = check_native_steam_platform_mismatch(
+                appid=aid_str,
+                game_name=name,
+            )
+            if is_mismatch:
+                m_dlg = PlatformMismatchDialog(
+                    parent=self,
+                    details=mismatch_details,
+                    accent_color=self.accent_color,
+                )
+                m_dlg.exec()
+                m_act = m_dlg.get_action()
+                if m_act == ACTION_FORCE_PROTON:
+                    pref_tool = mismatch_details.get("preferred_tool", "proton_experimental")
+                    self.status_label.setText(f"Configuring Proton ({pref_tool}) for Steam...")
+                    ok = force_proton_for_app(aid_str, tool_name=pref_tool, restart_steam_if_running=True)
+                    if not ok:
+                        logger.error(f"[FetchManifest] Failed to configure Proton for AppID {aid_str}")
+                elif m_act == ACTION_ASSELLA_DOWNLOAD:
+                    self.status_label.setText("Switching to ASSella downloader...")
+                    self._start_assella_flow(aid_str)
+                    return
+                else:  # ACTION_CANCEL
+                    self.status_label.setText("Download cancelled.")
+                    return
+        except Exception as e:
+            logger.debug(f"[FetchManifest] Error during platform mismatch check: {e}")
+
         start_mode = self.settings.value(
             "at0m_start_download_action",
             self.settings.value("vapor_start_download_action", "", type=str),
@@ -1174,23 +1214,30 @@ class FetchManifestDialog(QDialog):
             auto_install = (act in (ACTION_DOWNLOAD, ACTION_TRACK))
 
         selected_library_path = ""
-        if auto_install:
-            libraries = steam_helpers.get_steam_libraries()
-            if libraries:
-                auto_skip_single_choice = (
-                    self.settings.value("auto_skip_single_choice", False, type=bool)
-                    if self.settings
-                    else False
-                )
-                if auto_skip_single_choice and len(libraries) == 1:
-                    selected_library_path = libraries[0]
-                else:
-                    dialog = SteamLibraryDialog(libraries, self)
-                    if dialog.exec():
-                        selected_library_path = dialog.get_selected_path()
-                    else:
-                        self.status_label.setText("Download cancelled.")
-                        return
+        libraries = steam_helpers.get_steam_libraries()
+        if not libraries:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self,
+                "No Steam Library Found",
+                "Steam has not initialized any library folders yet.\n\n"
+                "Please install at least one free game using the Steam client to generate your library folders, then restart ASSella to continue."
+            )
+            self.status_label.setText("No Steam library found.")
+            return
+
+        if len(libraries) == 1:
+            selected_library_path = libraries[0]
+        else:
+            dialog = SteamLibraryDialog(libraries, self, accent_color=self.accent_color)
+            if dialog.exec():
+                selected_library_path = dialog.get_selected_path()
+                if not selected_library_path:
+                    self.status_label.setText("Download cancelled.")
+                    return
+            else:
+                self.status_label.setText("Download cancelled.")
+                return
 
         logger.info(
             f"[FetchManifest] Handing off {name} ({aid_str}) directly to Steam (auto_install={auto_install}, library={selected_library_path})"
@@ -1565,15 +1612,20 @@ class FetchManifestDialog(QDialog):
                 if auto_skip_single_choice and len(libraries) == 1:
                     dest_path = libraries[0]
                 else:
-                    dialog = SteamLibraryDialog(libraries, self)
+                    dialog = SteamLibraryDialog(libraries, self, accent_color=self.accent_color)
                     if dialog.exec():
                         dest_path = dialog.get_selected_path()
                     else:
                         return
             else:
-                dest_path = QFileDialog.getExistingDirectory(self, "Select Steam Library Folder")
-                if not dest_path:
-                    return
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self,
+                    "No Steam Library Found",
+                    "Steam has not initialized any library folders yet.\n\n"
+                    "Please install at least one free game using the Steam client to generate your library folders, then restart ASSella to continue."
+                )
+                return
         else:
             dest_path = QFileDialog.getExistingDirectory(self, "Select Destination Folder")
             if not dest_path:

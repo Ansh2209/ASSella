@@ -7,6 +7,7 @@ DRM & Tools, Steam Workshop Mods, and SLSsteam Ownership Tickets.
 import logging
 from typing import List
 
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer
 from PyQt6.QtWidgets import (
     QDialog,
@@ -119,6 +120,7 @@ from ui.dialogs.game_details.tickets_tab import (
     export_installed_ticket,
     delete_installed_ticket,
 )
+from ui.dialogs.game_details.luafix_tab import init_luafix_tab
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,7 @@ class GameDetailsDialogV2(QDialog):
     build_depots_loaded = pyqtSignal(str, dict)
     build_depots_error = pyqtSignal(str)
     workshop_check_finished = pyqtSignal(bool)
+    luafix_check_finished = pyqtSignal(bool, object)
     manifest_fetch_completed = pyqtSignal(str, str, str, str, str, str, object)
 
     # Rollback toggle: set False to use the old 65px hero layout
@@ -153,6 +156,7 @@ class GameDetailsDialogV2(QDialog):
         self.build_depots_loaded.connect(self._on_build_depots_loaded)
         self.build_depots_error.connect(self._on_build_depots_error)
         self.workshop_check_finished.connect(self._on_workshop_check_finished)
+        self.luafix_check_finished.connect(self._on_luafix_check_finished)
         self.manifest_fetch_completed.connect(self._on_manifest_fetch_completed)
 
         self.accent_color = getattr(parent, "accent_color", "#a1c9fd")
@@ -173,6 +177,10 @@ class GameDetailsDialogV2(QDialog):
         # Check workshop availability and downloaded content in background thread
         from utils.workshop_helpers import check_game_workshop_available_async
         check_game_workshop_available_async(self.appid, self.game_data, callback=self.workshop_check_finished.emit)
+
+        # Check lua.tools fixes availability asynchronously
+        if self.settings.value("luatools_unlocked", False, type=bool):
+            self._check_luafix_async()
 
         # Initial cached builds status for instant display (scraping is deferred until user clicks Builds tab)
         aid = int(self.appid) if self.appid.isdigit() else 0
@@ -403,6 +411,11 @@ class GameDetailsDialogV2(QDialog):
             self.ws_page_index = 4
             self._tickets_tab_index = 5
 
+        if self.settings.value("luatools_unlocked", False, type=bool):
+            idx = len(self._pages_info)
+            self._pages_info.append(("LuaFix", idx))
+            self.luafix_page_index = idx
+
         for label, idx in self._pages_info:
             btn = QPushButton(label)
             btn.setFlat(True)
@@ -417,6 +430,9 @@ class GameDetailsDialogV2(QDialog):
                 from utils.dlc_helpers import is_dlc_only_mode
                 if is_dlc_only_mode(self.appid) or not self._has_workshop or is_atom:
                     btn.setVisible(False)
+            elif label == "LuaFix":
+                self.luafix_tab_btn = btn
+                btn.setVisible(False)
 
         tab_bar_layout.addStretch()
 
@@ -447,6 +463,8 @@ class GameDetailsDialogV2(QDialog):
         self._init_achievements_tab()
         self._init_workshop_tab()
         self._init_tickets_tab()
+        if self.settings.value("luatools_unlocked", False, type=bool):
+            self._init_luafix_tab()
         root.addWidget(self.stacked, 1)
 
         self._switch_tab(0)
@@ -701,24 +719,38 @@ class GameDetailsDialogV2(QDialog):
         fetch_steamdb_builds_async(self)
 
     def _populate_builds_cards(self, data: list):
+        if sip.isdeleted(self):
+            return
         populate_builds_cards(self, data)
 
     def _on_builds_loaded(self, builds: list):
+        if sip.isdeleted(self):
+            return
         on_builds_loaded(self, builds)
 
     def _on_builds_error(self, err_msg: str):
+        if sip.isdeleted(self):
+            return
         on_builds_error(self, err_msg)
 
     def _on_build_depots_loaded(self, build_id: str, depots: dict):
+        if sip.isdeleted(self):
+            return
         on_build_depots_loaded(self, build_id, depots)
 
     def _on_build_depots_error(self, err_msg: str):
+        if sip.isdeleted(self):
+            return
         on_build_depots_error(self, err_msg)
 
     def _on_build_card_clicked(self, idx: int):
+        if sip.isdeleted(self):
+            return
         on_build_card_clicked(self, idx)
 
     def _on_builds_download_clicked(self):
+        if sip.isdeleted(self):
+            return
         on_builds_download_clicked(self)
 
     # ──────────────────────────────────────────
@@ -821,4 +853,36 @@ class GameDetailsDialogV2(QDialog):
     def _init_depots_tab(self):
         from ui.dialogs.game_details.depots_tab import init_depots_tab
         init_depots_tab(self)
+
+    # ──────────────────────────────────────────
+    #  LuaFix Tab Delegations (lua.tools integration)
+    # ──────────────────────────────────────────
+    def _init_luafix_tab(self):
+        init_luafix_tab(self)
+
+    def _check_luafix_async(self):
+        """Asynchronously check if this game has eligible fixes on lua.tools."""
+        def _worker():
+            try:
+                from core.lua_tools_api import LuaToolsAPI
+                res = LuaToolsAPI.get_game_fixes(self.appid)
+                ignore_online = self.settings.value("luatools_ignore_online_fixes", False, type=bool)
+                fixes = LuaToolsAPI.filter_fixes(res.get("fixes", []), ignore_online=ignore_online)
+                has_fixes = bool(res.get("success") and len(fixes) > 0)
+                self.luafix_check_finished.emit(has_fixes, res)
+            except Exception as e:
+                logger.debug(f"[LuaFix] Async check failed for {self.appid}: {e}")
+                self.luafix_check_finished.emit(False, None)
+
+        import threading
+        threading.Thread(target=_worker, daemon=True).start()
+
+    @pyqtSlot(bool, object)
+    def _on_luafix_check_finished(self, has_fixes: bool, res_data: object):
+        if hasattr(self, "luafix_tab_btn") and self.luafix_tab_btn:
+            self.luafix_tab_btn.setVisible(has_fixes)
+        if has_fixes and res_data:
+            self._cached_luafix_res = res_data
+            if hasattr(self, "_luafix_bridge"):
+                self._luafix_bridge.loaded.emit(res_data)
 
