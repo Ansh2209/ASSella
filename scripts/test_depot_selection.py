@@ -85,6 +85,14 @@ def main() -> int:
     single_src = (SRC_DIR / "ui" / "dialogs" / "single_depot_dialog.py").read_text()
     check("storage_targets" in single_src and "_format_storage_info" not in single_src,
           "the single-depot dialog takes its drives from storage_targets")
+    check((pkg / "depot_metadata.py").is_file(),
+          "depot_metadata.py holds the depot facts the metadata mixin renders")
+    metadata_src = (pkg / "_mixins" / "metadata.py").read_text()
+    check("depot_metadata" in metadata_src and "manifests.get(self.branch) or manifests.get" not in metadata_src,
+          "the metadata mixin asks depot_metadata instead of walking manifests itself")
+    mixins_src = (pkg / "_mixins" / "table.py").read_text()
+    check("depot_metadata.manifest_size" in mixins_src,
+          "the missing-depot rows take their size from depot_metadata")
 
     # -------------------------------------------------------------- rules
     print("\n=== platform rules ===")

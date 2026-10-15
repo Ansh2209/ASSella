@@ -14,6 +14,11 @@ Choosing a drive is shared the same way: ``storage_targets.py`` answers which
 drives are worth offering, how each reads, and which starts selected, while the
 widgets stay with each dialog and with ``storage_lock``.
 
+The facts about a depot are shared in the same spirit: ``depot_metadata.py``
+answers what still needs enriching, what size a branch records, how enrichment
+records merge into depot dicts, and what is known about depots the bundle is
+missing - leaving the metadata mixin the threads, the signals and the cells.
+
 Both ``ui.dialogs.depot_selection`` and the legacy facade
 ``ui.dialogs.depotselection`` export the full public API.
 """

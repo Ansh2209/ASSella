@@ -10,6 +10,7 @@ from PyQt6.QtGui import QColor, QPalette
 
 from PyQt6.QtWidgets import QTableWidgetItem
 
+from ui.dialogs.depot_selection import depot_metadata
 from ui.dialogs.depot_selection.items import (
     ConfigTableWidgetItem,
     NumericTableWidgetItem,
@@ -308,17 +309,7 @@ class DepotTableMixin:
         for did in self.missing_hubcap_depots:
             minfo = self.missing_depots_info.get(did, {})
             mname = minfo.get("name")
-            mraw_size = int(minfo.get("size") or 0)
-            if not mraw_size and isinstance(minfo.get("manifests"), dict):
-                manifests = minfo["manifests"]
-                b_entry = manifests.get(self.branch) or manifests.get("public")
-                if isinstance(b_entry, dict):
-                    mraw_size = int(b_entry.get("size") or b_entry.get("download") or 0)
-                if not mraw_size:
-                    for m_val in manifests.values():
-                        if isinstance(m_val, dict) and (m_val.get("size") or m_val.get("download")):
-                            mraw_size = int(m_val.get("size") or m_val.get("download") or 0)
-                            break
+            mraw_size = depot_metadata.manifest_size(minfo, self.branch)
             msize_str = format_size(mraw_size) if mraw_size > 0 else "0 B"
             hubcap_status = minfo.get("hubcap_status")
             if getattr(self, "_is_checking_missing_contents", False):

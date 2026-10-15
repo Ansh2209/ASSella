@@ -147,7 +147,7 @@ jobs:
                        test_config_manager test_depot_selection \
                        test_depot_selection_resolve test_depot_dialog_build \
                        test_manifest_dump test_dump_runner \
-                       test_storage_targets \
+                       test_storage_targets test_depot_metadata \
                        test_language_depots; do
             echo "::group::$suite"
             QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp \

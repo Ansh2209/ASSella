@@ -12,6 +12,7 @@ from PyQt6.QtCore import Qt
 
 from PyQt6.QtGui import QColor, QPalette
 
+from ui.dialogs.depot_selection import depot_metadata
 from ui.dialogs.depot_selection.rules import format_size
 
 logger = logging.getLogger(__name__)
@@ -40,9 +41,7 @@ class DepotMetadataMixin:
         """Start background description/size enrichment for depots that need it."""
         # Check if any depot needs enrichment (generic description or missing size)
         needs_enrichment = any(
-            (not d_data.get("size") and not d_data.get("size_str"))
-            or re.match(r"^(?:\[.*?\]\s*)?(?:Depot|DLC)\s+\d+$", str(d_data.get("desc") or "").strip(), re.IGNORECASE)
-            or not str(d_data.get("desc") or "").strip()
+            depot_metadata.needs_size(d_data) or depot_metadata.needs_name(d_data)
             for d_data in self.depots.values()
             if isinstance(d_data, dict)
         )
@@ -72,52 +71,18 @@ class DepotMetadataMixin:
         except Exception as e:
             logger.debug(f"[DepotSelection] Error loading DB info for missing depots: {e}")
 
-        missing_to_fetch = []
-        for did in self.missing_hubcap_depots:
-            did_str = str(did)
-            if did_str not in self.missing_depots_info:
-                self.missing_depots_info[did_str] = {}
-
-            info = self.missing_depots_info[did_str]
-
-            if did_str in db_depots and isinstance(db_depots[did_str], dict):
-                src = db_depots[did_str]
-                if not info.get("size"):
-                    sz = src.get("size")
-                    if not sz and isinstance(src.get("manifests"), dict):
-                        manifests = src["manifests"]
-                        b_entry = manifests.get(self.branch) or manifests.get("public")
-                        if isinstance(b_entry, dict):
-                            sz = b_entry.get("size") or b_entry.get("download")
-                        if not sz:
-                            for m_val in manifests.values():
-                                if isinstance(m_val, dict) and (m_val.get("size") or m_val.get("download")):
-                                    sz = m_val.get("size") or m_val.get("download")
-                                    break
-                    if sz:
-                        info["size"] = sz
-                for field in ("name", "desc", "oslist", "dlcappid", "is_dlc"):
-                    if not info.get(field) and src.get(field):
-                        info[field] = src[field]
-
-            if did_str in cached_enrichments and isinstance(cached_enrichments[did_str], dict):
-                src = cached_enrichments[did_str]
-                for field in ("name", "desc", "oslist", "dlcappid", "is_dlc"):
-                    if not info.get(field) and src.get(field):
-                        info[field] = src[field]
-                if not info.get("size") and src.get("size_bytes"):
-                    info["size"] = src["size_bytes"]
-
-            if not info.get("name"):
-                try:
-                    from core.ini_parser import parse_depots_ini
-                    ini_names = parse_depots_ini()
-                    if did_str in ini_names:
-                        info["name"] = ini_names[did_str]
-                except Exception:
-                    pass
-
-            if not info.get("name") or not info.get("size"):
+        resolved, missing_to_fetch = depot_metadata.resolve_missing_metadata(
+            self.missing_hubcap_depots,
+            app_depots=db_depots,
+            cached_enrichments=cached_enrichments,
+            branch=self.branch,
+        )
+        for did_str, info in resolved.items():
+            current = self.missing_depots_info.setdefault(did_str, {})
+            for field, value in info.items():
+                if not current.get(field) and value:
+                    current[field] = value
+            if not current.get("name") or not current.get("size"):
                 missing_to_fetch.append(did_str)
 
         if missing_to_fetch:
@@ -157,17 +122,7 @@ class DepotMetadataMixin:
                     did = str(id_item.data(Qt.ItemDataRole.UserRole))
                     minfo = self.missing_depots_info.get(did, {})
                     mname = minfo.get("name")
-                    mraw_size = int(minfo.get("size") or 0)
-                    if not mraw_size and isinstance(minfo.get("manifests"), dict):
-                        manifests = minfo["manifests"]
-                        b_entry = manifests.get(self.branch) or manifests.get("public")
-                        if isinstance(b_entry, dict):
-                            mraw_size = int(b_entry.get("size") or b_entry.get("download") or 0)
-                        if not mraw_size:
-                            for m_val in manifests.values():
-                                if isinstance(m_val, dict) and (m_val.get("size") or m_val.get("download")):
-                                    mraw_size = int(m_val.get("size") or m_val.get("download") or 0)
-                                    break
+                    mraw_size = depot_metadata.manifest_size(minfo, self.branch)
                     msize_str = format_size(mraw_size) if mraw_size > 0 else "0 B"
                     tag = "[Checking]" if getattr(self, "_is_checking_missing_contents", False) else "[Missing]"
                     base_cfg = self._build_config_text(did, minfo)
@@ -414,17 +369,7 @@ class DepotMetadataMixin:
                         sf = size_item.font()
                         sf.setItalic(False)
                         size_item.setFont(sf)
-                        mraw_size = int(d_data.get("size") or 0)
-                        if not mraw_size and isinstance(d_data.get("manifests"), dict):
-                            manifests = d_data["manifests"]
-                            b_entry = manifests.get(self.branch) or manifests.get("public")
-                            if isinstance(b_entry, dict):
-                                mraw_size = int(b_entry.get("size") or b_entry.get("download") or 0)
-                            if not mraw_size:
-                                for m_val in manifests.values():
-                                    if isinstance(m_val, dict) and (m_val.get("size") or m_val.get("download")):
-                                        mraw_size = int(m_val.get("size") or m_val.get("download") or 0)
-                                        break
+                        mraw_size = depot_metadata.manifest_size(d_data, self.branch)
                         if mraw_size > 0:
                             size_item.setText(format_size(mraw_size))
                             if hasattr(size_item, "sort_value"):
@@ -438,54 +383,12 @@ class DepotMetadataMixin:
 
     def _is_manifest_on_disk(self, did: str, mid: str) -> bool:
         """Checks if the .manifest file is already saved in persistent or temporary manifests directory."""
-        from pathlib import Path
-        import tempfile
-        from utils.helpers import get_base_path
-        for s_dir in [Path(tempfile.gettempdir()) / "mistwalker_manifests", Path(get_base_path()) / "manifests"]:
-            if (s_dir / f"{did}_{mid}.manifest").exists():
-                return True
-        return False
+        return depot_metadata.manifest_on_disk(did, mid)
 
     def _apply_depot_enrichments(self, enrichments: dict):
         """Merges enriched metadata into self.depots dictionary."""
         try:
-            if enrichments and self.depots:
-                for did, info in enrichments.items():
-                    target_depot_ids = []
-                    if did in self.depots:
-                        target_depot_ids.append(did)
-                    # Also match any depot whose dlcappid matches did
-                    for dep_k, dep_v in self.depots.items():
-                        if isinstance(dep_v, dict) and str(dep_v.get("dlcappid") or "") == str(did):
-                            if dep_k not in target_depot_ids:
-                                target_depot_ids.append(dep_k)
-
-                    for target_did in target_depot_ids:
-                        d_data = self.depots[target_did]
-                        curr_desc = str(d_data.get("desc") or "").strip()
-                        is_generic = (
-                            not curr_desc
-                            or bool(re.match(r"^(?:\[.*?\]\s*)?Depot \d+$", curr_desc, re.IGNORECASE))
-                            or bool(re.match(r"^(?:\[.*?\]\s*)?DLC \d+$", curr_desc, re.IGNORECASE))
-                        )
-                        dlc_id = info.get("dlcappid") or d_data.get("dlcappid") or did
-                        dlc_tag = f"[DLC {dlc_id}]" if dlc_id and str(dlc_id).isdigit() else "[DLC]"
-                        if is_generic and info.get("name"):
-                            if info.get("is_dlc") or d_data.get("dlcappid"):
-                                d_data["desc"] = f"{dlc_tag} {info['name']}"
-                            else:
-                                d_data["desc"] = info["name"]
-                            d_data["name"] = info["name"]
-                        if (not d_data.get("size") or d_data.get("size") == 0) and info.get("size_bytes"):
-                            d_data["size"] = info["size_bytes"]
-                        if info.get("size_str"):
-                            d_data["size_str"] = info["size_str"]
-                        if info.get("oslist") and not d_data.get("oslist"):
-                            d_data["oslist"] = info["oslist"]
-                        if info.get("osarch") and not d_data.get("osarch"):
-                            d_data["osarch"] = info["osarch"]
-                        if info.get("is_dlc") or d_data.get("dlcappid"):
-                            d_data["is_dlc"] = True
+            depot_metadata.merge_enrichments(self.depots, enrichments)
         finally:
             if hasattr(self, "linux_button") and self.linux_button:
                 has_linux = self._has_native_linux_depots()
@@ -509,10 +412,7 @@ class DepotMetadataMixin:
                 self._depots_enriched_signal.emit(cached_enrichments)
                 # Only return early if no active depots still require generic resolution
                 still_unresolved = any(
-                    isinstance(d, dict) and (
-                        not str(d.get("desc") or "").strip()
-                        or bool(re.match(r"^(?:\[.*?\]\s*)?(?:Depot|DLC)\s+\d+$", str(d.get("desc") or "").strip(), re.IGNORECASE))
-                    )
+                    isinstance(d, dict) and depot_metadata.needs_name(d)
                     for d in self.depots.values()
                 )
                 if not still_unresolved and not force:
@@ -585,7 +485,7 @@ class DepotMetadataMixin:
                 else:
                     curr_config = config_item.text().strip() if config_item else ""
                     clean_curr = re.sub(r"^\[.*?\]\s*", "", curr_config).strip()
-                    if not clean_curr or re.match(r"^(?:Depot|DLC)\s+\d+$", clean_curr, re.IGNORECASE):
+                    if not clean_curr or depot_metadata.is_placeholder_desc(clean_curr):
                         name = info.get("name", "")
                         if name:
                             d_data = dict(self.depots.get(depot_id, {}))
