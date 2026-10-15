@@ -34,9 +34,13 @@ def _depot_matches_platform(depot_data: dict, platform: str) -> bool:
 
     return False
 def _depot_is_macos(depot_data: dict) -> bool:
-    """Check if a depot is macOS-only."""
+    """Check if a depot is macOS-only (does not support Windows or Linux)."""
     oslist = (depot_data.get("oslist") or "").lower()
     desc = (depot_data.get("desc") or "").lower()
+
+    # If it also supports Windows or Linux, it is a shared depot, NOT macOS-only
+    if "windows" in oslist or "win" in oslist or "linux" in oslist or "[windows]" in desc or "[linux]" in desc:
+        return False
 
     # Check oslist
     if oslist in ("macosx", "macos"):
@@ -48,9 +52,13 @@ def _depot_is_macos(depot_data: dict) -> bool:
 
     return False
 def _depot_is_android(depot_data: dict) -> bool:
-    """Check if a depot is Android-only."""
+    """Check if a depot is Android-only (does not support Windows or Linux)."""
     oslist = (depot_data.get("oslist") or "").lower()
     desc = (depot_data.get("desc") or "").lower()
+
+    # If it also supports Windows or Linux, it is a shared depot, NOT Android-only
+    if "windows" in oslist or "win" in oslist or "linux" in oslist or "[windows]" in desc or "[linux]" in desc:
+        return False
 
     # Check oslist
     if oslist == "android":
@@ -93,14 +101,16 @@ def get_smart_default_depots(depots: dict, target_platform: str = "linux", langu
     if not depots:
         return []
 
-    # Check if there are any native Linux depots
+    # Check if there are any dedicated native Linux depots (not shared with Windows)
     has_linux = False
     for d_id, d_data in depots.items():
         if not isinstance(d_data, dict) or _depot_is_macos(d_data) or _depot_is_android(d_data):
             continue
         oslist = (d_data.get("oslist") or "").lower()
         desc = (d_data.get("desc") or "").lower()
-        if "linux" in oslist or "[linux]" in desc:
+        is_lin = "linux" in oslist or "[linux]" in desc
+        is_win = "windows" in oslist or "win" in oslist or "[windows]" in desc or ".exe" in desc
+        if is_lin and not is_win:
             has_linux = True
             break
 

@@ -88,9 +88,12 @@ def get_available_platforms(depots: Dict[Any, Any]) -> List[str]:
         oslist = (d_data.get("oslist") or "").lower()
         desc = (d_data.get("desc") or "").lower()
 
-        if "linux" in oslist or "[linux]" in desc:
+        is_lin = "linux" in oslist or "[linux]" in desc
+        is_win = "windows" in oslist or "win" in oslist or "[windows]" in desc or ".exe" in desc
+
+        if is_lin and not is_win:
             has_linux = True
-        if "windows" in oslist or "[windows]" in desc or ".exe" in desc:
+        if is_win:
             has_windows = True
 
     platforms: List[str] = []

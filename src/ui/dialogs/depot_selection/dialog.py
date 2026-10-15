@@ -96,18 +96,18 @@ class DepotSelectionDialog(QDialog):
             from ui.dialogs.single_depot_dialog import SingleDepotSelectionDialog
             return SingleDepotSelectionDialog(*args, **kwargs)
 
-        # Check experimental modern depot selection dialog toggle
-        try:
-            from utils.settings import get_settings
-            _s = get_settings()
-            if _s.value("use_modern_depot_dialog", False, type=bool):
-                aid = kwargs.get("app_id", args[0] if args else "")
-                filtered = {k: v for k, v in (depots or {}).items() if str(k) != str(aid)}
-                if len(filtered) > 2 and not is_single:
-                    from ui.dialogs.modern_depot_selection import ModernDepotSelectionDialog
-                    return ModernDepotSelectionDialog(*args, **kwargs)
-        except Exception as _m_err:
-            logger.warning(f"[DepotSelectionDialog] Modern dialog routing fallback: {_m_err}")
+        # Check DLC-only mode routing
+        is_dlc = kwargs.get("dlc_only_mode", False) or kwargs.get("lock_dlc_only", False)
+        if not is_dlc and len(args) > 16:
+            is_dlc = bool(args[16])
+        if not is_dlc and len(args) > 17:
+            is_dlc = bool(args[17])
+        if is_dlc:
+            try:
+                from ui.dialogs.dlc_depot_selection import DlcDepotSelectionDialog
+                return DlcDepotSelectionDialog(*args, **kwargs)
+            except Exception as _dlc_err:
+                logger.warning(f"[DepotSelectionDialog] DLC selection dialog routing fallback: {_dlc_err}")
 
         return super().__new__(cls)
 
@@ -506,7 +506,7 @@ class DepotSelectionDialog(QDialog):
         self.table_widget = QTableWidget()
         self.table_widget.setColumnCount(3)
         self.table_widget.setHorizontalHeaderLabels(["Select", "Configuration", "Size"])
-        self.table_widget.setIconSize(QSize(16, 16))
+        self.table_widget.setIconSize(QSize(76, 16))
         self.table_widget.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.table_widget.horizontalHeader().setSectionsClickable(True)
         self.table_widget.horizontalHeader().sectionClicked.connect(self._on_header_section_clicked)
@@ -792,7 +792,9 @@ class DepotSelectionDialog(QDialog):
                 continue
             oslist = (d_data.get("oslist") or "").lower()
             desc = (d_data.get("desc") or d_data.get("name") or "").lower()
-            if "linux" in oslist or "[linux]" in desc:
+            is_lin = "linux" in oslist or "[linux]" in desc
+            is_win = "windows" in oslist or "win" in oslist or "[windows]" in desc or ".exe" in desc
+            if is_lin and not is_win:
                 return True
         return False
 
@@ -813,20 +815,29 @@ class DepotSelectionDialog(QDialog):
             tags = tags_match.group(1).strip()
             base_desc = tags_match.group(2).strip()
 
-        is_generic_fallback = bool(
+        is_generic_fallback = not base_desc or bool(
             re.fullmatch(r"Depot \d+", base_desc, re.IGNORECASE)
         )
 
-        if is_first:
-            if is_generic_fallback:
-                final_desc = f"{self.game_name}".strip()
-            else:
-                final_desc = base_desc
+        if not is_generic_fallback:
+            final_desc = base_desc
         else:
-            if is_generic_fallback:
-                final_desc = ""
+            d_name = str(d_data.get("name") or "").strip()
+            # Ignore d_name if it only contains platform/arch tokens
+            clean_name = re.sub(r"\b(windows|linux|macos|64-bit|32-bit|x64|x86)\b", "", d_name, flags=re.IGNORECASE).strip()
+            if clean_name and not re.match(r"^[,\s\-_/]+$", clean_name):
+                final_desc = d_name
             else:
-                final_desc = base_desc
+                final_desc = f"Depot {d_id}"
+
+        if not d_data.get("osarch"):
+            try:
+                from managers.db_manager import DatabaseManager
+                e_map = DatabaseManager().get_depot_enrichments(str(self.app_id))
+                if str(d_id) in e_map and e_map[str(d_id)].get("osarch"):
+                    d_data["osarch"] = e_map[str(d_id)]["osarch"]
+            except Exception:
+                pass
 
         from utils.depot_tag_helpers import format_depot_row_label, get_os_icon
         os_icon = get_os_icon(d_data.get("oslist"))
@@ -835,7 +846,7 @@ class DepotSelectionDialog(QDialog):
             d_data,
             final_desc,
             has_os_icon=bool(os_icon),
-            show_os_badge=True,
+            show_os_badge=False,
         )
         return cfg_text
 
@@ -848,20 +859,28 @@ class DepotSelectionDialog(QDialog):
 
             os_val = data.get("oslist")
             if os_val is None:
-                os_str = "zzzz"
+                os_str = ""
             else:
                 os_str = os_val.lower()
 
-            os_priority = 4
+            has_win = "windows" in os_str or "win" in os_str
+            has_lin = "linux" in os_str
+            has_mac = "macosx" in os_str or "macos" in os_str or "apple" in os_str
+            has_and = "android" in os_str
+            plat_count = sum([bool(has_win), bool(has_lin), bool(has_mac), bool(has_and)])
+            is_multi = plat_count >= 2 or "all" in os_str or "shared" in os_str
 
-            if os_str == "windows":
+            # Common / multi-OS depots get priority 0 (top of list)
+            if is_multi or os_val is None or not os_str:
+                os_priority = 0
+            elif has_win and not has_lin:
                 os_priority = 1
-            elif os_str == "linux":
+            elif has_lin and not has_win:
                 os_priority = 2
-            elif "all" in os_str:
-                os_priority = 3
-            elif os_str == "macosx" or os_str == "macos":
+            elif has_mac:
                 os_priority = 5
+            else:
+                os_priority = 4
 
             desc_str = data.get("desc", "").lower()
             lang_val = data.get("language")
@@ -885,7 +904,8 @@ class DepotSelectionDialog(QDialog):
                 lang_priority = 2
                 lang_sort_key = "japanese"
 
-            final_key = (os_priority, lang_priority, lang_sort_key)
+            depot_num = int(_depot_id) if str(_depot_id).isdigit() else 999999999
+            final_key = (os_priority, lang_priority, lang_sort_key, depot_num)
             return final_key
 
         sorted_depots = sorted(self.depots.items(), key=get_sort_key)
@@ -1014,8 +1034,9 @@ class DepotSelectionDialog(QDialog):
 
             config_item = ConfigTableWidgetItem(config_text, tier=0)
             config_item.setFlags(config_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            active_tint = QColor(self.accent_color) if hasattr(self, "accent_color") and self.accent_color else self.palette().color(QPalette.ColorRole.Text)
             from utils.depot_tag_helpers import get_os_icon
-            os_ic = get_os_icon(depot_data.get("oslist"))
+            os_ic = get_os_icon(depot_data.get("oslist"), tint_color=active_tint)
             if os_ic:
                 config_item.setIcon(os_ic)
 
@@ -1067,7 +1088,7 @@ class DepotSelectionDialog(QDialog):
 
             mconfig_item = ConfigTableWidgetItem(mconfig_text, tier=1)
             from utils.depot_tag_helpers import get_os_icon
-            m_ic = get_os_icon(minfo.get("oslist"))
+            m_ic = get_os_icon(minfo.get("oslist"), tint_color=darker_grey)
             if m_ic:
                 mconfig_item.setIcon(m_ic)
             mconfig_item.setFlags(Qt.ItemFlag.NoItemFlags)
@@ -1151,7 +1172,7 @@ class DepotSelectionDialog(QDialog):
 
                 hconfig_item = ConfigTableWidgetItem(hconfig_text, tier=3)
                 from utils.depot_tag_helpers import get_os_icon
-                h_ic = get_os_icon(depot_data.get("oslist"))
+                h_ic = get_os_icon(depot_data.get("oslist"), tint_color=brighter_grey)
                 if h_ic:
                     hconfig_item.setIcon(h_ic)
                 hconfig_item.setFlags(hconfig_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -1814,16 +1835,20 @@ class DepotSelectionDialog(QDialog):
                         if name:
                             d_data = dict(self.depots.get(depot_id, {}))
                             d_data.update(info)
-                            from utils.depot_tag_helpers import format_depot_row_label
+                            from utils.depot_tag_helpers import format_depot_row_label, get_os_icon
                             new_text = format_depot_row_label(
                                 str(depot_id),
                                 d_data,
                                 name,
                                 has_os_icon=True,
-                                show_os_badge=True,
+                                show_os_badge=False,
                             )
                             if config_item:
                                 config_item.setText(new_text)
+                                active_tint = QColor(self.accent_color) if hasattr(self, "accent_color") and self.accent_color else self.palette().color(QPalette.ColorRole.Text)
+                                os_ic = get_os_icon(d_data.get("oslist"), tint_color=active_tint)
+                                if os_ic:
+                                    config_item.setIcon(os_ic)
 
                 # Update size if missing
                 curr_size = size_item.text().strip() if size_item else ""
@@ -2943,12 +2968,12 @@ class DepotSelectionDialog(QDialog):
                 if did in self._recovered_depots_map and not self._is_manifest_on_disk(did, self._recovered_depots_map[did])
             ]
             if needs_gen:
-                from PyQt6.QtWidgets import QProgressDialog
+                from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
                 from pathlib import Path
                 import tempfile
                 from utils.helpers import get_base_path
                 from core import morrenus_api
-                progress = QProgressDialog(f"Generating manifest for {len(needs_gen)} recovered depot(s)...", None, 0, len(needs_gen), self)
+                progress = ThemedProgressDialog(f"Generating manifest for {len(needs_gen)} recovered depot(s)...", None, 0, len(needs_gen), self)
                 progress.setWindowModality(Qt.WindowModality.WindowModal)
                 progress.show()
                 for idx, r_did in enumerate(needs_gen):

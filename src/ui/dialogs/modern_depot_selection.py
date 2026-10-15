@@ -653,7 +653,7 @@ class ModernDepotSelectionDialog(QDialog):
         self.table_widget = QTableWidget()
         self.table_widget.setColumnCount(5)
         self.table_widget.setHorizontalHeaderLabels(["Select", "Configuration", "Platform", "Size", "Browse Files"])
-        self.table_widget.setIconSize(QSize(16, 16))
+        self.table_widget.setIconSize(QSize(76, 16))
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)

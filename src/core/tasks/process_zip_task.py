@@ -991,6 +991,8 @@ class ProcessZipTask:
                                         base_description = e_info["name"]
                                 if not details and e_info.get("oslist"):
                                     final_depot_data["oslist"] = e_info["oslist"]
+                                if not details and e_info.get("osarch"):
+                                    final_depot_data["osarch"] = e_info["osarch"]
                                 if e_info.get("size_bytes"):
                                     final_depot_data["size"] = e_info["size_bytes"]
                                 if e_info.get("size_str"):
@@ -1025,6 +1027,8 @@ class ProcessZipTask:
                                 )
 
                                 final_depot_data["oslist"] = details.get("oslist")
+                                if details.get("osarch"):
+                                    final_depot_data["osarch"] = details.get("osarch")
                                 final_depot_data["language"] = details.get("language")
                                 if details.get("manifests"):
                                     final_depot_data["manifests"] = details["manifests"]
