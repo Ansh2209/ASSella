@@ -1216,7 +1216,6 @@ class FetchManifestDialog(QDialog):
         selected_library_path = ""
         libraries = steam_helpers.get_steam_libraries()
         if not libraries:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(
                 self,
                 "No Steam Library Found",
@@ -1344,7 +1343,6 @@ class FetchManifestDialog(QDialog):
         if not parsed_data.get("depots"):
             logger.warning(f"[FetchManifest] No downloadable depots available for {parsed_data.get('appid')}")
             self.status_label.setText("No downloadable depots available for this game.")
-            from PyQt6.QtWidgets import QMessageBox
             missing_depots = parsed_data.get("missing_depots_from_hubcap") or []
             msg = f"No downloadable depots with valid keys/manifests were found for {parsed_data.get('game_name', 'this game')}."
             if missing_depots:
@@ -1618,7 +1616,6 @@ class FetchManifestDialog(QDialog):
                     else:
                         return
             else:
-                from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.warning(
                     self,
                     "No Steam Library Found",
