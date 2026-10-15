@@ -62,7 +62,6 @@ class SettingsDialog(QDialog):
         self.probe_cdn_checkbox = None
         self.manifest_provider_combo = None
         self.custom_plugins_checkbox = None
-        self.smart_depot_selection_checkbox = None
         self.modern_depot_selection_checkbox = None
         self.use_lancache_checkbox = None
         self.autofetch_manifests_checkbox = None
@@ -74,7 +73,6 @@ class SettingsDialog(QDialog):
         self.fakeappid_db_integration_checkbox = None
         self.remote_web_ui_checkbox = None
         self.max_downloads_spinbox = None
-        self.steamless_remover_combo = None
         self.filter_soundtracks_checkbox = None
         self.filter_search_blacklist_checkbox = None
         self.hide_macos_depots_checkbox = None
@@ -94,7 +92,6 @@ class SettingsDialog(QDialog):
         self.accent_reset_button = None
         self.all_games_online_checkbox = None
         self.enable_eosproxy_default_checkbox = None
-        self.experimental_ddm_checkbox = None
         self.bg_color_button = None
         self.bg_reset_button = None
         self.titlebar_position_checkbox = None
@@ -462,6 +459,10 @@ class SettingsDialog(QDialog):
         if self.settings.value("konami_settings_unlocked", False, type=bool):
             tabs.create_mrc_settings_tab(self)
 
+        # LuaTools Settings tab unlocked via search secret keyword
+        if self.settings.value("luatools_unlocked", False, type=bool):
+            self.tab_widget.addTab(tabs.create_luatools_tab(self), "LuaTools")
+
         # Tab changed listener
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
 
@@ -768,11 +769,7 @@ class SettingsDialog(QDialog):
         if hasattr(self, "api_key_input") and self.api_key_input is not None:
             api_key = self.api_key_input.text().strip()
             self.settings.setValue("morrenus_api_key", api_key)
-        if hasattr(self, "use_wirecutter_checkbox") and self.use_wirecutter_checkbox is not None:
-            try:
-                self.settings.setValue("use_wirecutter", self.use_wirecutter_checkbox.isChecked())
-            except Exception:
-                pass
+
         if hasattr(self, "steam_username_input") and self.steam_username_input is not None:
             self.settings.setValue("steam_username", self.steam_username_input.text().strip())
         if hasattr(self, "steam_password_input") and self.steam_password_input is not None:
@@ -849,21 +846,7 @@ class SettingsDialog(QDialog):
                 "custom_plugins_advanced",
                 self.custom_plugins_checkbox.isChecked(),
             )
-        if hasattr(self, "smart_depot_selection_checkbox") and self.smart_depot_selection_checkbox is not None:
-            self.settings.setValue(
-                "smart_depot_selection",
-                self.smart_depot_selection_checkbox.isChecked(),
-            )
-        else:
-            self.settings.setValue("smart_depot_selection", True)
 
-        if hasattr(self, "experimental_ddm_checkbox") and self.experimental_ddm_checkbox is not None:
-            self.settings.setValue(
-                "use_experimental_ddm",
-                self.experimental_ddm_checkbox.isChecked(),
-            )
-        else:
-            self.settings.setValue("use_experimental_ddm", True)
         if hasattr(self, "all_games_online_checkbox") and self.all_games_online_checkbox is not None:
             self.settings.setValue(
                 "all_games_online",
@@ -919,21 +902,6 @@ class SettingsDialog(QDialog):
                 self.workshop_cell_id_input.text().strip(),
             )
 
-        # Save Consolidated Steamless DRM Remover settings
-        if hasattr(self, "steamless_remover_combo") and self.steamless_remover_combo is not None:
-            drm_mode = self.steamless_remover_combo.currentData()
-            if drm_mode == "aio":
-                self.settings.setValue("use_steamless_aio", True)
-                self.settings.setValue("use_steamless", False)
-            elif drm_mode == "cli":
-                self.settings.setValue("use_steamless_aio", False)
-                self.settings.setValue("use_steamless", True)
-            else:
-                self.settings.setValue("use_steamless_aio", False)
-                self.settings.setValue("use_steamless", False)
-
-        if hasattr(self, "enable_denuvo_sync_checkbox") and self.enable_denuvo_sync_checkbox is not None:
-            self.settings.setValue("enable_denuvo_sync", self.enable_denuvo_sync_checkbox.isChecked())
 
         # Save Soundtrack and Search Blacklist filtering toggles
         if hasattr(self, "filter_soundtracks_checkbox") and self.filter_soundtracks_checkbox is not None:
@@ -1024,16 +992,7 @@ class SettingsDialog(QDialog):
                 self.auto_tune_checkbox.isChecked(),
             )
 
-        if hasattr(self, "save_old_manifests_checkbox"):
-            try:
-                self.settings.setValue("save_old_manifests", self.save_old_manifests_checkbox.isChecked())
-            except RuntimeError:
-                pass
-        if hasattr(self, "max_old_manifests_spinbox"):
-            try:
-                self.settings.setValue("max_old_manifests", self.max_old_manifests_spinbox.value())
-            except RuntimeError:
-                pass
+
         if hasattr(self, "depot_toggles"):
             for tag, (btn, skey) in self.depot_toggles.items():
                 try:

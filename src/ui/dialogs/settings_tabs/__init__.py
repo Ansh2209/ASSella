@@ -14,7 +14,6 @@ from ui.dialogs.settings_tabs.health_tab import (
     on_rec_setting_toggled,
     update_rec_score_badge,
     apply_health_recommended_settings,
-    open_sls_inheritance_dialog,
     run_assfixer_check,
     handle_assfixer_check_done,
     run_assfixer_repair,
@@ -72,6 +71,7 @@ from ui.dialogs.settings_tabs.webui_tab import (
 )
 from ui.dialogs.settings_tabs.at0m_tab import create_at0m_tab, create_vapor_tab
 from ui.dialogs.settings_tabs.mrc_settings_tab import create_mrc_settings_tab
+from ui.dialogs.settings_tabs.luatools_tab import create_luatools_tab
 
 __all__ = [
     "MorrenusStatsWidget",
@@ -88,4 +88,5 @@ __all__ = [
     "create_at0m_tab",
     "create_vapor_tab",
     "create_mrc_settings_tab",
+    "create_luatools_tab",
 ]
