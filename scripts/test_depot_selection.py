@@ -67,6 +67,12 @@ def main() -> int:
         n = len(p.read_text().splitlines()) if p.is_file() else 0
         check(p.is_file(), f"{name} exists ({n} lines)")
     check(
+        len((pkg / "dialog.py").read_text().splitlines()) < 600,
+        "dialog.py is a thin composer - behaviours live in _mixins/",
+    )
+    mixins = sorted(p.stem for p in (pkg / "_mixins").glob("*.py"))
+    check(len(mixins) >= 10, f"_mixins/ present ({len(mixins)} modules, {', '.join(mixins)})")
+    check(
         len((facade.__file__ and (SRC_DIR/'ui'/'dialogs'/'depotselection.py')).read_text().splitlines()) < 80,
         "facade is small (re-export surface only)",
     )
@@ -116,7 +122,9 @@ def main() -> int:
 
     # ------------------------------------------------------- no click-sort
     print("\n=== table is not click-sortable; select-all still wired ===")
-    dlg_src = (pkg / "dialog.py").read_text()
+    # The table code now lives in _mixins/. These are guarantees about the
+    # shipped dialog as a whole, so scan the whole package, not one file.
+    dlg_src = "\n".join(p.read_text() for p in sorted(pkg.rglob("*.py")))
     check("setSortingEnabled(True)" not in dlg_src,
           "click-to-sort is never enabled")
     check("setSortingEnabled(False)" in dlg_src, "sorting explicitly disabled")

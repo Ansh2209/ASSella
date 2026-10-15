@@ -1,9 +1,10 @@
 """Depot selection dialog, split into testable pieces.
 
-    rules.py   pure classification rules (platform, media, defaults) - no Qt
-    items.py   table cell items that carry byte counts
-    views.py   the checkbox delegate and the header with the select-all box
-    dialog.py  DepotSelectionDialog itself
+    rules.py     pure classification rules (platform, media, defaults) - no Qt
+    items.py     table cell items that carry byte counts
+    views.py     the checkbox delegate and the header with the select-all box
+    dialog.py    DepotSelectionDialog: routing, state, accessors, Qt events
+    _mixins/     the dialog's behaviour, one module per capability
 
 Both ``ui.dialogs.depot_selection`` and the legacy facade
 ``ui.dialogs.depotselection`` export the full public API.
