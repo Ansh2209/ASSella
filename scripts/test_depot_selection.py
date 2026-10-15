@@ -93,6 +93,11 @@ def main() -> int:
     mixins_src = (pkg / "_mixins" / "table.py").read_text()
     check("depot_metadata.manifest_size" in mixins_src,
           "the missing-depot rows take their size from depot_metadata")
+    check((pkg / "executable_probe.py").is_file(),
+          "executable_probe.py holds the search for the game's launch executable")
+    executable_src = (pkg / "_mixins" / "executable.py").read_text()
+    check("executable_probe" in executable_src and "import struct" not in executable_src,
+          "the executable mixin asks executable_probe instead of parsing Steam's cache itself")
 
     # -------------------------------------------------------------- rules
     print("\n=== platform rules ===")

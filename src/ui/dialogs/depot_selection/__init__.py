@@ -19,6 +19,11 @@ answers what still needs enriching, what size a branch records, how enrichment
 records merge into depot dicts, and what is known about depots the bundle is
 missing - leaving the metadata mixin the threads, the signals and the cells.
 
+The pre-flight check for the launch executable is shared too:
+``executable_probe.py`` finds the executable's name in the game record or
+Steam's appinfo cache, and the depot whose manifest mentions it, while the
+mixin keeps the warning box and the row it ticks.
+
 Both ``ui.dialogs.depot_selection`` and the legacy facade
 ``ui.dialogs.depotselection`` export the full public API.
 """
