@@ -334,7 +334,7 @@ def resolve_dlc_mapping_for_selection(
     resolved_dlc_appids: Set[str] = set()
     include_parent: bool = False
 
-    if selected_items is not None:
+    if selected_items:
         sel_list = [str(x).strip() for x in selected_items if str(x).strip().isdigit()]
         for x in sel_list:
             if x == appid_str:
@@ -365,7 +365,7 @@ def resolve_dlc_mapping_for_selection(
     resolved_dlc_depots.discard(appid_str)
 
     # If user selected specific depots, and some were DLC depots, retain those specifically
-    if selected_items is not None:
+    if selected_items:
         sel_set = {str(x).strip() for x in selected_items if str(x).strip().isdigit()}
         user_dlc_depots = {d for d in sel_set if d in resolved_dlc_depots}
         if user_dlc_depots:
@@ -757,14 +757,16 @@ def purge_and_sanitize_for_dlc_only(
 
     # Resolve user's selected depots
     user_sel = selected_depots
-    if user_sel is None and game_data:
+    if not user_sel and game_data:
         user_sel = game_data.get("selected_depots") or (
             game_data.get("metadata", {}).get("selected_depots_list")
         )
-    if user_sel is None:
-        user_sel = get_saved_depot_selection(appid_str)
+    if not user_sel:
+        saved = get_saved_depot_selection(appid_str)
+        if saved:
+            user_sel = saved
 
-    user_sel_set = {str(d) for d in user_sel} if user_sel is not None else None
+    user_sel_set = {str(d) for d in user_sel} if user_sel else None
 
     # Known depots for this game
     all_game_depots = set()
@@ -820,7 +822,7 @@ def purge_and_sanitize_for_dlc_only(
                 continue  # Safeguard: parent AppID is NEVER in AdditionalDepots
             meta = depots_meta.get(d) or depots_meta.get(int(d) if d.isdigit() else d) or {}
             desc = meta.get("desc", "") if isinstance(meta, dict) else ""
-            comment = f"{game_name} [{desc}] ({appid_str})" if desc else f"{game_name} ({appid_str})"
+            comment = f"{game_name} [{desc}]" if desc else f"{game_name}"
             add_additional_depot(config_path, d, comment=comment)
 
         # 3. DecryptionKeys: Remove unselected depot keys, then add keys for selected DLC depots
