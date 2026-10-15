@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ui.dialogs.depotselection import format_size
+from ui.dialogs.depot_selection import storage_targets
 from ui.dialogs.depot_selection.dump_runner import ManifestDumpRunner
 from ui.dialogs.depot_selection.manifest_dump import (
     ManifestDumpError,
@@ -495,32 +496,22 @@ class SingleDepotSelectionDialog(QDialog):
         return str(d_data.get("size_str") or "0.00 B")
 
     def _setup_storage_buttons(self, layout: QHBoxLayout) -> None:
-        import shutil
-        from core.steam_helpers import get_steam_libraries, find_steam_install
-        from utils.paths import is_valid_download_directory
+        """Build the single-depot drive picker.
 
-        storage_paths = []
+        Which drives are worth offering and how each one reads come from
+        :mod:`storage_targets`; this assembles the widgets around that.
+        """
         def_dir = self._settings.value("default_download_directory", "", type=str) if self._settings else ""
-        if def_dir and is_valid_download_directory(def_dir):
-            # Option A: User configured a custom/default download directory in Settings.
-            # Show ONLY this single configured storage path taking the full width.
-            storage_paths.append(os.path.realpath(def_dir))
-        else:
-            # "Ask Every Time" / no default set: discover all valid Steam library paths
-            try:
-                raw_libs = get_steam_libraries() or []
-                for p in raw_libs:
-                    if p and is_valid_download_directory(p):
-                        real_p = os.path.realpath(p)
-                        if real_p not in storage_paths:
-                            storage_paths.append(real_p)
-            except Exception as e:
-                logger.warning(f"[SingleDepot] Error discovering Steam storage libraries: {e}")
 
-            if self.preferred_library_path and is_valid_download_directory(self.preferred_library_path):
-                real_pref = os.path.realpath(self.preferred_library_path)
-                if real_pref not in storage_paths:
-                    storage_paths.insert(0, real_pref)
+        # A configured default download directory means "put it there": this
+        # dialog then offers that one drive instead of every Steam library, and
+        # a preferred path is shown first so it is the one the user lands on.
+        storage_paths = storage_targets.candidate_drives(
+            def_dir,
+            self.preferred_library_path,
+            only_default_when_configured=True,
+            preferred_first=True,
+        )
 
         self._storage_paths = storage_paths
         self._storage_btn_group = QButtonGroup(self)
@@ -529,40 +520,6 @@ class SingleDepotSelectionDialog(QDialog):
         if not storage_paths:
             layout.addStretch(1)
             return
-
-        def _format_storage_info(path_str: str):
-            p = Path(path_str)
-            try:
-                free_bytes = shutil.disk_usage(path_str).free
-                if free_bytes >= 1024**4:
-                    free_str = f"{free_bytes / (1024**4):.1f} TB free"
-                elif free_bytes >= 1024**3:
-                    free_str = f"{free_bytes / (1024**3):.1f} GB free"
-                elif free_bytes >= 1024**2:
-                    free_str = f"{free_bytes / (1024**2):.0f} MB free"
-                else:
-                    free_str = f"{free_bytes} B free"
-            except Exception:
-                free_str = ""
-
-            steam_root = find_steam_install()
-            p_str_lower = path_str.lower()
-
-            if steam_root and os.path.realpath(path_str) == os.path.realpath(steam_root):
-                label = "Primary"
-            elif "/.local/share/steam" in p_str_lower or "/.steam/steam" in p_str_lower:
-                label = "Primary"
-            elif "sdcard" in p_str_lower or "sd_card" in p_str_lower or "mmcblk" in p_str_lower or "/sd" in p_str_lower:
-                label = "SD Card"
-            else:
-                label = p.name
-                if label.lower() in ("steamlibrary", "steamapps", "common") and len(p.parts) > 1:
-                    label = p.parts[-2]
-                if len(label) > 16:
-                    label = label[:14] + "…"
-
-            tooltip = f"Storage: {path_str}" + (f"\nAvailable: {free_str}" if free_str else "")
-            return label, free_str, tooltip
 
         # Locked storage display (verify / update / DLC flows over installed
         # games): greyed-out label showing the install location, no choice.
@@ -579,8 +536,10 @@ class SingleDepotSelectionDialog(QDialog):
             bool(getattr(self, "lock_storage", False)),
         )
         if _locked_target:
-            lbl_text, free_str, _ = _format_storage_info(_locked_target)
-            btn = create_locked_storage_button(_locked_target, lbl_text, free_str, height=28, radius=4)
+            target = storage_targets.describe(_locked_target)
+            btn = create_locked_storage_button(
+                _locked_target, target.label, target.free, height=28, radius=4
+            )
             layout.addWidget(btn, 1)
             self.selected_storage_path = _locked_target
             return
@@ -619,14 +578,14 @@ class SingleDepotSelectionDialog(QDialog):
 
         # Direct expanding storage buttons
         for i, spath in enumerate(direct_paths):
-            label, free_str, tooltip = _format_storage_info(spath)
+            target = storage_targets.describe(spath)
             # When 1 or 2 storages, display free space on button; when 3+, display clean label with info in tooltip
-            btn_text = f"{label} ({free_str})" if (total_storages <= 2 and free_str) else label
+            btn_text = f"{target.label} ({target.free})" if (total_storages <= 2 and target.free) else target.label
             btn = QPushButton(btn_text)
             btn.setFixedHeight(28)
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             btn.setCheckable(True)
-            btn.setToolTip(tooltip)
+            btn.setToolTip(target.tooltip)
             btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.setStyleSheet(btn_style)
 
@@ -688,8 +647,8 @@ class SingleDepotSelectionDialog(QDialog):
             combo.addItem("More...", None)
 
             for spath in overflow_paths:
-                label, free_str, tooltip = _format_storage_info(spath)
-                item_text = f"{label} ({free_str})" if free_str else label
+                target = storage_targets.describe(spath)
+                item_text = f"{target.label} ({target.free})" if target.free else target.label
                 combo.addItem(item_text, spath)
 
             def _on_overflow_selected(index):
@@ -710,14 +669,9 @@ class SingleDepotSelectionDialog(QDialog):
             layout.addWidget(combo, 1)
 
         # Pre-select priority: preferred -> default -> first
-        real_pref = os.path.realpath(self.preferred_library_path) if self.preferred_library_path else ""
-        real_def = os.path.realpath(def_dir) if def_dir else ""
-        if real_pref and real_pref in storage_paths:
-            default_target = real_pref
-        elif real_def and real_def in storage_paths:
-            default_target = real_def
-        else:
-            default_target = storage_paths[0]
+        default_target = storage_targets.preselect(
+            storage_paths, self.preferred_library_path, def_dir
+        )
 
         self.selected_storage_path = default_target
         if default_target in direct_paths:

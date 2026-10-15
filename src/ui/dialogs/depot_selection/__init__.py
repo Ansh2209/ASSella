@@ -10,6 +10,10 @@ Browse Files is not a mixin-shaped capability: ``manifest_dump.py`` prepares a
 dump (Qt-free) and ``dump_runner.py`` runs it, and both the multi-depot and the
 single-depot dialog use them.
 
+Choosing a drive is shared the same way: ``storage_targets.py`` answers which
+drives are worth offering, how each reads, and which starts selected, while the
+widgets stay with each dialog and with ``storage_lock``.
+
 Both ``ui.dialogs.depot_selection`` and the legacy facade
 ``ui.dialogs.depotselection`` export the full public API.
 """

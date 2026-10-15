@@ -4,16 +4,15 @@ accessor."""
 import logging
 import os
 
-from pathlib import Path
-
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QPushButton,
-    QAbstractItemView,
     QButtonGroup,
     QComboBox,
     QSizePolicy,
 )
+
+from ui.dialogs.depot_selection import storage_targets
 
 logger = logging.getLogger(__name__)
 
@@ -22,32 +21,19 @@ class StorageMixin:
     """The storage-library picker and the selected-storage accessor."""
 
     def _setup_storage_buttons(self, layout: QHBoxLayout) -> None:
-        import shutil
-        from core.steam_helpers import get_steam_libraries, find_steam_install
-        from utils.paths import is_valid_download_directory
+        """Build the bottom-bar drive picker: buttons, then overflow, then lock.
 
-        storage_paths = []
-        try:
-            raw_libs = get_steam_libraries() or []
-            for p in raw_libs:
-                if p and is_valid_download_directory(p):
-                    real_p = os.path.realpath(p)
-                    if real_p not in storage_paths:
-                        storage_paths.append(real_p)
-        except Exception as e:
-            logger.warning(f"Error discovering Steam storage libraries: {e}")
+        Which drives are worth offering, how each is labelled, and which one
+        starts selected are decided by :mod:`storage_targets`; this only
+        assembles the widgets around those answers.
+        """
+        def_dir = (
+            self._settings.value("default_download_directory", "", type=str)
+            if self._settings
+            else ""
+        )
 
-        def_dir = self._settings.value("default_download_directory", "", type=str) if self._settings else ""
-        if def_dir and is_valid_download_directory(def_dir):
-            real_def = os.path.realpath(def_dir)
-            if real_def not in storage_paths:
-                storage_paths.append(real_def)
-
-        if self.preferred_library_path and is_valid_download_directory(self.preferred_library_path):
-            real_pref = os.path.realpath(self.preferred_library_path)
-            if real_pref not in storage_paths:
-                storage_paths.append(real_pref)
-
+        storage_paths = storage_targets.candidate_drives(def_dir, self.preferred_library_path)
         self._storage_paths = storage_paths
         self._storage_btn_group = QButtonGroup(self)
         self._storage_btn_group.setExclusive(True)
@@ -56,40 +42,6 @@ class StorageMixin:
             layout.addStretch(1)
             return
 
-        def _format_storage_info(path_str: str):
-            p = Path(path_str)
-            try:
-                free_bytes = shutil.disk_usage(path_str).free
-                if free_bytes >= 1024**4:
-                    free_str = f"{free_bytes / (1024**4):.1f} TB free"
-                elif free_bytes >= 1024**3:
-                    free_str = f"{free_bytes / (1024**3):.1f} GB free"
-                elif free_bytes >= 1024**2:
-                    free_str = f"{free_bytes / (1024**2):.0f} MB free"
-                else:
-                    free_str = f"{free_bytes} B free"
-            except Exception:
-                free_str = ""
-
-            steam_root = find_steam_install()
-            p_str_lower = path_str.lower()
-
-            if steam_root and os.path.realpath(path_str) == os.path.realpath(steam_root):
-                label = "Primary"
-            elif "/.local/share/steam" in p_str_lower or "/.steam/steam" in p_str_lower:
-                label = "Primary"
-            elif "sdcard" in p_str_lower or "sd_card" in p_str_lower or "mmcblk" in p_str_lower or "/sd" in p_str_lower:
-                label = "SD Card"
-            else:
-                label = p.name
-                if label.lower() in ("steamlibrary", "steamapps", "common") and len(p.parts) > 1:
-                    label = p.parts[-2]
-                if len(label) > 16:
-                    label = label[:14] + "…"
-
-            tooltip = f"Storage: {path_str}" + (f"\nAvailable: {free_str}" if free_str else "")
-            return label, free_str, tooltip
-
         # Locked storage display (verify / update / DLC flows over installed
         # games): greyed-out label showing the install location, no choice.
         # Fresh installs (lock_storage unset) always get the selectable UI.
@@ -97,18 +49,20 @@ class StorageMixin:
             create_locked_storage_button,
             resolve_locked_target,
         )
-        _locked_target = resolve_locked_target(
+        locked_target = resolve_locked_target(
             self.parent(),
             getattr(self, "app_id", ""),
             self.preferred_library_path,
             storage_paths,
             bool(getattr(self, "lock_storage", False)),
         )
-        if _locked_target:
-            lbl_text, free_str, _ = _format_storage_info(_locked_target)
-            btn = create_locked_storage_button(_locked_target, lbl_text, free_str, height=28, radius=4)
+        if locked_target:
+            target = storage_targets.describe(locked_target)
+            btn = create_locked_storage_button(
+                locked_target, target.label, target.free, height=28, radius=4
+            )
             layout.addWidget(btn, 1)
-            self.selected_storage_path = _locked_target
+            self.selected_storage_path = locked_target
             return
 
         def _get_storage_btn_style():
@@ -144,13 +98,17 @@ class StorageMixin:
 
         for i in range(min(total_storages, max_direct_buttons)):
             spath = storage_paths[i]
-            lbl_text, free_str, tip_text = _format_storage_info(spath)
-            btn_text = f"{lbl_text} ({free_str})" if (total_storages <= 2 and free_str) else lbl_text
+            target = storage_targets.describe(spath)
+            btn_text = (
+                f"{target.label} ({target.free})"
+                if (total_storages <= 2 and target.free)
+                else target.label
+            )
             btn = QPushButton(btn_text)
             btn.setCheckable(True)
             btn.setFixedHeight(28)
             btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            btn.setToolTip(tip_text)
+            btn.setToolTip(target.tooltip)
             btn.setStyleSheet(_get_storage_btn_style())
             self._storage_btn_group.addButton(btn, i)
             self._storage_buttons[spath] = btn
@@ -195,8 +153,8 @@ class StorageMixin:
             """)
             for i in range(max_direct_buttons, len(storage_paths)):
                 spath = storage_paths[i]
-                lbl_text, free_str, tip_text = _format_storage_info(spath)
-                item_text = f"{lbl_text} ({free_str})" if free_str else lbl_text
+                target = storage_targets.describe(spath)
+                item_text = f"{target.label} ({target.free})" if target.free else target.label
                 self._more_storage_combo.addItem(item_text, spath)
 
             def _on_combo_changed(index):
@@ -214,36 +172,29 @@ class StorageMixin:
             self._more_storage_combo.currentIndexChanged.connect(_on_combo_changed)
             layout.addWidget(self._more_storage_combo, 1)
 
-        # Check if the game is already installed in any of the detected Steam libraries
-        installed_target = None
-        if self.app_id and str(self.app_id) not in ("0", "N/A", "unknown"):
-            parent = self.parent()
-            gm = getattr(parent, "game_manager", None) if parent else None
-            if gm and hasattr(gm, "get_game"):
-                igame = gm.get_game(str(self.app_id))
-                if igame and igame.get("library_path"):
-                    real_installed = os.path.realpath(igame["library_path"])
-                    if real_installed in storage_paths:
-                        installed_target = real_installed
-                        logger.info(f"[DepotSelection] Pre-selecting existing install library for AppID {self.app_id}: {installed_target}")
+        # Pre-select priority: preferred library path (zip confirmation or job
+        # metadata), then the library the game is already installed in, then the
+        # configured default, then the first drive.
+        parent = self.parent()
+        game_manager = getattr(parent, "game_manager", None) if parent else None
+        installed_target = storage_targets.installed_library(
+            self.app_id, game_manager, storage_paths
+        )
+        if installed_target:
+            logger.info(
+                f"[DepotSelection] Pre-selecting existing install library for "
+                f"AppID {self.app_id}: {installed_target}"
+            )
 
-        # Pre-select priority:
-        # 1. Explicitly preferred library path (from Zip confirmation or job metadata)
-        # 2. Existing install library
-        # 3. Configured default directory (if valid and in storage_paths)
-        # 4. First storage library
-        real_pref = os.path.realpath(self.preferred_library_path) if self.preferred_library_path else ""
-        real_def = os.path.realpath(def_dir) if def_dir else ""
-        if real_pref and real_pref in storage_paths:
-            default_target = real_pref
+        default_target = storage_targets.preselect(
+            storage_paths, self.preferred_library_path, installed_target, def_dir
+        )
+        if (
+            self.preferred_library_path
+            and default_target
+            and os.path.realpath(self.preferred_library_path) == default_target
+        ):
             logger.info(f"[DepotSelection] Pre-selecting preferred library path: {default_target}")
-        elif installed_target:
-            default_target = installed_target
-        elif real_def and real_def in storage_paths:
-            default_target = real_def
-        else:
-            default_target = storage_paths[0]
-
         self.selected_storage_path = default_target
         if default_target in self._storage_buttons:
             self._storage_buttons[default_target].setChecked(True)

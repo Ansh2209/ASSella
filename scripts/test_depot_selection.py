@@ -80,6 +80,11 @@ def main() -> int:
         len((facade.__file__ and (SRC_DIR/'ui'/'dialogs'/'depotselection.py')).read_text().splitlines()) < 80,
         "facade is small (re-export surface only)",
     )
+    check((pkg / "storage_targets.py").is_file(),
+          "storage_targets.py holds the drive rules both depot dialogs share")
+    single_src = (SRC_DIR / "ui" / "dialogs" / "single_depot_dialog.py").read_text()
+    check("storage_targets" in single_src and "_format_storage_info" not in single_src,
+          "the single-depot dialog takes its drives from storage_targets")
 
     # -------------------------------------------------------------- rules
     print("\n=== platform rules ===")
