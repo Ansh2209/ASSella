@@ -2512,4 +2512,6 @@ class MainWindow(QMainWindow):
             logger.info("QtLogHandler removed and atexit hook unregistered.")
             logging.shutdown()
         except Exception as e:
-            print(f"Error during custom logger shutdown: {e}")
+            # Last resort: the logger is being torn down here, so emit to stderr
+            # directly rather than through it.
+            print(f"Error during custom logger shutdown: {e}", file=sys.stderr)  # noqa: T201
