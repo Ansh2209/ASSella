@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 from utils.helpers import get_base_path
 from utils.settings import get_settings
 from utils.version import app_version
+from utils.paths import Paths
 from .assets import (
     BOOK_SVG,
     DISCORD_SVG,
@@ -25,8 +26,6 @@ from .assets import (
     MAXIMIZE,
     MINIMIZE,
     POWER_SVG,
-    SEARCH_SVG,
-    PALETTE_SVG,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,11 +61,11 @@ class BottomTitleBar(QFrame):
         self.no_previous_state = True
 
         self.navi_label: Optional[QLabel] = None
-        self.title_label: Optional[QLabel] = None
+        self.search_controller = None
+        self.logo_label: Optional[QLabel] = None
 
         # Buttons
         self.status_button: Optional[QPushButton] = None
-        self.search_button: Optional[QPushButton] = None
         self.game_library_button: Optional[QPushButton] = None
         self.settings_button: Optional[QPushButton] = None
         self.minimize_button: Optional[QPushButton] = None
@@ -83,7 +82,7 @@ class BottomTitleBar(QFrame):
 
     def _setup_ui(self) -> None:
         """Setup the layout and widgets."""
-        # Use QGridLayout so the title sits at the true geometric centre
+        # Use QGridLayout so the search field sits at the true geometric centre
         # regardless of how wide the left / right sections are.
         grid = QGridLayout(self)
         grid.setContentsMargins(5, 0, 5, 0)
@@ -92,16 +91,13 @@ class BottomTitleBar(QFrame):
         left_widget = self._create_left_section()
         right_widget = self._create_right_section()
 
-        self.title_label = QLabel("ASSella")
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
-        )
+        from ui.top_bar_search import TopBarSearch
+        self.search_controller = TopBarSearch(self.parent_window, self)
 
         # col 0: left  (stretch=1) | col 1: title (stretch=2) | col 2: right (stretch=1)
         # Equal stretch on columns 0 and 2 keeps the title in the true centre.
         grid.addWidget(left_widget, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(self.title_label, 0, 1, Qt.AlignmentFlag.AlignCenter)
+        grid.addWidget(self.search_controller.input, 0, 1, Qt.AlignmentFlag.AlignCenter)
         grid.addWidget(right_widget, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 2)
@@ -114,6 +110,18 @@ class BottomTitleBar(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
 
         # Navi GIF removed per user request
+
+        self.logo_label = QLabel()
+        logo_path = Paths.resource("logo/icon.svg")
+        if logo_path and logo_path.exists():
+            pixmap = QPixmap(str(logo_path))
+            if not pixmap.isNull():
+                self.logo_label.setPixmap(
+                    pixmap.scaled(20, 20, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                )
+        self.logo_label.setToolTip("ASSella")
+        layout.addWidget(self.logo_label, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addSpacing(6)
 
         version_label = ClickableLabel(
             app_version,
@@ -165,12 +173,6 @@ class BottomTitleBar(QFrame):
             "Download Status",
         )
         self.status_button.setVisible(False)
-
-        self.search_button = self._create_svg_button(
-            SEARCH_SVG, getattr(parent, "open_fetch_dialog", None), "Download Game"
-        )
-        layout.addWidget(self.search_button)
-
 
         self.game_library_button = self._create_svg_button(
             BOOK_SVG, getattr(parent, "open_game_library", None), "Game Library"
@@ -241,14 +243,13 @@ class BottomTitleBar(QFrame):
         """
         )
 
-        if self.title_label:
-            self.title_label.setStyleSheet(f"color: {accent_color}; font-size: 14pt;")
-
     def update_style(self) -> None:
         """Update the style when colors change."""
         self._apply_style()
         self._update_button_colors()
         self._update_button_styles()
+        if self.search_controller:
+            self.search_controller._apply_style()
 
     def _update_button_styles(self) -> None:
         """Update all button styles with custom border and background."""
@@ -276,7 +277,6 @@ class BottomTitleBar(QFrame):
         buttons = [
             self.minimize_button,
             self.maximize_button,
-            self.search_button,
             self.game_library_button,
             self.settings_button,
             self.discord_button,
@@ -295,7 +295,6 @@ class BottomTitleBar(QFrame):
         buttons = [
             (self.minimize_button, MINIMIZE),
             (self.maximize_button, MAXIMIZE),
-            (self.search_button, SEARCH_SVG),
             (self.game_library_button, BOOK_SVG),
             (self.settings_button, GEAR_SVG),
             (self.discord_button, DISCORD_SVG),

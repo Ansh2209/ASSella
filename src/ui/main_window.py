@@ -820,6 +820,9 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._update_resize_handles_geometry()
         self.position_update_all_btn()
+        titlebar = getattr(self, "bottom_titlebar", None)
+        if titlebar and titlebar.search_controller:
+            titlebar.search_controller.reposition()
 
     def position_update_all_btn(self):
         if hasattr(self, "simplified_terminal") and self.simplified_terminal:
@@ -1217,10 +1220,10 @@ class MainWindow(QMainWindow):
         self._check_network_connections_async()
         self.refresh_hubcap_stats()
 
-    def open_fetch_dialog(self) -> None:
+    def open_fetch_dialog(self, initial_query: str = "") -> None:
         from ui.dialogs.fetchmanifest import FetchManifestDialog
 
-        self.ui_state.fetch_dialog = FetchManifestDialog(self)
+        self.ui_state.fetch_dialog = FetchManifestDialog(self, initial_query=initial_query)
         self.ui_state.fetch_dialog.exec()
         self.ui_state.fetch_dialog = None
 
@@ -2207,6 +2210,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         """Handle application shutdown."""
+        titlebar = getattr(self, "bottom_titlebar", None)
+        if titlebar and titlebar.search_controller:
+            titlebar.search_controller.close()
         try:
             if hasattr(self, "web_server_manager") and self.web_server_manager:
                 self.web_server_manager.stop()
