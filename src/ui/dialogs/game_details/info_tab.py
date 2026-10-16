@@ -401,12 +401,12 @@ def init_info_tab(dialog) -> None:
             if dialog.parent_window and hasattr(dialog.parent_window, "game_manager") and dialog.parent_window.game_manager:
                 try:
                     dialog.parent_window.game_manager.game_update_status_changed.disconnect(dialog._on_status_changed)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[GameDetails] Could not disconnect game_update_status_changed: {e}")
                 try:
                     dialog.parent_window.game_manager.game_hubcap_status_checked.disconnect(dialog._on_hubcap_status_changed)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[GameDetails] Could not disconnect game_hubcap_status_checked: {e}")
         dialog.finished.connect(_cleanup_signals)
 
     info_tab_container = QWidget()
@@ -575,8 +575,8 @@ def load_branches_immediate(dialog) -> None:
         elif dialog.game_data.get("buildid"):
             fallback = {"public": {"buildid": str(dialog.game_data.get("buildid"))}}
             on_branches_loaded(dialog, fallback)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[GameDetails] Could not load the branch list: {e}")
 
     threading.Thread(target=lambda: silent_refresh_branches(dialog), daemon=True).start()
 
@@ -607,8 +607,8 @@ def load_branches_async(dialog, force_refresh: bool = False) -> None:
                 dialog.branches_loaded.emit(fallback)
                 threading.Thread(target=lambda: silent_refresh_branches(dialog), daemon=True).start()
                 return
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not read the cached build id: {e}")
 
     def _fetch():
         try:
@@ -631,8 +631,8 @@ def silent_refresh_branches(dialog) -> None:
         fresh = get_app_branches(dialog.appid, force_refresh=True)
         if fresh:
             dialog.branches_loaded.emit(fresh)
-    except BaseException:
-        pass
+    except BaseException as e:
+        logger.debug(f"[GameDetails] Background branch refresh failed: {e}")
 
 
 def on_branches_loaded(dialog, branches_dict: dict) -> None:
@@ -989,8 +989,8 @@ def get_available_depots(dialog) -> dict:
                 if b.get("depots") and isinstance(b["depots"], dict):
                     for d_id, d_info in b["depots"].items():
                         depots_dict[str(d_id)] = d_info
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not read the cached build depots: {e}")
 
     if not depots_dict:
         try:
@@ -1024,8 +1024,8 @@ def get_available_depots(dialog) -> dict:
                 ins_depots = vd.get("AppState", {}).get("InstalledDepots")
                 if isinstance(ins_depots, dict) and ins_depots:
                     depots_dict = ins_depots
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[GameDetails] Could not read installed depots from {acf_path}: {e}")
 
     return depots_dict
 
@@ -1129,8 +1129,8 @@ def trigger_rollback_job(dialog, depot_id, build_id: str, manifest_id: str = Non
             if progress:
                 try:
                     progress.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[GameDetails] Could not close the progress dialog: {e}")
             if error_msg:
                 QMessageBox.critical(dialog, "Manifest Retrieval Failed", f"Failed to download manifest from Hubcap:\n\n{error_msg}")
                 return
@@ -1149,8 +1149,8 @@ def on_manifest_fetch_completed(dialog, error_msg, src_manifest_path_str, manife
     if progress_dialog:
         try:
             progress_dialog.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not close the manifest progress dialog: {e}")
 
     if error_msg:
         global_manifests_dir = get_base_path() / "manifests"
@@ -2026,8 +2026,8 @@ def on_pin_build_toggled(dialog, pinned: bool) -> None:
             get_update_cache().save_async()
             if dialog.parent_window and hasattr(dialog.parent_window, "game_manager") and dialog.parent_window.game_manager:
                 dialog.parent_window.game_manager.game_update_status_changed.emit(dialog.appid, "up_to_date")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not record the up-to-date status: {e}")
 
         if hasattr(dialog, "update_all_tile") and dialog.update_all_tile:
             dialog.update_all_tile.setChecked(False)
@@ -2142,8 +2142,8 @@ def get_installed_buildid(dialog) -> str:
                     acf_path = str(p)
                     dialog.game_data["appmanifest_path"] = acf_path
                     break
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not locate the app manifest for {dialog.appid}: {e}")
 
     if acf_path and os.path.exists(acf_path):
         try:
@@ -2154,8 +2154,8 @@ def get_installed_buildid(dialog) -> str:
                 found_bid = m.group(1).strip()
                 dialog.game_data["buildid"] = found_bid
                 return found_bid
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not read the build id from the app manifest: {e}")
 
     if dialog.settings and dialog.appid:
         installed_branch = dialog.settings.value(f"installed_branch/{dialog.appid}", "", type=str)
@@ -2180,8 +2180,8 @@ def get_installed_buildid(dialog) -> str:
                     if mbid and mbid.isdigit() and mbid != "0":
                         dialog.game_data["buildid"] = mbid
                         return mbid
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not read the build id from the manifest metadata: {e}")
 
     if bid and bid.lower() not in ("unknown", "none", "0", ""):
         return bid
@@ -2207,8 +2207,8 @@ def update_depot_label(dialog) -> None:
                     btn_text = f"Depots: {len(sel)} Selected"
                 else:
                     btn_text = "Depots: Select"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[GameDetails] Could not compute the depot button text: {e}")
     if hasattr(dialog, "choose_depots_btn") and dialog.choose_depots_btn:
         dialog.choose_depots_btn.setText(btn_text)
 
@@ -2356,8 +2356,8 @@ def _atomic_write_acf(acf_path: str, content: str) -> bool:
         logger.warning(f"[VaporTransition] Atomic ACF write failed for {acf_path}: {e}")
         try:
             tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not remove the temporary manifest file: {e}")
         return False
 
 
@@ -2395,8 +2395,8 @@ def _ensure_acf_has_installed_depots(acf_path: str, appid: str, depot_ids: list,
                     for file in files:
                         try:
                             actual_size += os.path.getsize(os.path.join(root, file))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"[GameDetails] Could not stat a file while measuring the install size: {e}")
             except Exception as e:
                 logger.warning(f"[VaporTransition] Error calculating size: {e}")
 
@@ -2546,8 +2546,8 @@ def on_move_to_vapor_clicked(dialog) -> None:
                             depot_ids.append(did)
                         if len(parts) > 1 and parts[1].strip() and not parts[1].strip().isdigit():
                             depot_names[did] = parts[1].strip()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not read depot ids from the LUA keys: {e}")
 
     # Extract keys from cached lua / manifest zip if available
     lua_file = get_base_path() / "cached_luas" / f"{appid}.lua"
@@ -2577,8 +2577,8 @@ def on_move_to_vapor_clicked(dialog) -> None:
         try:
             with open(lua_file, "r", encoding="utf-8", errors="ignore") as lf:
                 extract_keys_from_lua_text(lf.read())
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not read the LUA depot keys file: {e}")
 
     if zip_file.exists():
         try:
@@ -2586,8 +2586,8 @@ def on_move_to_vapor_clicked(dialog) -> None:
                 for name in zf.namelist():
                     if name.endswith(".lua"):
                         extract_keys_from_lua_text(zf.read(name).decode("utf-8", errors="ignore"))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] Could not read depot keys from the manifest bundle: {e}")
 
     # Check if this game is in DLC-only mode
     from utils.dlc_helpers import is_dlc_only_mode, get_dlc_only_info, filter_dlc_depots_only
@@ -2598,8 +2598,8 @@ def on_move_to_vapor_clicked(dialog) -> None:
             d_info = get_dlc_only_info(appid)
             if d_info:
                 dlc_appids = [str(x["dlc_appid"]) for x in d_info if x.get("dlc_appid")]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[GameDetails] DLC AppID lookup failed for {appid}: {e}")
         if not dlc_appids:
             depots_meta = (game_data.get("depots") or {})
             for did in depot_ids:
