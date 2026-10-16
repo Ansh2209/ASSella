@@ -178,6 +178,7 @@ jobs:
                        test_themed_dialog_gate \
                        test_themed_message_box \
                        test_themed_pickers \
+                       test_color_utils \
                        test_language_depots; do
             echo "::group::$suite"
             QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp \
