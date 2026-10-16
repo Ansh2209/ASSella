@@ -355,10 +355,6 @@
     "broad": 3,
     "narrow": 4
   },
-  "utils/dlc_helpers.py": {
-    "broad": 12,
-    "narrow": 0
-  },
   "utils/eos_detector.py": {
     "broad": 1,
     "narrow": 0

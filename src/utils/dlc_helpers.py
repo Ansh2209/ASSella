@@ -117,8 +117,8 @@ def filter_dlc_depots_only(
             app_info = DatabaseManager().get_app_info(appid_str, bypass_expiration=True)
             if app_info and app_info.get("depots"):
                 meta_dict = app_info["depots"]
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[DLCHelpers] depot metadata lookup failed for {appid_str}: {e}")
 
     filtered = []
     for d in depot_ids:
@@ -271,8 +271,8 @@ def build_app_to_depots_map(
                 s_dlc = str(dlc_id).strip()
                 if s_dlc and s_dlc != appid_str:
                     target_apps.add(s_dlc)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"[DLCHelpers] plugin library unreadable, plugin DLCs are not mapped: {e}")
 
     # 5. Direct match: where DLC AppID == DepotID (strictly for DLCs, NEVER base game)
     for aid in target_apps:
@@ -377,8 +377,8 @@ def resolve_dlc_mapping_for_selection(
     try:
         from managers.db_manager import DatabaseManager
         db = DatabaseManager()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[DLCHelpers] DLC names cannot be read from the DB: {e}")
 
     # If user explicitly included/selected the parent AppID, allow it in AdditionalApps
     if include_parent:
@@ -460,14 +460,16 @@ def get_dlc_only_info(base_appid: str) -> List[Dict[str, str]]:
                     # Fallback to direct sqlite query to bypass cache expiration checks
                     try:
                         conn = sqlite3.connect(str(db.db_path))
-                        cur = conn.cursor()
-                        cur.execute("SELECT name FROM apps WHERE appid = ?", (dlc_appid,))
-                        row = cur.fetchone()
-                        if row and row[0]:
-                            dlc_name = row[0]
-                        conn.close()
-                    except Exception:
-                        pass
+                        try:
+                            cur = conn.cursor()
+                            cur.execute("SELECT name FROM apps WHERE appid = ?", (dlc_appid,))
+                            row = cur.fetchone()
+                            if row and row[0]:
+                                dlc_name = row[0]
+                        finally:
+                            conn.close()
+                    except sqlite3.Error as e:
+                        logger.debug(f"[DLCMode] app name lookup for {dlc_appid} failed: {e}")
 
                 if not dlc_name and desc:
                     dlc_name = desc.replace(" - Depot " + did, "").strip()
@@ -587,8 +589,8 @@ def restore_goldberg_backups(game_dir: str) -> List[str]:
             if os.path.exists(aid_txt):
                 try:
                     os.remove(aid_txt)
-                except Exception:
-                    pass
+                except OSError as e:
+                    logger.debug(f"[DLCMode] could not remove {aid_txt}: {e}")
             for fname in files:
                 if fname.lower().endswith((".dll.valve", ".so.valve")):
                     orig_name = fname[:-6]
@@ -597,8 +599,8 @@ def restore_goldberg_backups(game_dir: str) -> List[str]:
                     if os.path.exists(orig_path):
                         try:
                             os.remove(orig_path)
-                        except Exception:
-                            pass
+                        except OSError as e:
+                            logger.debug(f"[DLCMode] could not remove {orig_path} before restoring {orig_name}: {e}")
                     try:
                         os.rename(bak_path, orig_path)
                         restored.append(orig_name)
@@ -650,8 +652,8 @@ def get_base_depot_ids_for_app(appid: str, game_data: Optional[dict] = None) -> 
         dlc_list = get_all_dlcs_for_app(appid_str, game_data, allow_network=False)
         dlc_appids = {str(d["dlc_appid"]) for d in dlc_list}
         base_depots = {d for d in base_depots if d not in dlc_appids}
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[DLCHelpers] DLC AppIDs unavailable for {appid_str}, DLC depots stay in the base list: {e}")
 
     return sorted(list(base_depots))
 
@@ -669,8 +671,8 @@ def get_saved_depot_selection(appid: str) -> List[str]:
                 return [str(d) for d in data["selected"]]
             elif isinstance(data, list):
                 return [str(d) for d in data]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[DLCHelpers] saved selection for {appid_str} is unreadable: {e}")
 
     try:
         from utils.helpers import get_base_path
@@ -685,8 +687,8 @@ def get_saved_depot_selection(appid: str) -> List[str]:
                         depots.append(did)
             if depots:
                 return depots
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[DLCHelpers] depot file fallback for {appid_str} failed: {e}")
 
     return []
 
@@ -778,8 +780,8 @@ def purge_and_sanitize_for_dlc_only(
         app_info = db.get_app_info(appid_str, bypass_expiration=True)
         if app_info and app_info.get("depots"):
             all_game_depots.update(str(d) for d in app_info["depots"].keys())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[DLCMode] known depot list limited to the in-memory data for {appid_str}: {e}")
 
     if config_path and config_path.exists():
         # 1. Resolve smart DLC & depot mapping
@@ -899,8 +901,8 @@ def purge_and_sanitize_for_dlc_only(
         try:
             settings = get_settings()
             target_install = settings.value(f"game_dir/{appid_str}", "")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[DLCMode] no install path recorded for {appid_str}: {e}")
 
     if target_install and os.path.isdir(target_install):
         # A. Goldberg restore
@@ -1080,8 +1082,8 @@ def has_game_dlcs(appid: str, depots: Optional[Dict[str, Any]] = None) -> bool:
                     did = line.split(":", 1)[0].strip()
                     if did and did != appid_str:
                         return True
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[DLCMode] saved depot listing for {appid_str} could not be read: {e}")
 
     return False
 
