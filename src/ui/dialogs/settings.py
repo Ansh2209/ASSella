@@ -88,6 +88,7 @@ class SettingsDialog(QDialog):
         self.download_slssteam_button = None
         self.slssteam_status_label = None
         self.slssteam_hash_warning_label = None
+        self.ignore_online_fixes_checkbox = None
         self.accent_color_button = None
         self.accent_reset_button = None
         self.all_games_online_checkbox = None
@@ -127,6 +128,7 @@ class SettingsDialog(QDialog):
         # Save original API keys for restore on cancel
         self._original_morrenus_key = self.settings.value("morrenus_api_key", "", type=str)
         self.settings.sync()
+        self._original_ignore_online_fixes = self.settings.value("luatools_ignore_online_fixes", False, type=bool)
         self._original_steam_username = self.settings.value("steam_username", "", type=str)
         from utils.helpers import decrypt_string
         # Recover the in-session password if one was entered earlier in this
@@ -756,6 +758,8 @@ class SettingsDialog(QDialog):
             self.settings.setValue("remember_origins", self._original_remember_origins)
         if hasattr(self, "_original_simplify_denuvo_status"):
             self.settings.setValue("simplify_denuvo_status", self._original_simplify_denuvo_status)
+        if hasattr(self, "_original_ignore_online_fixes"):
+            self.settings.setValue("luatools_ignore_online_fixes", self._original_ignore_online_fixes)
 
         if hasattr(self, "_origins_movie") and self._origins_movie:
             self._origins_movie.stop()
@@ -802,6 +806,11 @@ class SettingsDialog(QDialog):
             self.settings.setValue("log_filter_level", self.log_level_combo.currentText())
         if hasattr(self, "log_category_combo") and self.log_category_combo is not None:
             self.settings.setValue("log_filter_category", self.log_category_combo.currentText())
+        if hasattr(self, "ignore_online_fixes_checkbox") and self.ignore_online_fixes_checkbox is not None:
+            self.settings.setValue(
+                "luatools_ignore_online_fixes",
+                self.ignore_online_fixes_checkbox.isChecked(),
+            )
 
         try:
             from utils.logger import update_log_filters
