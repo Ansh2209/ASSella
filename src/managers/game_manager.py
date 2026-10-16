@@ -296,8 +296,8 @@ class GameManager(QObject):
                 at0m_checker = At0mUpdateChecker.get_instance()
                 try:
                     at0m_checker.game_checked.disconnect(self._on_at0m_game_checked)
-                except Exception:
-                    pass
+                except TypeError:
+                    logger.debug("AT0-M update signal was not connected")
                 at0m_checker.game_checked.connect(self._on_at0m_game_checked)
                 try:
                     at0m_checker.check_all_games_async(force_refresh=force_refresh,
@@ -321,8 +321,8 @@ class GameManager(QObject):
             at0m_checker = At0mUpdateChecker.get_instance()
             try:
                 at0m_checker.game_checked.disconnect(self._on_at0m_game_checked)
-            except Exception:
-                pass
+            except TypeError:
+                logger.debug("AT0-M update signal was not connected")
             at0m_checker.game_checked.connect(self._on_at0m_game_checked)
             try:
                 at0m_checker.check_all_games_async(force_refresh=force_refresh,
@@ -790,8 +790,8 @@ class GameManager(QObject):
                             try:
                                 if os.path.isfile(filepath) or os.path.islink(filepath):
                                     size += os.lstat(filepath).st_size
-                            except (OSError, FileNotFoundError, PermissionError):
-                                pass
+                            except OSError as e:
+                                logger.debug(f"  Skipped unreadable file {filepath}: {e}")
                     if size > 0:
                         if hasattr(self, "games_cache"):
                             self.games_cache.set_cached_size(game_path, size, appid)
@@ -856,8 +856,8 @@ class GameManager(QObject):
             from utils.plugin_games import get_all_plugin_games, build_dlc_reverse_map
             plugin_games_dict = get_all_plugin_games()
             dlc_to_base = build_dlc_reverse_map()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Plugin game list unavailable, plugin games are not scanned: {e}")
 
         try:
             # Use scandir for better error handling during concurrent modifications
@@ -923,8 +923,9 @@ class GameManager(QObject):
                                 "Vapor" if is_vapor else ("ACCELA" if marker_path else "Steam"),
                                 game_name,
                             )
-                    except (OSError, FileNotFoundError, PermissionError):
+                    except OSError as e:
                         # Skip entries that can't be accessed
+                        logger.debug(f"  Skipped unreadable entry in {common_path}: {e}")
                         continue
 
         except OSError as e:
@@ -991,7 +992,8 @@ class GameManager(QObject):
                             cache[installdir] = (manifest_path, appid)
                             cache[installdir.lower()] = (manifest_path, appid)
                             cache[f"appid:{appid}"] = (manifest_path, installdir)
-                    except (OSError, IOError, PermissionError):
+                    except OSError as e:
+                        logger.debug(f"  Skipped unreadable appmanifest {manifest_path}: {e}")
                         continue
         except OSError as e:
             logger.debug(f"Error building ACF cache for {steamapps_path}: {e}")
@@ -1021,8 +1023,9 @@ class GameManager(QObject):
                         # If we find any file or directory that is not ignored, treat it as content
                         if entry.is_file() or entry.is_dir():
                             return True
-                    except (OSError, FileNotFoundError, PermissionError):
+                    except OSError as e:
                         # Skip entries that can't be accessed
+                        logger.debug(f"  Skipped unreadable entry in {game_path}: {e}")
                         continue
 
             return False
@@ -1257,8 +1260,8 @@ class GameManager(QObject):
                 try:
                     from utils.plugin_games import get_plugin_game
                     plugin_record = get_plugin_game(appid, active_only=True)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"  Plugin library lookup failed for {appid}: {e}")
 
             is_plugin_game = bool(plugin_record)
 
@@ -1301,8 +1304,8 @@ class GameManager(QObject):
                         with open(meta_json_path, "r", encoding="utf-8") as mf:
                             m_data = json.load(mf)
                             marker_ts = float(m_data.get("last_updated") or 0)
-                    except Exception:
-                        pass
+                    except (OSError, ValueError, TypeError) as e:
+                        logger.debug(f"  Could not read {meta_json_path}: {e}")
                 if marker_ts == 0 and marker_path and os.path.exists(marker_path):
                     try:
                         marker_ts = os.path.getmtime(marker_path)
@@ -1468,10 +1471,10 @@ class GameManager(QObject):
                                 try:
                                     if os.path.isfile(filepath) or os.path.islink(filepath):
                                         size_on_disk += os.lstat(filepath).st_size
-                                except (OSError, FileNotFoundError, PermissionError):
-                                    pass
-                    except OSError:
-                        pass
+                                except OSError as e:
+                                    logger.debug(f"  Skipped unreadable file {filepath}: {e}")
+                    except OSError as e:
+                        logger.debug(f"  Size scan incomplete for {game_path}, size may be low: {e}")
                     game_data["size_on_disk"] = size_on_disk
             else:
                 game_data["size_on_disk"] = size_on_disk
@@ -1486,8 +1489,8 @@ class GameManager(QObject):
                         if stat and stat.get("status") in ("update_available", "key_pending"):
                             at0m_status = stat["status"]
                             game_data["at0m_update_details"] = stat
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"  AT0-M update status lookup failed for {appid}: {e}")
                 game_data["update_status"] = at0m_status
                 game_data["installed_branch"] = "public"
                 game_data["selected_branch"] = "public"
@@ -1497,8 +1500,8 @@ class GameManager(QObject):
                         _s = get_settings()
                         _s.setValue(f"installed_branch/{appid}", "public")
                         _s.setValue(f"selected_branch/{appid}", "public")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"  Could not record the public branch for {appid}: {e}")
                 return game_data
 
             # Set update status — restore from disk cache if available
@@ -1581,9 +1584,11 @@ class GameManager(QObject):
                                         appid = entry.name.replace("appmanifest_", "").replace(".acf", "")
                                         logger.debug(f"  ✓ Match found! AppID: {appid}")
                                         break
-                            except (OSError, IOError, PermissionError):
+                            except OSError as e:
+                                logger.debug(f"  Skipped unreadable appmanifest {test_manifest_path}: {e}")
                                 continue
-                        except (OSError, FileNotFoundError, PermissionError):
+                        except OSError as e:
+                            logger.debug(f"  Skipped unreadable entry while matching {game_name}: {e}")
                             continue
             except OSError as e:
                 logger.debug(f"  Error scanning steamapps directory: {e}")
@@ -1625,8 +1630,8 @@ class GameManager(QObject):
                             _appid = str(game_data.get("appid") or "")
                             if _appid:
                                 _s.setValue(f"installed_branch/{_appid}", betakey_val)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"  Could not record the installed branch: {e}")
 
                 # Extract SizeOnDisk using regex (only use if non-zero)
                 sizeon_disk_match = re.search(r'"SizeOnDisk"\s+"([^"]+)"', content)
@@ -1758,8 +1763,8 @@ class GameManager(QObject):
                 atom_info = get_atom_game_install_info(appid)
                 if atom_info:
                     install_path = atom_info.get("common_path") or atom_info.get("install_path")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"  AT0-M install info unavailable for {appid}: {e}")
 
         is_accela_install = game_data.get("is_accela_install", False)
 
@@ -1821,8 +1826,8 @@ class GameManager(QObject):
                                 if os.path.exists(saves_path):
                                     has_saves = True
                                     break
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        logger.debug(f"  Steam Cloud save scan incomplete: {e}")
 
                     if has_saves:
                         confirm_msg += "• Steam Cloud saves from userdata folders\n"
@@ -1872,8 +1877,8 @@ class GameManager(QObject):
                                     "• GreenLuma AppList DLC file(s): "
                                     f"{', '.join(found_dlc_files)}\n"
                                 )
-                        except OSError:
-                            pass
+                        except OSError as e:
+                            logger.debug(f"  GreenLuma AppList scan incomplete: {e}")
 
         confirm_msg += "\nThis action cannot be undone!"
         return confirm_msg
@@ -1945,8 +1950,8 @@ class GameManager(QObject):
                         if d.exists() and d.is_dir() and not os.listdir(d):
                             try:
                                 d.rmdir()
-                            except OSError:
-                                pass
+                            except OSError as e:
+                                logger.debug(f"  Left empty directory {d} behind: {e}")
             except Exception as e:
                 logger.error(f"Failed to fetch manifest and delete files for DLC {dlc_appid}: {e}")
 
@@ -2014,8 +2019,8 @@ class GameManager(QObject):
                     cancel_event = _retry_cancel_flags.get(str(appid))
                 if cancel_event:
                     cancel_event.set()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"  Could not cancel an install retry for {appid}: {e}")
 
             # Send SLSsteam API uninstall trigger to Steam client if active
             if platform.system() == "Linux" and appid and appid not in ("0", "N/A", "unknown"):
@@ -2144,8 +2149,8 @@ class GameManager(QObject):
                                                 editor.remove_app(did)
                                                 editor.remove_fake_app_id(did)
                                                 editor.remove_app_token(did)
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        logger.debug(f"  Could not clean {depot_file} from the SLSsteam config: {e}")
                             else:
                                 editor.remove_app(str(appid))
 
@@ -2510,7 +2515,8 @@ class GameManager(QObject):
                     content = file_handle.read().strip()
                 if content in files_by_id:
                     files_by_id[content].append(filename)
-            except OSError:
+            except OSError as e:
+                logger.debug(f"  Skipped unreadable AppList file {filepath}: {e}")
                 continue
 
         for file_list in files_by_id.values():

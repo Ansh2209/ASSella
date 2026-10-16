@@ -135,10 +135,6 @@
     "broad": 1,
     "narrow": 0
   },
-  "managers/game_manager.py": {
-    "broad": 11,
-    "narrow": 12
-  },
   "managers/shsah_reborn.py": {
     "broad": 0,
     "narrow": 1
