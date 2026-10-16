@@ -13,9 +13,9 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSlider,
     QTabWidget,
-    QFileDialog,
     QDialog,
 )
+from ui.dialogs.themed_file_dialog import ThemedFileDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.settings_tabs.windows_depot_warning import WindowsDepotWarningDialog
@@ -143,7 +143,7 @@ def create_downloads_tab(dialog) -> QWidget:
     def on_dl_location_changed(index):
         data = dialog.dl_location_combo.itemData(index)
         if data == "custom":
-            path = QFileDialog.getExistingDirectory(dialog, "Select Custom Download Location")
+            path = ThemedFileDialog.getExistingDirectory(dialog, "Select Custom Download Location")
             if path and is_valid_download_directory(path):
                 existing_idx = dialog.dl_location_combo.findData(path)
                 if existing_idx >= 0:

@@ -14,8 +14,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QScrollArea,
     QApplication,
-    QFileDialog,
 )
+from ui.dialogs.themed_file_dialog import ThemedFileDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.ticket_manager import (
@@ -220,7 +220,7 @@ def paste_and_import_ticket(dialog) -> None:
 
 def export_installed_ticket(dialog) -> None:
     """Export installed ticket YAML to disk."""
-    save_path, _ = QFileDialog.getSaveFileName(
+    save_path, _ = ThemedFileDialog.getSaveFileName(
         dialog, "Export Ticket File", f"ticket_{dialog.appid}.yaml", "YAML Files (*.yaml)"
     )
     if save_path:

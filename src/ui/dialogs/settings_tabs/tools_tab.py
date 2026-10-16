@@ -15,8 +15,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QComboBox,
     QPushButton,
-    QFileDialog,
 )
+from ui.dialogs.themed_file_dialog import ThemedFileDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.settings_tabs.components_card import (
@@ -276,7 +276,7 @@ def launch_terminal_command(cmd: list, cwd: str, needs_env: bool = False) -> Non
 def run_steamless_manually(dialog) -> None:
     if not require_component(dialog, "steamless"):
         return
-    path, _ = QFileDialog.getOpenFileName(
+    path, _ = ThemedFileDialog.getOpenFileName(
         dialog, "Select Executable", os.path.expanduser("~"), "*.exe"
     )
     if path and dialog.main_window:
@@ -286,7 +286,7 @@ def run_steamless_manually(dialog) -> None:
 def run_steamless_aio_manually(dialog) -> None:
     if not require_component(dialog, "steamless"):
         return
-    path, _ = QFileDialog.getOpenFileName(
+    path, _ = ThemedFileDialog.getOpenFileName(
         dialog, "Select Executable", os.path.expanduser("~"), "*.exe"
     )
     if path and dialog.main_window:
@@ -298,7 +298,7 @@ def browse_aio_script(dialog) -> None:
     text = current.text() if current else ""
     current_path = text or os.path.expanduser("~/Downloads")
     start_dir = os.path.dirname(current_path) if os.path.isfile(current_path) else current_path
-    path, _ = QFileDialog.getOpenFileName(
+    path, _ = ThemedFileDialog.getOpenFileName(
         dialog,
         "Select Steamless AIO Script",
         start_dir,

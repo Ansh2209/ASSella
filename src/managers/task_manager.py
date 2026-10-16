@@ -14,7 +14,7 @@ import urllib.error
 
 # QObject and pyqtSlot for robust threading
 from PyQt6.QtCore import QTimer, Qt, QObject, pyqtSlot, pyqtSignal
-from PyQt6.QtWidgets import QFileDialog
+from ui.dialogs.themed_file_dialog import ThemedFileDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
 try:
@@ -565,7 +565,7 @@ class TaskManager(
                 default_dir = os.path.expanduser("~/.local/share/ACCELA/downloads")
                 os.makedirs(default_dir, exist_ok=True)
                 return default_dir
-            return QFileDialog.getExistingDirectory(
+            return ThemedFileDialog.getExistingDirectory(
                 self.main_window, "Select Destination Folder"
             )
 

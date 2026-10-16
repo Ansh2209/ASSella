@@ -29,7 +29,6 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QProgressDialog,
     QPushButton,
     QSizePolicy,
     QTableWidget,
@@ -38,6 +37,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
 
 from utils.image_fetcher import ImageFetcher
 from utils.settings import get_settings
@@ -1594,7 +1594,7 @@ class ModernDepotSelectionDialog(QDialog):
         stem = manifest_path.name.replace(".manifest", "")
         manifest_id = stem.split("_", 1)[1] if "_" in stem else stem
 
-        progress_dialog = QProgressDialog("Loading file list from manifest...", "Cancel", 0, 0, self)
+        progress_dialog = ThemedProgressDialog("Loading file list from manifest...", "Cancel", 0, 0, self)
         progress_dialog.setWindowTitle("Loading Manifest")
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         progress_dialog.show()

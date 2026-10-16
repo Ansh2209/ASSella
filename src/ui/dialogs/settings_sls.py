@@ -18,8 +18,8 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QComboBox,
     QPushButton,
-    QFileDialog,
 )
+from ui.dialogs.themed_file_dialog import ThemedFileDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.helpers import create_checkbox_setting
@@ -622,7 +622,7 @@ def create_sls_tab(dialog) -> QWidget:
             if not appid or not appid.isdigit():
                 ThemedMessageBox.warning(dialog, "Invalid AppID", "Please select a game from dropdown or enter a valid numeric Steam AppID.")
                 return
-            save_path, _ = QFileDialog.getSaveFileName(dialog, "Save Ownership Ticket YAML", f"ticket_{appid}.yaml", "YAML Files (*.yaml)")
+            save_path, _ = ThemedFileDialog.getSaveFileName(dialog, "Save Ownership Ticket YAML", f"ticket_{appid}.yaml", "YAML Files (*.yaml)")
             if save_path:
                 ok, msg = export_ticket(appid, save_path)
                 if ok:
@@ -643,7 +643,7 @@ def create_sls_tab(dialog) -> QWidget:
 
     def _do_export_all(_checked=False):
         try:
-            dest_dir = QFileDialog.getExistingDirectory(dialog, "Select Output Directory for Ticket Batch Export")
+            dest_dir = ThemedFileDialog.getExistingDirectory(dialog, "Select Output Directory for Ticket Batch Export")
             if dest_dir:
                 from utils.ticket_manager import export_all_tickets
                 ok, msg, count = export_all_tickets(dest_dir)

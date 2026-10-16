@@ -52,8 +52,11 @@ NATIVE_CLASSES = {
 
 # The replacements themselves are allowed to name the native classes.
 ALLOWED_FILES = {
+    # The themed wrappers themselves: they embed the native widget on purpose.
     "ui/dialogs/themed_message_box.py",
     "ui/dialogs/themed_progress_dialog.py",
+    "ui/dialogs/themed_file_dialog.py",
+    "ui/dialogs/themed_color_dialog.py",
 }
 
 # Vendored code is not ours to rewrite.

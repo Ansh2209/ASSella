@@ -17,10 +17,10 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QHeaderView,
     QApplication,
-    QFileDialog,
-    QProgressDialog,
 )
+from ui.dialogs.themed_file_dialog import ThemedFileDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
 
 logger = logging.getLogger(__name__)
 
@@ -473,7 +473,7 @@ class FileSelectionDialog(QDialog):
 
     def _browse_destination(self):
         cur = self.dest_edit.text() or os.path.expanduser("~/Downloads")
-        chosen = QFileDialog.getExistingDirectory(self, "Select Download Folder", cur)
+        chosen = ThemedFileDialog.getExistingDirectory(self, "Select Download Folder", cur)
         if chosen:
             self.dest_edit.setText(chosen)
 
@@ -577,7 +577,7 @@ class FileSelectionDialog(QDialog):
             "-max-downloads", "8"
         ]
 
-        progress_dialog = QProgressDialog(f"Downloading {len(selected)} file(s)...", "Cancel", 0, 100, self)
+        progress_dialog = ThemedProgressDialog(f"Downloading {len(selected)} file(s)...", "Cancel", 0, 100, self)
         progress_dialog.setWindowTitle("Downloading Selected Files")
         progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         progress_dialog.setMinimumDuration(0)

@@ -24,10 +24,10 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QCheckBox,
     QPushButton,
-    QFileDialog,
     QFrame,
     QSizePolicy,
 )
+from ui.dialogs.themed_file_dialog import ThemedFileDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
 
@@ -1624,7 +1624,7 @@ class FetchManifestDialog(QDialog):
                 )
                 return
         else:
-            dest_path = QFileDialog.getExistingDirectory(self, "Select Destination Folder")
+            dest_path = ThemedFileDialog.getExistingDirectory(self, "Select Destination Folder")
             if not dest_path:
                 return
 

@@ -11,10 +11,10 @@ from PyQt6.QtWidgets import (
     QLabel,
     QComboBox,
     QPushButton,
-    QColorDialog,
     QApplication,
     QSlider,
 )
+from ui.dialogs.themed_color_dialog import ThemedColorDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.helpers import create_checkbox_setting, create_font_setting, FontSelectionDialog
@@ -277,7 +277,7 @@ def create_style_tab(dialog) -> QWidget:
 
 
 def choose_accent_color(dialog) -> None:
-    color = QColorDialog.getColor()
+    color = ThemedColorDialog.getColor()
     if not color.isValid():
         return
     if is_too_dark(color):
@@ -302,7 +302,7 @@ def reset_accent_color(dialog) -> None:
 
 
 def choose_bg_color(dialog) -> None:
-    color = QColorDialog.getColor()
+    color = ThemedColorDialog.getColor()
     if not color.isValid():
         return
     hex_c = color.name()

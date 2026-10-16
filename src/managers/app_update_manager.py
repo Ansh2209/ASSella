@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 
 from PyQt6.QtCore import QMetaObject, QObject, Qt, Q_ARG
-from PyQt6.QtWidgets import QProgressDialog
+from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.paths import Paths
@@ -74,7 +74,7 @@ class AppUpdateManager(QObject):
         if reply != ThemedMessageBox.StandardButton.Yes:
             return
 
-        progress = QProgressDialog("Connecting to GitHub...", "Cancel", 0, 100, self._parent)
+        progress = ThemedProgressDialog("Connecting to GitHub...", "Cancel", 0, 100, self._parent)
         progress.setWindowTitle("Downloading Update")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)

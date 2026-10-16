@@ -8,11 +8,11 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QProgressDialog,
     QPushButton,
     QVBoxLayout,
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
 
 from ui.dialogs.library.widgets import GameItemWidget
 
@@ -266,7 +266,7 @@ class LibraryScannerMixin:
         if not items:
             return
 
-        progress = QProgressDialog(
+        progress = ThemedProgressDialog(
             f"Importing {len(items)} game(s)...", "Cancel", 0, len(items), self
         )
         progress.setWindowModality(Qt.WindowModality.WindowModal)

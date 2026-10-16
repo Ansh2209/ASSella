@@ -18,10 +18,10 @@ from PyQt6.QtWidgets import (
     QDialog,
     QGraphicsOpacityEffect,
     QMenu,
-    QProgressDialog,
     QListWidgetItem,
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
 
 from ui.dialogs.library.widgets import GameItemWidget
 
@@ -285,7 +285,7 @@ class LibraryActionsMixin:
         if reply != ThemedMessageBox.StandardButton.Yes:
             return
 
-        progress = QProgressDialog("Uninstalling games...", None, 0, len(selected_games), self)
+        progress = ThemedProgressDialog("Uninstalling games...", None, 0, len(selected_games), self)
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.show()
 
@@ -766,7 +766,7 @@ class LibraryActionsMixin:
         c_saves = opts.get("saves", False)
         c_wipe_sls = opts.get("wipe_sls", False)
 
-        self._uninstall_progress_dialog = QProgressDialog(
+        self._uninstall_progress_dialog = ThemedProgressDialog(
             progress_title, None, 0, 0, parent
         )
         self._uninstall_progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)

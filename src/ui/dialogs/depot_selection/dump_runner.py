@@ -17,7 +17,7 @@ import subprocess
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 
-from PyQt6.QtWidgets import QProgressDialog
+from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
 
 from ui.dialogs.depot_selection.manifest_dump import ManifestDump, discard_keys_file
 
@@ -59,7 +59,7 @@ class ManifestDumpRunner(QObject):
     def start(self):
         from utils.helpers import get_dotnet_path, resource_path
 
-        progress = QProgressDialog(
+        progress = ThemedProgressDialog(
             "Loading file list from manifest...", "Cancel", 0, 0, self.parent()
         )
         progress.setWindowTitle("Loading Manifest")

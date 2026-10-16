@@ -200,6 +200,12 @@ class ThemedProgressDialog(QDialog):
     def setMinimumDuration(self, ms: int):
         pass  # Kept for QProgressDialog compatibility
 
+    def setWindowTitle(self, title: str):
+        """Show the caller's title in the in-app bar, since there are no decorations."""
+        super().setWindowTitle(title)
+        if title and self.title_bar and hasattr(self.title_bar, "title_label"):
+            self.title_bar.title_label.setText(title)
+
     def wasCanceled(self) -> bool:
         return self._was_canceled
 
