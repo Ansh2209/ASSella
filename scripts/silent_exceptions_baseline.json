@@ -67,10 +67,6 @@
     "broad": 2,
     "narrow": 3
   },
-  "core/tasks/native_steam_download_task.py": {
-    "broad": 7,
-    "narrow": 15
-  },
   "core/tasks/smart_update_task.py": {
     "broad": 1,
     "narrow": 0
