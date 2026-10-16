@@ -31,6 +31,8 @@ from ui.dialogs.game_details.widgets import (
     MaterialTile,
 )
 
+from ui.dialogs.game_details.window_style import build_stylesheet, ink_on
+
 from ui.dialogs.game_details.hero_header import (
     load_hero_image,
     init_hero_v2,
@@ -223,118 +225,9 @@ class GameDetailsDialogV2(QDialog):
             pass
 
     def _apply_stylesheet(self):
-        ac = self.accent_color
-        bg = self.background_color
-        from utils.color_utils import get_dark_container_color
-        sel_bg_hex = get_dark_container_color(ac)
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {bg};
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.15);
-            }}
-            QFrame {{
-                border: none;
-                background: transparent;
-            }}
-            QLabel {{
-                color: #FFFFFF;
-                border: none;
-                background: transparent;
-                font-size: 9.5pt;
-            }}
-            QPushButton {{
-                background-color: rgba(255, 255, 255, 0.08);
-                color: #FFFFFF;
-                border: none;
-                border-radius: 4px;
-                padding: 5px 14px;
-                font-size: 9.5pt;
-            }}
-            QPushButton:hover {{
-                background-color: rgba(255, 255, 255, 0.16);
-                color: {ac};
-            }}
-            QPushButton:disabled {{
-                background-color: rgba(255, 255, 255, 0.02);
-                color: rgba(255, 255, 255, 0.098);
-            }}
-            QLineEdit {{
-                background-color: rgba(0, 0, 0, 0.196);
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.059);
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 9.5pt;
-            }}
-            QLineEdit:focus {{ border-color: {ac}; }}
-            QLineEdit:disabled {{
-                color: rgba(255, 255, 255, 0.118);
-                border-color: rgba(255, 255, 255, 8);
-            }}
-            QComboBox {{
-                background-color: rgba(0, 0, 0, 0.196);
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.059);
-                border-radius: 6px;
-                padding: 3px 8px;
-                font-size: 9.5pt;
-            }}
-            QComboBox::drop-down {{ border: none; width: 18px; }}
-            QComboBox QAbstractItemView {{
-                background-color: #1b1b1f;
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 8px;
-                selection-background-color: {sel_bg_hex};
-                selection-color: #FFFFFF;
-                font-size: 9.5pt;
-                outline: 0px;
-                padding: 4px;
-            }}
-            QComboBox QAbstractItemView::item {{
-                min-height: 28px;
-                padding: 4px 12px;
-                color: #E0E0E0;
-            }}
-            QComboBox QAbstractItemView::item:hover, QComboBox QAbstractItemView::item:selected {{
-                background-color: {sel_bg_hex} !important;
-                color: #FFFFFF !important;
-            }}
-            QCheckBox {{
-                color: #FFFFFF;
-                font-size: 9.5pt;
-                spacing: 6px;
-            }}
-            QCheckBox::indicator {{
-                width: 14px; height: 14px;
-                border: 1px solid rgba(255, 255, 255, 0.078);
-                border-radius: 3px;
-                background: rgba(0, 0, 0, 0.157);
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {ac};
-                border-color: {ac};
-            }}
-            QScrollArea {{ border: none; background: transparent; }}
-            QScrollBar:vertical {{
-                border: none;
-                background: rgba(0, 0, 0, 0.059);
-                width: 4px;
-                margin: 0px;
-                border-radius: 2px;
-            }}
-            QScrollBar::handle:vertical {{
-                background: rgba(255, 255, 255, 0.137);
-                min-height: 20px;
-                border-radius: 2px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background: rgba(255, 255, 255, 0.255);
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-            }}
-        """)
+        self.setStyleSheet(
+            build_stylesheet(self.background_color, self.accent_color)
+        )
 
     def _setup_ui(self):
         root = QVBoxLayout(self)
@@ -354,11 +247,11 @@ class GameDetailsDialogV2(QDialog):
 
         # Tab Bar
         tab_bar_frame = QFrame()
-        tab_bar_frame.setStyleSheet("""
-            QFrame {
+        tab_bar_frame.setStyleSheet(f"""
+            QFrame {{
                 background-color: rgba(0, 0, 0, 0.078);
-                border-bottom: 1px solid rgba(255, 255, 255, 0.039);
-            }
+                border-bottom: 1px solid {ink_on(self.background_color, 0.039)};
+            }}
         """)
         tab_bar_layout = QHBoxLayout(tab_bar_frame)
         tab_bar_layout.setContentsMargins(8, 0, 8, 0)
@@ -443,7 +336,7 @@ class GameDetailsDialogV2(QDialog):
             QPushButton {{
                 border: none; border-radius: 0;
                 padding: 0 8px; font-size: 9pt;
-                color: rgba(255, 255, 255, 0.6);
+                color: {ink_on(self.background_color, 0.6)};
             }}
             QPushButton:hover {{ color: {self.accent_color}; }}
         """)
@@ -491,7 +384,7 @@ class GameDetailsDialogV2(QDialog):
                     QPushButton {{
                         border: none; border-radius: 0;
                         padding: 0px 10px; font-size: 9pt;
-                        color: rgba(255, 255, 255, 0.65);
+                        color: {ink_on(self.background_color, 0.65)};
                     }}
                     QPushButton:hover {{ color: {self.accent_color}; }}
                 """)
