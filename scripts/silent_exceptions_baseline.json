@@ -227,10 +227,6 @@
     "broad": 5,
     "narrow": 1
   },
-  "ui/dialogs/library/actions.py": {
-    "broad": 15,
-    "narrow": 7
-  },
   "ui/dialogs/library/filter_sort.py": {
     "broad": 3,
     "narrow": 2

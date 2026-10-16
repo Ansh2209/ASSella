@@ -712,8 +712,8 @@ class LibraryActionsMixin:
                 subprocess.call(["open", path])
             else:
                 subprocess.call(["xdg-open", path])
-        except OSError:
-            pass
+        except OSError as e:
+            logger.warning(f"[Library] Could not open the game folder: {e}")
 
     def _confirm_action(self, title: str, message: str) -> bool:
         reply = QMessageBox.question(
@@ -806,8 +806,8 @@ class LibraryActionsMixin:
             if self._details_dialog:
                 try:
                     self._details_dialog.accept()
-                except RuntimeError:
-                    pass
+                except RuntimeError as e:
+                    logger.debug(f"[Library] Could not close the details dialog: {e}")
             self._refresh_game_list()
         else:
             QMessageBox.critical(parent, "Error", f"Failed: {error}")
@@ -960,8 +960,8 @@ class LibraryActionsMixin:
                             if os.path.exists(aid_txt):
                                 try:
                                     os.remove(aid_txt)
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(f"[Library] Could not remove {aid_txt}: {e}")
                             for fname in files:
                                 if fname.lower().endswith((".dll.valve", ".so.valve")):
                                     orig_name = fname[:-6]
@@ -970,8 +970,8 @@ class LibraryActionsMixin:
                                     if os.path.exists(orig_path):
                                         try:
                                             os.remove(orig_path)
-                                        except Exception:
-                                            pass
+                                        except Exception as e:
+                                            logger.debug(f"[Library] Could not remove {orig_path}: {e}")
                                     try:
                                         os.rename(bak_path, orig_path)
                                         logger.info(f"I bought the game: Restored Goldberg backup {orig_name} in {root}")
@@ -1084,8 +1084,8 @@ class LibraryActionsMixin:
                 try:
                     from core.steam_api import get_depot_info_from_api
                     info = get_depot_info_from_api(appid)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[Library] Could not look up depot info for {appid}: {e}")
                 target_info = info or game_data
                 write_acf_file(
                     path,
@@ -1109,8 +1109,8 @@ class LibraryActionsMixin:
         if hasattr(self, "game_manager") and self.game_manager:
             try:
                 self.game_manager.scan_steam_libraries_async()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[Library] Steam library rescan request failed: {e}")
 
     @staticmethod
     def _is_goldberg_applied(game_dir: str) -> bool:
@@ -1154,8 +1154,8 @@ class LibraryActionsMixin:
                                 zip_task = ProcessZipTask()
                                 parsed_data = zip_task.run(str(fpath))
                                 desc = parsed_data.get("depots", {}).get(d_id, {}).get("desc", "")
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"[Library] Could not read the manifest description for depot {d_id}: {e}")
                     
                     if desc:
                         desc_clean = re.sub(r"\s*-\s*Depot\s*" + re.escape(d_id), "", desc, flags=re.IGNORECASE).strip()
@@ -1222,8 +1222,8 @@ class LibraryActionsMixin:
                     try:
                         data = json.loads(saved_val)
                         selected_depots = data.get("selected", [])
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[Library] Could not read the saved depot selection: {e}")
 
                 depot_dialog = DepotSelectionDialog(
                     parsed_data["appid"],
@@ -1249,8 +1249,8 @@ class LibraryActionsMixin:
                             db = DatabaseManager()
                             for c_did in chosen:
                                 db.clear_missing_hubcap_depot(appid, str(c_did))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"[Library] Could not clear recovered-depot records for {appid}: {e}")
                         all_available_keys = list(depot_dialog.depots.keys()) if hasattr(depot_dialog, "depots") else list(depots.keys())
                         all_depots_dict = depot_dialog.depots if hasattr(depot_dialog, "depots") else depots
                         self.settings.setValue(
@@ -1529,8 +1529,8 @@ class LibraryActionsMixin:
                 dialog.validate_btn.setEnabled(True)
                 if hasattr(dialog, "_update_validate_button_state"):
                     dialog._update_validate_button_state()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[Library] Could not reset the validate button: {e}")
 
     def _use_local_verify_bundle(self, app_id: str, game_data: dict, dialog, local_zip: str) -> None:
         """Submit the local bundle for verification (fetch marked complete)."""
@@ -1566,8 +1566,8 @@ class LibraryActionsMixin:
                 logger.error(f"[VerifyFlow] Failed to marshal resolution result: {e}")
                 try:
                     self._cancel_verify_fetch(app_id, dialog)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[VerifyFlow] Could not cancel the fetch while handling an error: {e}")
 
         self.executor.submit(_work)
         return True
@@ -1659,16 +1659,16 @@ class LibraryActionsMixin:
                 try:
                     QMessageBox.warning(self, "Verify Failed",
                                         f"Could not resolve manifests for '{name}':\n{outcome[1] if len(outcome) > 1 else 'unknown error'}")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[VerifyFlow] Could not show the resolution error: {e}")
                 self._cancel_verify_fetch(app_id, dialog)
         except Exception as e:
             # Dialog may have been closed while resolving; never strand the fetch.
             logger.debug(f"[VerifyFlow] Resolution continuation failed: {e}")
             try:
                 self._cancel_verify_fetch(app_id, dialog)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[VerifyFlow] Could not cancel the fetch after a resolution failure: {e}")
 
     def _verify_refresh_failed_notice(self, app_id: str, game_data: dict,
                                         dialog, local_zip: str,
@@ -1768,8 +1768,8 @@ class LibraryActionsMixin:
                 logger.debug(f"[VerifyFlow] Marshal after best-effort refresh failed: {e}")
                 try:
                     self._cancel_verify_fetch(app_id, dialog)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[VerifyFlow] Could not cancel the fetch after a refresh failure: {e}")
 
         self.executor.submit(_work)
 
@@ -1934,16 +1934,16 @@ class LibraryActionsMixin:
             if not download_only:
                 try:
                     self._submit_job(fpath, game_data, self._details_dialog)
-                except RuntimeError:
-                    pass
+                except RuntimeError as e:
+                    logger.debug(f"[Library] Could not submit the manifest job: {e}")
             elif download_only and self._details_dialog:
                 try:
                     if hasattr(self._details_dialog, "validate_btn") and self._details_dialog.validate_btn:
                         self._details_dialog.validate_btn.set_loading(False)
                         self._details_dialog.validate_btn.setEnabled(True)
                     self._details_dialog._update_validate_button()
-                except RuntimeError:
-                    pass
+                except RuntimeError as e:
+                    logger.debug(f"[Library] Could not reset the validate button: {e}")
         else:
             if not download_only:
                 QMessageBox.critical(self, "Error", f"Failed: {error}")
@@ -1957,8 +1957,8 @@ class LibraryActionsMixin:
                         self._details_dialog.validate_btn.set_loading(False)
                         self._details_dialog.validate_btn.setEnabled(True)
                     self._details_dialog._update_validate_button()
-                except RuntimeError:
-                    pass
+                except RuntimeError as e:
+                    logger.debug(f"[Library] Could not reset the validate button: {e}")
 
     def _check_hubcap_status_first(self, app_id: str, game_data: dict, dialog: QDialog) -> None:
         """Runs the Stage 1 pre-download Hubcap status check asynchronously."""
@@ -1981,8 +1981,8 @@ class LibraryActionsMixin:
         if check_progress:
             try:
                 check_progress.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[Library] Could not close the hubcap progress dialog: {e}")
 
         app_id = str(game_data.get("appid"))
         name = game_data.get("game_name", "Unknown")
@@ -2081,8 +2081,8 @@ class LibraryActionsMixin:
         if parse_progress is not None:
             try:
                 parse_progress.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[Library] Could not close the parse progress dialog: {e}")
 
         is_verify = bool(game_data.get("_is_verify") or game_data.get("update_status") != "update_available")
         target_branch = game_data.get("branch") or (parsed_data.get("branch") if isinstance(parsed_data, dict) else "public") or "public"
@@ -2275,8 +2275,8 @@ class LibraryActionsMixin:
                     db = DatabaseManager()
                     for s_did in selected_depots:
                         db.clear_missing_hubcap_depot(appid, str(s_did))
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[Library] Could not clear recovered-depot records for {appid}: {e}")
                 all_available_keys = list(depot_dialog.depots.keys()) if ('depot_dialog' in locals() and hasattr(depot_dialog, "depots")) else list(depots.keys())
                 all_depots_dict = depot_dialog.depots if ('depot_dialog' in locals() and hasattr(depot_dialog, "depots")) else depots
                 try:
@@ -2307,9 +2307,9 @@ class LibraryActionsMixin:
         if dialog:
             try:
                 dialog.accept()
-            except RuntimeError:
-                pass
+            except RuntimeError as e:
+                logger.debug(f"[Library] Could not close the details dialog: {e}")
         try:
             self.accept()
-        except RuntimeError:
-            pass
+        except RuntimeError as e:
+            logger.debug(f"[Library] Could not close the dialog: {e}")
