@@ -291,10 +291,6 @@
     "broad": 1,
     "narrow": 0
   },
-  "ui/dialogs/zip_confirm_dialog.py": {
-    "broad": 16,
-    "narrow": 0
-  },
   "ui/main_window.py": {
     "broad": 10,
     "narrow": 1

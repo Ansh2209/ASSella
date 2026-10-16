@@ -62,13 +62,13 @@ def format_dd_mm_yy(val: Any) -> str:
         try:
             ts = int(m_ts.group(1))
             return datetime.datetime.fromtimestamp(ts).strftime("%d/%m/%y")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[ZipConfirm] Could not parse the build timestamp: {e}")
     if val_str.isdigit() and len(val_str) in (9, 10):
         try:
             return datetime.datetime.fromtimestamp(int(val_str)).strftime("%d/%m/%y")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[ZipConfirm] Could not parse the build timestamp: {e}")
     for fmt in (
         "%Y-%m-%d",
         "%B %d, %Y",
@@ -83,7 +83,8 @@ def format_dd_mm_yy(val: Any) -> str:
             clean_date = val_str.split(" at ")[0].strip()
             dt = datetime.datetime.strptime(clean_date, fmt)
             return dt.strftime("%d/%m/%y")
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[ZipConfirm] Could not parse the patch date: {e}")
             continue
     return val_str.split(" at ")[0].strip()
 
@@ -868,8 +869,8 @@ class ZipImportConfirmationDialog(QDialog):
                                         if dm.creation_time:
                                             manifest_creation_times.append(dm.creation_time)
                                         continue
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(f"[ZipConfirm] Could not read a manifest from the bundle: {e}")
                             # Fallback if protobuf parse failed
                             base = os.path.basename(name).replace(".manifest", "")
                             parts = base.split("_")
@@ -1008,8 +1009,8 @@ class ZipImportConfirmationDialog(QDialog):
                                 game_name = m_n.group(1).strip()
                             if installed_bid:
                                 break
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"[ZipConfirm] Could not read the installed app manifest: {e}")
             except Exception as _acf_err:
                 logger.debug(f"[ZipConfirmDialog] ACF scan error: {_acf_err}")
 
@@ -1025,8 +1026,8 @@ class ZipImportConfirmationDialog(QDialog):
             app_meta = db.get_app_info(info["appid"])
             if app_meta and not game_name and app_meta.get("name"):
                 game_name = app_meta.get("name")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[ZipConfirm] Could not look up the app name: {e}")
 
         info["game_name"] = game_name or f"App {info['appid']}"
         info["installed_buildid"] = installed_bid
@@ -1039,8 +1040,8 @@ class ZipImportConfirmationDialog(QDialog):
             from utils.plugin_games import is_plugin_game
             if is_plugin_game(info["appid"]):
                 is_atom_installed = True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[ZipConfirm] Could not check AT0-M availability: {e}")
         if not is_atom_installed and hasattr(self, "parent") and self.parent():
             gm = getattr(self.parent(), "game_manager", None)
             if gm and hasattr(gm, "get_game"):
@@ -1175,8 +1176,8 @@ class ZipImportConfirmationDialog(QDialog):
                     earliest_ts = min(manifest_creation_times)
                     dt = datetime.datetime.fromtimestamp(earliest_ts)
                     patch_date = dt.strftime("%B %d, %Y")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[ZipConfirm] Could not format the earliest patch date: {e}")
 
             info["imported_buildid"] = matched_hist_bid or lua_buildid or ""
             info["patch_title"] = patch_title
@@ -1221,8 +1222,8 @@ class ZipImportConfirmationDialog(QDialog):
                     for d, m in all_target_manifests.items()
                 ):
                     all_cached = True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ZipConfirm] Could not check the manifest cache: {e}")
 
             if all_cached:
                 info["intent"] = "Cached"
@@ -1441,8 +1442,8 @@ class ZipImportConfirmationDialog(QDialog):
                     real_p = os.path.realpath(p)
                     if real_p not in detected_libs:
                         detected_libs.append(real_p)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[ZipConfirm] Could not enumerate the Steam libraries: {e}")
 
         settings = get_settings()
         def_dir = settings.value("default_download_directory", "", type=str)
@@ -1540,8 +1541,8 @@ class ZipImportConfirmationDialog(QDialog):
         if getattr(self, "movie", None):
             try:
                 self.movie.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ZipConfirm] Could not stop the loading movie: {e}")
 
         target_h = 420
         if has_different_builds:
@@ -1678,8 +1679,8 @@ class ZipImportConfirmationDialog(QDialog):
         if getattr(self, "movie", None):
             try:
                 self.movie.start()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ZipConfirm] Could not start the loading movie: {e}")
         self.stack.setCurrentIndex(0)
 
         def _prepare_worker():
@@ -1704,8 +1705,8 @@ class ZipImportConfirmationDialog(QDialog):
                                 try:
                                     s_dir.mkdir(parents=True, exist_ok=True)
                                     (s_dir / f"{d_id}_{m_id}.manifest").write_bytes(raw_bytes)
-                                except Exception:
-                                    pass
+                                except Exception as e:
+                                    logger.debug(f"[ZipConfirm] Could not write {d_id}_{m_id}.manifest: {e}")
 
                     # Inject fetched manifests into zip file so ProcessZipTask reads them directly
                     if fetched_manifests and os.path.exists(self.zip_path):
@@ -1943,22 +1944,22 @@ class ZipImportConfirmationDialog(QDialog):
         if getattr(self, "movie", None):
             try:
                 self.movie.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ZipConfirm] Could not stop the loading movie: {e}")
         super().accept()
 
     def closeEvent(self, event):
         if getattr(self, "movie", None):
             try:
                 self.movie.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ZipConfirm] Could not stop the loading movie: {e}")
         super().closeEvent(event)
 
     def reject(self):
         if getattr(self, "movie", None):
             try:
                 self.movie.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[ZipConfirm] Could not stop the loading movie: {e}")
         super().reject()
