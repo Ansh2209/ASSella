@@ -130,6 +130,13 @@ jobs:
           fi
           echo "No unresolved internal member imports found."
 
+      # Silent handlers are how the last few bugs hid: the call failed, a bare
+      # `except` swallowed it, and the feature never worked. The handlers
+      # already in the tree are frozen; this fails on a new one.
+      - name: No New Silent Exceptions
+        run: |
+          python scripts/check_silent_exceptions.py
+
       # Behavioural suites. All are hermetic: no Steam install, no network, no
       # display and no pre-existing SLSsteam config, so they are safe on a clean
       # runner. They cover the logic that regresses silently - depot->app
@@ -149,6 +156,7 @@ jobs:
                        test_manifest_dump test_dump_runner \
                        test_storage_targets test_depot_metadata \
                        test_executable_probe test_selection_policy \
+                       test_silent_exception_gate \
                        test_language_depots; do
             echo "::group::$suite"
             QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp \
