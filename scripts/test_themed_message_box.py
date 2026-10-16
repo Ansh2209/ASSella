@@ -38,7 +38,7 @@ def main() -> int:
     os.environ.setdefault("XDG_RUNTIME_DIR", "/tmp")
 
     from PyQt6.QtCore import Qt
-    from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QScrollArea
+    from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QPushButton, QScrollArea
 
     app = QApplication.instance() or QApplication([])
 
@@ -49,13 +49,14 @@ def main() -> int:
     )
 
     def build(title="Title", text="Some text", buttons=StandardButton.Ok,
-              default_button=None, severity="information"):
+              default_button=None, severity="information", informative=""):
         dlg = ThemedMessageBox(
             title=title,
             text=text,
             buttons=buttons,
             default_button=default_button,
             severity=severity,
+            informative=informative,
         )
         return dlg
 
@@ -76,6 +77,29 @@ def main() -> int:
         assert created, f"{method_name} never built a dialog"
         return created[0], reply
 
+    def call_choices(click_label, *args, **kwargs):
+        """Run choices() with exec() stubbed, clicking the named button (None = just close)."""
+        created = []
+
+        def fake_exec(self):
+            created.append(self)
+            if click_label is None:
+                return
+            for btn in self.findChildren(QPushButton):
+                if btn.text() == click_label:
+                    btn.click()
+                    return
+            raise AssertionError(f"no button labelled {click_label}")
+
+        original = ThemedMessageBox.exec
+        ThemedMessageBox.exec = fake_exec
+        try:
+            reply = ThemedMessageBox.choices(None, *args, **kwargs)
+        finally:
+            ThemedMessageBox.exec = original
+        assert created, "choices never built a dialog"
+        return created[0], reply
+
     print("\n-- QMessageBox parity --")
     same = True
     for name in ("NoButton", "Ok", "Cancel", "Yes", "No"):
@@ -92,8 +116,12 @@ def main() -> int:
     for name in ("information", "warning", "critical", "question"):
         params = list(inspect.signature(getattr(ThemedMessageBox, name)).parameters)
         check(
-            params == ["parent", "title", "text", "buttons", "default_button"],
+            params[:5] == ["parent", "title", "text", "buttons", "default_button"],
             f"{name}() takes (parent, title, text, buttons, default) like QMessageBox",
+        )
+        check(
+            params[5:] == ["informative"],
+            f"{name}() adds an informative line on top of the QMessageBox signature",
         )
 
     for name, expected in (
@@ -147,14 +175,14 @@ def main() -> int:
 
     dlg = build(buttons=StandardButton.Yes | StandardButton.No)
     dlg._buttons[StandardButton.Yes].click()
-    check(dlg._clicked_button == StandardButton.Yes, "clicking Yes records Yes")
+    check(dlg._result_value == StandardButton.Yes, "clicking Yes records Yes")
     check(dlg.result() == 1, "clicking Yes accepts the dialog")
 
     dlg = build(buttons=StandardButton.Yes | StandardButton.No)
     dlg._buttons[StandardButton.No].click()
-    check(dlg._clicked_button == StandardButton.No, "clicking No records No")
+    check(dlg._result_value == StandardButton.No, "clicking No records No")
     check(dlg.result() == 0, "clicking No rejects the dialog")
-    check(dlg._clicked_button != StandardButton.NoButton, "a rejection is not confused with closing")
+    check(dlg._result_value != StandardButton.NoButton, "a rejection is not confused with closing")
 
     print("\n-- the default button --")
     dlg = build(buttons=StandardButton.Yes | StandardButton.No)
@@ -208,6 +236,40 @@ def main() -> int:
     dlg, reply = call("question", StandardButton.Cancel, "Sure?", "Really do it?",
                       StandardButton.Yes | StandardButton.No | StandardButton.Cancel)
     check(reply == StandardButton.Cancel, "question() honours a wider button set")
+
+    print("\n-- the informative line --")
+    dlg = build(text="First thought", informative="And a second one")
+    check(
+        any(lbl.text() == "And a second one" for lbl in dlg.findChildren(QLabel)),
+        "an informative line is drawn under the text",
+    )
+    dlg = build(text="First thought")
+    check(
+        not any(lbl.text() == "And a second one" for lbl in dlg.findChildren(QLabel)),
+        "no informative line when none is asked for",
+    )
+    dlg, reply = call("warning", StandardButton.Ok, "Careful", "Watch out",
+                      StandardButton.Ok, None, "with a caveat")
+    check(
+        any(lbl.text() == "with a caveat" for lbl in dlg.findChildren(QLabel)),
+        "the classmethods pass the informative line through",
+    )
+
+    print("\n-- the caller's own buttons --")
+    dlg, reply = call_choices("Retry", "Title", "Body",
+                              [("Retry", "retry"), ("Cancel", "cancel")], default="cancel")
+    check(reply == "retry", "choices() returns the value of the button that was clicked")
+    check([b.text() for b in dlg.findChildren(QPushButton) if b.text()] == ["Retry", "Cancel"],
+          "choices() lays the caller's buttons out in order")
+    check([b for b in dlg.findChildren(QPushButton) if b.text() == "Cancel"][0].isDefault(),
+          "choices() gives the default value the focus")
+
+    dlg, reply = call_choices(None, "Title", "Body", [("Only", "only")])
+    check(reply is None, "closing choices() without a click answers None")
+    check([b for b in dlg.findChildren(QPushButton) if b.text() == "Only"][0].isDefault(),
+          "choices() defaults to the first button when none is named")
+    check(not [b for b in dlg.findChildren(QPushButton) if b.text() in ("OK", "Yes", "No")],
+          "choices() adds no standard buttons of its own")
 
     print()
     if _failures:

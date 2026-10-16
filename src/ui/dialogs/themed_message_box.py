@@ -19,12 +19,23 @@ and return a ``StandardButton`` whose member names and values are QMessageBox's 
     if reply == ThemedMessageBox.StandardButton.Yes:
         ...
 
+A dialog that needs its own buttons (QMessageBox.addButton) uses
+``ThemedMessageBox.choices`` instead, and gets the value it passed back:
+
+    choice = ThemedMessageBox.choices(
+        parent, "Title", "Text",
+        [("Retry", "retry"), ("Cancel", "cancel")], default="cancel",
+    )
+    if choice == "retry":
+        ...
+
 The message text is rendered as plain text on purpose: pass newlines, never markup.
+An optional ``informative`` line is drawn under the text for a second thought.
 """
 
 import logging
 from enum import IntFlag
-from typing import Dict, Optional
+from typing import Dict, Optional, Sequence, Tuple
 
 from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
@@ -115,9 +126,10 @@ class ThemedMessageBox(QDialog):
         default_button: Optional[StandardButton] = None,
         parent: Optional[QWidget] = None,
         severity: str = "information",
+        informative: str = "",
     ):
         super().__init__(parent)
-        self._clicked_button = StandardButton.NoButton
+        self._result_value = None
         self._buttons: Dict[StandardButton, QPushButton] = {}
 
         self.setWindowTitle(title)
@@ -137,7 +149,7 @@ class ThemedMessageBox(QDialog):
             or (settings.value("background_color", "#111318") if settings else "#111318")
         )
 
-        self._build_ui(title, text, buttons, default_button, severity)
+        self._build_ui(title, text, buttons, default_button, severity, informative)
 
     def _build_ui(
         self,
@@ -146,6 +158,7 @@ class ThemedMessageBox(QDialog):
         buttons: StandardButton,
         default_button: Optional[StandardButton],
         severity: str,
+        informative: str = "",
     ):
         root = QVBoxLayout(self)
         root.setContentsMargins(10, 10, 10, 10)
@@ -218,10 +231,27 @@ class ThemedMessageBox(QDialog):
             text_row.addWidget(msg_lbl, 1)
         body_lay.addLayout(text_row)
 
+        if informative:
+            info_lbl = QLabel(informative)
+            info_lbl.setWordWrap(True)
+            info_lbl.setTextFormat(Qt.TextFormat.PlainText)
+            info_lbl.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+                | Qt.TextInteractionFlag.TextSelectableByKeyboard
+            )
+            info_lbl.setStyleSheet("""
+                color: rgba(255, 255, 255, 0.62);
+                font-size: 8.5pt;
+            """)
+            info_row = QHBoxLayout()
+            info_row.setContentsMargins(46, 0, 0, 0)
+            info_row.addWidget(info_lbl, 1)
+            body_lay.addLayout(info_row)
+
         # Buttons row
-        btn_lay = QHBoxLayout()
-        btn_lay.setSpacing(10)
-        btn_lay.addStretch()
+        self._button_row = QHBoxLayout()
+        self._button_row.setSpacing(10)
+        self._button_row.addStretch()
 
         c = QColor(self.accent_color)
         fg_color = get_best_foreground_color(self.accent_color)
@@ -274,25 +304,40 @@ class ThemedMessageBox(QDialog):
         # Windows / Qt order: the affirmative choice leads.
         yes_is_secondary = bool(buttons & StandardButton.Yes) and bool(buttons & StandardButton.No)
 
+        self._primary_style = primary_style
+        self._secondary_style = secondary_style
+
         for standard in (StandardButton.Ok, StandardButton.Yes, StandardButton.No, StandardButton.Cancel):
             if not buttons & standard:
                 continue
-            btn = QPushButton(labels[standard])
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             is_primary = standard == StandardButton.Ok or (
                 standard == StandardButton.Yes and not yes_is_secondary
             )
-            btn.setStyleSheet(primary_style if is_primary else secondary_style)
-            btn.setAutoDefault(False)
-            btn.clicked.connect(lambda _checked=False, chosen=standard: self._set_result_and_close(chosen))
-            btn_lay.addWidget(btn)
-            self._buttons[standard] = btn
+            self._buttons[standard] = self._add_button(labels[standard], standard, primary=is_primary)
 
         self._apply_default_button(default_button)
 
-        body_lay.addLayout(btn_lay)
+        body_lay.addLayout(self._button_row)
         container_lay.addLayout(body_lay)
         root.addWidget(self.container)
+
+    def _add_button(self, label: str, value, *, primary: bool = False) -> QPushButton:
+        """One themed button in the row; clicking it closes the dialog with ``value``."""
+        btn = QPushButton(label)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setStyleSheet(self._primary_style if primary else self._secondary_style)
+        btn.setAutoDefault(False)
+        btn.clicked.connect(lambda _checked=False, chosen=value: self._finish(chosen))
+        self._button_row.addWidget(btn)
+        return btn
+
+    def _finish(self, value) -> None:
+        """Record what was clicked and close; an affirmation accepts, anything else rejects."""
+        self._result_value = value
+        if value in (StandardButton.Ok, StandardButton.Yes):
+            self.accept()
+        else:
+            self.reject()
 
     def _apply_default_button(self, default_button: Optional[StandardButton]) -> None:
         """Give the requested button the Enter key; fall back to Yes, then OK.
@@ -310,12 +355,45 @@ class ThemedMessageBox(QDialog):
             self._buttons[chosen].setDefault(True)
             self._buttons[chosen].setFocus()
 
-    def _set_result_and_close(self, button: StandardButton):
-        self._clicked_button = button
-        if button in (StandardButton.Ok, StandardButton.Yes):
-            self.accept()
-        else:
-            self.reject()
+    @classmethod
+    def choices(
+        cls,
+        parent: Optional[QWidget],
+        title: str,
+        text: str,
+        buttons: Sequence[Tuple[str, object]],
+        *,
+        default: object = None,
+        severity: str = "information",
+        informative: str = "",
+    ) -> object:
+        """A themed dialog with its own buttons; returns the value that was clicked.
+
+        ``buttons`` is ``[(label, value), ...]`` in the order they should read.
+        The value equal to ``default`` (or the first one) carries the focus and
+        the accent colour. Closing the window without a choice returns None.
+        """
+        logger.debug("Themed message box (choices): %s", title)
+        dlg = cls(
+            title=title,
+            text=text,
+            buttons=StandardButton.NoButton,
+            default_button=None,
+            parent=parent,
+            severity=severity,
+            informative=informative,
+        )
+        focus = None
+        for index, (label, value) in enumerate(buttons):
+            primary = value == default if default is not None else index == 0
+            btn = dlg._add_button(label, value, primary=primary)
+            if primary:
+                focus = btn
+        if focus is not None:
+            focus.setDefault(True)
+            focus.setFocus()
+        dlg.exec()
+        return dlg._result_value
 
     @classmethod
     def _run(
@@ -326,6 +404,7 @@ class ThemedMessageBox(QDialog):
         text: str,
         buttons: StandardButton,
         default_button: Optional[StandardButton],
+        informative: str = "",
     ) -> StandardButton:
         logger.debug("Themed message box (%s): %s", severity, title)
         dlg = cls(
@@ -335,9 +414,10 @@ class ThemedMessageBox(QDialog):
             default_button=default_button,
             parent=parent,
             severity=severity,
+            informative=informative,
         )
         dlg.exec()
-        return dlg._clicked_button
+        return dlg._result_value
 
     @classmethod
     def information(
@@ -347,8 +427,9 @@ class ThemedMessageBox(QDialog):
         text: str,
         buttons: StandardButton = StandardButton.Ok,
         default_button: Optional[StandardButton] = None,
+        informative: str = "",
     ) -> StandardButton:
-        return cls._run("information", parent, title, text, buttons, default_button)
+        return cls._run("information", parent, title, text, buttons, default_button, informative)
 
     @classmethod
     def question(
@@ -358,8 +439,9 @@ class ThemedMessageBox(QDialog):
         text: str,
         buttons: StandardButton = StandardButton.Yes | StandardButton.No,
         default_button: Optional[StandardButton] = None,
+        informative: str = "",
     ) -> StandardButton:
-        return cls._run("question", parent, title, text, buttons, default_button)
+        return cls._run("question", parent, title, text, buttons, default_button, informative)
 
     @classmethod
     def warning(
@@ -369,8 +451,9 @@ class ThemedMessageBox(QDialog):
         text: str,
         buttons: StandardButton = StandardButton.Ok,
         default_button: Optional[StandardButton] = None,
+        informative: str = "",
     ) -> StandardButton:
-        return cls._run("warning", parent, title, text, buttons, default_button)
+        return cls._run("warning", parent, title, text, buttons, default_button, informative)
 
     @classmethod
     def critical(
@@ -380,5 +463,6 @@ class ThemedMessageBox(QDialog):
         text: str,
         buttons: StandardButton = StandardButton.Ok,
         default_button: Optional[StandardButton] = None,
+        informative: str = "",
     ) -> StandardButton:
-        return cls._run("critical", parent, title, text, buttons, default_button)
+        return cls._run("critical", parent, title, text, buttons, default_button, informative)
