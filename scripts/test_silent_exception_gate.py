@@ -2,9 +2,10 @@
 """Test the gate that fails on new silent exception handlers.
 
 The detector is the whole gate, so it is driven here against throwaway source
-trees: a file that swallows, a file that reports, a file that re-raises, and
-the shapes in between. The baseline comparison is driven the same way, so a
-regression, an improvement and an unchanged tree are all pinned.
+trees: a file that swallows, a file that reports, a file that only logs at
+debug, a file that re-raises, and the shapes in between. The baseline
+comparison is driven the same way, so a regression, an improvement and an
+unchanged tree are all pinned.
 
     python3 scripts/test_silent_exception_gate.py
 """
@@ -156,12 +157,12 @@ def main() -> int:
               "re-raising is not a swallow")
         check("fallback.py" not in counts,
               "returning a real fallback value is not a swallow")
-        check(counts.get("debug.py") == {"broad": 1, "narrow": 0},
-              "a debug-only log is a swallow")
+        check(counts.get("debug.py") is None,
+              "a debug log reports the error, so it is not a swallow")
         check("conditional.py" not in counts,
               "a handler that does anything else is not counted (lower bound)")
 
-        check(gate.totals(counts) == {"broad": 3, "narrow": 1},
+        check(gate.totals(counts) == {"broad": 2, "narrow": 1},
               "the totals add up")
 
     # ------------------------------------------------- the baseline compare

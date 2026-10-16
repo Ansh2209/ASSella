@@ -16,10 +16,11 @@ The sites already in the tree are frozen in
 gains one, and tells you when the baseline can be tightened. It never asks
 you to fix all of them at once.
 
-"Silent" is deliberately a lower bound: a handler whose body does anything
-other than ``pass``, a bare ``return``, ``continue``/``break`` or a single
-``debug`` log is not counted, so a real fallback that returns a value, logs
-at warning level or re-raises is never mistaken for a swallow.
+"Silent" means the handler reports nothing at all - a body of ``pass``, a bare
+``return``, ``continue``/``break`` - so the error is lost with no trace. Any
+log (``debug`` included), a fallback value and a re-raise all count as
+reporting, which keeps the gate on the sites that disappear entirely rather
+than on log-level taste.
 
     python3 scripts/check_silent_exceptions.py            # the CI gate
     python3 scripts/check_silent_exceptions.py --report   # ranked inventory
@@ -39,16 +40,6 @@ DEFAULT_BASELINE = REPO_ROOT / "scripts" / "silent_exceptions_baseline.json"
 BROAD_TYPES = {"Exception", "BaseException"}
 
 
-def _call_name(node: ast.AST) -> str:
-    """'logger.debug' / 'debug' for a call node, else ''."""
-    func = node.func if isinstance(node, ast.Call) else None
-    if isinstance(func, ast.Name):
-        return func.id
-    if isinstance(func, ast.Attribute):
-        return func.attr
-    return ""
-
-
 def _is_silent_statement(node: ast.stmt) -> bool:
     """True when one statement hides the error rather than reporting it."""
     if isinstance(node, ast.Pass):
@@ -57,8 +48,6 @@ def _is_silent_statement(node: ast.stmt) -> bool:
         return True
     if isinstance(node, ast.Return):
         return node.value is None or (isinstance(node.value, ast.Constant) and node.value.value is None)
-    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
-        return _call_name(node.value) == "debug"
     return False
 
 

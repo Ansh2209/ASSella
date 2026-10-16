@@ -4,28 +4,28 @@
     "narrow": 0
   },
   "core/at0m.py": {
-    "broad": 16,
+    "broad": 4,
     "narrow": 0
   },
   "core/lua_tools_api.py": {
-    "broad": 2,
+    "broad": 1,
     "narrow": 0
   },
   "core/manifest_fetcher.py": {
-    "broad": 12,
+    "broad": 8,
     "narrow": 0
   },
   "core/morrenus_api.py": {
-    "broad": 2,
+    "broad": 1,
     "narrow": 2
   },
   "core/native_steam/compat_tool.py": {
-    "broad": 6,
+    "broad": 1,
     "narrow": 0
   },
   "core/native_steam/native_steam_handoff.py": {
-    "broad": 9,
-    "narrow": 5
+    "broad": 5,
+    "narrow": 4
   },
   "core/native_steam/steam_manifest_pinning.py": {
     "broad": 1,
@@ -36,11 +36,11 @@
     "narrow": 1
   },
   "core/steam_api.py": {
-    "broad": 17,
+    "broad": 9,
     "narrow": 2
   },
   "core/steam_helpers.py": {
-    "broad": 3,
+    "broad": 1,
     "narrow": 3
   },
   "core/steam_package_info.py": {
@@ -48,15 +48,15 @@
     "narrow": 0
   },
   "core/steamdb_scraper.py": {
-    "broad": 10,
+    "broad": 5,
     "narrow": 0
   },
   "core/tasks/download_depots_task.py": {
-    "broad": 8,
+    "broad": 3,
     "narrow": 9
   },
   "core/tasks/download_workshop_task.py": {
-    "broad": 4,
+    "broad": 1,
     "narrow": 2
   },
   "core/tasks/generate_achievements_task.py": {
@@ -64,27 +64,27 @@
     "narrow": 3
   },
   "core/tasks/manifest_check_task.py": {
-    "broad": 5,
+    "broad": 2,
     "narrow": 3
   },
   "core/tasks/native_steam_download_task.py": {
-    "broad": 13,
+    "broad": 7,
     "narrow": 15
   },
   "core/tasks/process_zip_task.py": {
-    "broad": 22,
+    "broad": 14,
     "narrow": 0
   },
   "core/tasks/smart_update_task.py": {
-    "broad": 2,
+    "broad": 1,
     "narrow": 0
   },
   "core/tasks/steamless_task.py": {
-    "broad": 1,
-    "narrow": 6
+    "broad": 0,
+    "narrow": 4
   },
   "core/verify_flow.py": {
-    "broad": 7,
+    "broad": 3,
     "narrow": 0
   },
   "deps/schema-grabber/login_helper.py": {
@@ -96,7 +96,7 @@
     "narrow": 1
   },
   "main.py": {
-    "broad": 2,
+    "broad": 0,
     "narrow": 1
   },
   "managers/app_update_manager.py": {
@@ -104,15 +104,15 @@
     "narrow": 1
   },
   "managers/at0m_update_checker.py": {
-    "broad": 9,
+    "broad": 2,
     "narrow": 0
   },
   "managers/cli_manager.py": {
-    "broad": 2,
+    "broad": 1,
     "narrow": 2
   },
   "managers/db_manager.py": {
-    "broad": 3,
+    "broad": 2,
     "narrow": 0
   },
   "managers/emulation/chmod.py": {
@@ -120,7 +120,7 @@
     "narrow": 3
   },
   "managers/emulation/goldberg.py": {
-    "broad": 9,
+    "broad": 8,
     "narrow": 0
   },
   "managers/emulation/steamless.py": {
@@ -128,7 +128,7 @@
     "narrow": 1
   },
   "managers/finalize/post_install.py": {
-    "broad": 9,
+    "broad": 4,
     "narrow": 4
   },
   "managers/fix_manager.py": {
@@ -136,35 +136,23 @@
     "narrow": 0
   },
   "managers/game_manager.py": {
-    "broad": 29,
-    "narrow": 14
-  },
-  "managers/helper_manager.py": {
-    "broad": 1,
-    "narrow": 0
-  },
-  "managers/job_queue_manager.py": {
-    "broad": 1,
-    "narrow": 0
+    "broad": 11,
+    "narrow": 12
   },
   "managers/shsah_reborn.py": {
-    "broad": 3,
+    "broad": 0,
     "narrow": 1
   },
   "managers/task_manager.py": {
-    "broad": 11,
+    "broad": 4,
     "narrow": 3
   },
-  "managers/voices_manager.py": {
-    "broad": 1,
-    "narrow": 0
-  },
   "ui/dialogs/build_selection_dialog.py": {
-    "broad": 3,
+    "broad": 2,
     "narrow": 0
   },
   "ui/dialogs/canary_welcome_dialog.py": {
-    "broad": 4,
+    "broad": 2,
     "narrow": 0
   },
   "ui/dialogs/credits.py": {
@@ -172,19 +160,15 @@
     "narrow": 1
   },
   "ui/dialogs/depot_selection/_mixins/branch_build.py": {
-    "broad": 3,
+    "broad": 2,
     "narrow": 0
   },
   "ui/dialogs/depot_selection/_mixins/build_ui.py": {
     "broad": 1,
     "narrow": 0
   },
-  "ui/dialogs/depot_selection/_mixins/header_image.py": {
-    "broad": 1,
-    "narrow": 0
-  },
   "ui/dialogs/depot_selection/_mixins/metadata.py": {
-    "broad": 8,
+    "broad": 1,
     "narrow": 0
   },
   "ui/dialogs/depot_selection/_mixins/table.py": {
@@ -196,7 +180,7 @@
     "narrow": 2
   },
   "ui/dialogs/depot_selection/executable_probe.py": {
-    "broad": 3,
+    "broad": 2,
     "narrow": 1
   },
   "ui/dialogs/depot_selection/manifest_dump.py": {
@@ -212,7 +196,7 @@
     "narrow": 1
   },
   "ui/dialogs/fetchmanifest.py": {
-    "broad": 13,
+    "broad": 7,
     "narrow": 0
   },
   "ui/dialogs/fileselection.py": {
@@ -220,7 +204,7 @@
     "narrow": 2
   },
   "ui/dialogs/game_details/depots_tab.py": {
-    "broad": 13,
+    "broad": 5,
     "narrow": 0
   },
   "ui/dialogs/game_details/hero_header.py": {
@@ -228,7 +212,7 @@
     "narrow": 0
   },
   "ui/dialogs/game_details/info_tab.py": {
-    "broad": 26,
+    "broad": 20,
     "narrow": 0
   },
   "ui/dialogs/game_details/luafix_tab.py": {
@@ -244,7 +228,7 @@
     "narrow": 3
   },
   "ui/dialogs/gamelibrary.py": {
-    "broad": 3,
+    "broad": 1,
     "narrow": 0
   },
   "ui/dialogs/gamelibrary_v2.py": {
@@ -256,11 +240,11 @@
     "narrow": 1
   },
   "ui/dialogs/library/actions.py": {
-    "broad": 22,
+    "broad": 15,
     "narrow": 7
   },
   "ui/dialogs/library/filter_sort.py": {
-    "broad": 4,
+    "broad": 3,
     "narrow": 2
   },
   "ui/dialogs/library/image_loader.py": {
@@ -272,7 +256,7 @@
     "narrow": 1
   },
   "ui/dialogs/manual_manifest_dialog.py": {
-    "broad": 3,
+    "broad": 2,
     "narrow": 0
   },
   "ui/dialogs/modern_depot_selection.py": {
@@ -288,7 +272,7 @@
     "narrow": 0
   },
   "ui/dialogs/settings.py": {
-    "broad": 6,
+    "broad": 5,
     "narrow": 6
   },
   "ui/dialogs/settings_sls.py": {
@@ -304,20 +288,12 @@
     "narrow": 0
   },
   "ui/dialogs/settings_tabs/at0m_tab.py": {
-    "broad": 4,
+    "broad": 1,
     "narrow": 0
-  },
-  "ui/dialogs/settings_tabs/components_card.py": {
-    "broad": 0,
-    "narrow": 2
   },
   "ui/dialogs/settings_tabs/downloads_tab.py": {
     "broad": 0,
     "narrow": 1
-  },
-  "ui/dialogs/settings_tabs/morrenus_stats_widget.py": {
-    "broad": 1,
-    "narrow": 0
   },
   "ui/dialogs/settings_tabs/morrenus_tab.py": {
     "broad": 1,
@@ -328,24 +304,20 @@
     "narrow": 2
   },
   "ui/dialogs/single_depot_dialog.py": {
-    "broad": 9,
+    "broad": 6,
     "narrow": 2
   },
   "ui/dialogs/storage_lock.py": {
-    "broad": 2,
+    "broad": 1,
     "narrow": 0
   },
   "ui/dialogs/zip_confirm_dialog.py": {
-    "broad": 23,
+    "broad": 16,
     "narrow": 0
   },
   "ui/main_window.py": {
-    "broad": 15,
+    "broad": 10,
     "narrow": 1
-  },
-  "ui/status_pager.py": {
-    "broad": 1,
-    "narrow": 0
   },
   "ui/text_menus.py": {
     "broad": 0,
@@ -356,7 +328,7 @@
     "narrow": 0
   },
   "ui/widgets/active_game_card.py": {
-    "broad": 2,
+    "broad": 1,
     "narrow": 0
   },
   "ui/widgets/search_item_widget.py": {
@@ -376,11 +348,7 @@
     "narrow": 0
   },
   "utils/auto_tune.py": {
-    "broad": 5,
-    "narrow": 0
-  },
-  "utils/component_manager.py": {
-    "broad": 1,
+    "broad": 4,
     "narrow": 0
   },
   "utils/depot_utils.py": {
@@ -388,59 +356,43 @@
     "narrow": 4
   },
   "utils/dlc_helpers.py": {
-    "broad": 20,
-    "narrow": 0
-  },
-  "utils/edition_helpers.py": {
-    "broad": 1,
+    "broad": 12,
     "narrow": 0
   },
   "utils/eos_detector.py": {
-    "broad": 2,
+    "broad": 1,
     "narrow": 0
   },
   "utils/helpers.py": {
-    "broad": 6,
-    "narrow": 5
+    "broad": 5,
+    "narrow": 3
   },
   "utils/image_fetcher.py": {
-    "broad": 9,
-    "narrow": 0
-  },
-  "utils/image_revalidate.py": {
-    "broad": 1,
+    "broad": 5,
     "narrow": 0
   },
   "utils/isp_bypass.py": {
-    "broad": 6,
+    "broad": 4,
     "narrow": 0
   },
   "utils/logger.py": {
-    "broad": 11,
+    "broad": 9,
     "narrow": 1
   },
-  "utils/main_thread.py": {
-    "broad": 1,
-    "narrow": 0
-  },
   "utils/manifest_resolver.py": {
-    "broad": 19,
-    "narrow": 2
-  },
-  "utils/network_status.py": {
-    "broad": 2,
-    "narrow": 0
+    "broad": 3,
+    "narrow": 1
   },
   "utils/paths.py": {
     "broad": 2,
     "narrow": 0
   },
   "utils/plugin_games.py": {
-    "broad": 4,
+    "broad": 1,
     "narrow": 0
   },
   "utils/plugin_manager.py": {
-    "broad": 3,
+    "broad": 2,
     "narrow": 0
   },
   "utils/settings.py": {
@@ -448,11 +400,11 @@
     "narrow": 0
   },
   "utils/sls_bridge.py": {
-    "broad": 3,
+    "broad": 2,
     "narrow": 1
   },
   "utils/slssteam_integration.py": {
-    "broad": 10,
+    "broad": 7,
     "narrow": 4
   },
   "utils/steam_manifest.py": {
@@ -460,27 +412,19 @@
     "narrow": 0
   },
   "utils/task_runner.py": {
-    "broad": 1,
-    "narrow": 7
-  },
-  "utils/theme_manager.py": {
-    "broad": 1,
-    "narrow": 0
+    "broad": 0,
+    "narrow": 4
   },
   "utils/ticket_manager.py": {
-    "broad": 8,
+    "broad": 3,
     "narrow": 0
   },
   "utils/web_server.py": {
     "broad": 7,
     "narrow": 0
   },
-  "utils/workshop_cache.py": {
-    "broad": 1,
-    "narrow": 0
-  },
   "utils/workshop_helpers.py": {
-    "broad": 9,
+    "broad": 5,
     "narrow": 0
   },
   "utils/yaml/apps.py": {
@@ -488,7 +432,7 @@
     "narrow": 0
   },
   "utils/yaml/core.py": {
-    "broad": 7,
+    "broad": 4,
     "narrow": 0
   },
   "utils/yaml/keys.py": {
