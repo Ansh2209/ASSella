@@ -98,6 +98,13 @@ def main() -> int:
     executable_src = (pkg / "_mixins" / "executable.py").read_text()
     check("executable_probe" in executable_src and "import struct" not in executable_src,
           "the executable mixin asks executable_probe instead of parsing Steam's cache itself")
+    check((pkg / "selection_policy.py").is_file(),
+          "selection_policy.py holds which depots each preset ticks")
+    selection_src = (pkg / "_mixins" / "selection.py").read_text()
+    check("selection_policy" in selection_src and "get_smart_default_depots" not in selection_src,
+          "the selection mixin asks selection_policy instead of choosing depots itself")
+    check(selection_src.count("setCheckState(Qt.CheckState.Checked)") == 1,
+          "every preset ticks rows through one helper")
 
     # -------------------------------------------------------------- rules
     print("\n=== platform rules ===")

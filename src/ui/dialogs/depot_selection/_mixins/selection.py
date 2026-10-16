@@ -3,13 +3,11 @@ select, the platform and edition presets, DLC-only mode and its
 auto-selection rules."""
 
 import logging
-import re
 
 from PyQt6.QtCore import Qt, QPoint
 
 from PyQt6.QtWidgets import (
     QApplication,
-    QPushButton,
 )
 
 try:
@@ -17,7 +15,7 @@ try:
 except ImportError:
     show_dlc_mode_warning = None
 
-from ui.dialogs.depot_selection.rules import get_smart_default_depots
+from ui.dialogs.depot_selection import selection_policy
 
 logger = logging.getLogger(__name__)
 
@@ -28,23 +26,17 @@ class SelectionMixin:
     def _apply_dlc_auto_selection(self):
         """
         Auto-selects DLC depots when DLC-only mode is active.
-        Rules:
-        1. Non-DLC (base game / redist) depots are unchecked.
-        2. If DLC depots exist for both Windows and Linux, do NOT auto-select (leave unchecked).
-        3. If total DLC count >= 64, auto-select ALL DLC depots (bypass the >1KB condition).
-        4. If total DLC count < 64, auto-select DLC depots with size > 1024 bytes (skip stubs <= 1KB).
+
+        The rules themselves (which depots count as DLC, the Windows/Linux
+        conflict, the >= 64 bypass and the 1 KB stub filter) live in
+        selection_policy.dlc_auto_selection; this gathers what they need.
         """
         if not getattr(self, "_dlc_only_mode", False):
             return
         if getattr(self, "_has_saved_selection", False) or getattr(self, "_user_interacted", False):
             return
 
-        from utils.dlc_helpers import is_base_game_main_depot
-
-        dlc_depot_ids = set()
-        has_win_dlc = False
-        has_linux_dlc = False
-
+        facts = []
         for i in range(self.table_widget.rowCount()):
             id_item = self.table_widget.item(i, 0)
             if not id_item:
@@ -53,76 +45,35 @@ class SelectionMixin:
             if role in ("missing", "expander"):
                 continue
             depot_id = str(id_item.data(Qt.ItemDataRole.UserRole))
-            d_data = self.depots.get(depot_id) or self.depots.get(int(depot_id) if depot_id.isdigit() else 0) or {}
-
-            desc = str(d_data.get("desc") or d_data.get("name") or "")
+            data = selection_policy.depot_data(self.depots, depot_id)
+            desc = str(data.get("desc") or data.get("name") or "")
             cfg_item = self.table_widget.item(i, 1)
             cfg_text = cfg_item.text() if cfg_item else ""
+            size = int(data.get("size") or 0)
+            if not size:
+                size_item = self.table_widget.item(i, 2)
+                size = getattr(size_item, "sort_value", 0) or 0
+            facts.append(selection_policy.DepotRowFacts(depot_id, desc, cfg_text, size, data))
 
-            is_dlc = (
-                d_data.get("is_dlc", False)
-                or "[dlc]" in desc.lower()
-                or "[dlc]" in cfg_text.lower()
-                or bool(re.search(r"\bDLC\s+\d+", desc, re.IGNORECASE))
-                or bool(re.search(r"\bDLC\s+\d+", cfg_text, re.IGNORECASE))
-                or bool(d_data.get("dlcappid"))
-            )
+        selection = selection_policy.dlc_auto_selection(facts, self.app_id)
+        self._apply_depot_checks(selection.ids)
 
-            if is_base_game_main_depot(depot_id, desc, str(self.app_id)):
-                is_dlc = False
-
-            if is_dlc:
-                dlc_depot_ids.add(depot_id)
-                oslist = (d_data.get("oslist") or "").lower()
-                if not oslist and "[windows" in cfg_text.lower():
-                    oslist = "windows"
-                elif not oslist and "[linux" in cfg_text.lower():
-                    oslist = "linux"
-
-                if "windows" in oslist:
-                    has_win_dlc = True
-                if "linux" in oslist:
-                    has_linux_dlc = True
-
-        os_conflict = (has_win_dlc and has_linux_dlc)
-        if os_conflict:
-            logger.info(
-                f"[DepotSelection] App {self.app_id}: DLC depots detected for both Windows and Linux — "
-                "bypassing auto-selection so user can pick target platform manually."
-            )
-
-        total_dlcs = len(dlc_depot_ids)
-        bypass_size_limit = (total_dlcs >= 64)
-
+    def _apply_depot_checks(self, wanted) -> None:
+        """Tick exactly these depot ids, and untick every other selectable row."""
+        wanted = {str(d) for d in wanted}
         self.table_widget.blockSignals(True)
         for i in range(self.table_widget.rowCount()):
             id_item = self.table_widget.item(i, 0)
-            if not id_item:
+            if id_item is None:
                 continue
             role = id_item.data(Qt.ItemDataRole.UserRole + 2)
             if role in ("missing", "expander"):
                 continue
             depot_id = str(id_item.data(Qt.ItemDataRole.UserRole))
-            d_data = self.depots.get(depot_id) or self.depots.get(int(depot_id) if depot_id.isdigit() else 0) or {}
-
-            if depot_id in dlc_depot_ids:
-                if os_conflict:
-                    id_item.setCheckState(Qt.CheckState.Unchecked)
-                elif bypass_size_limit:
-                    id_item.setCheckState(Qt.CheckState.Checked)
-                else:
-                    raw_size = int(d_data.get("size") or 0)
-                    if not raw_size:
-                        size_item = self.table_widget.item(i, 2)
-                        raw_size = getattr(size_item, "sort_value", 0) or 0
-
-                    if 0 < raw_size <= 1024:
-                        id_item.setCheckState(Qt.CheckState.Unchecked)
-                    else:
-                        id_item.setCheckState(Qt.CheckState.Checked)
+            if depot_id in wanted:
+                id_item.setCheckState(Qt.CheckState.Checked)
             else:
                 id_item.setCheckState(Qt.CheckState.Unchecked)
-
         self.table_widget.blockSignals(False)
         self.anchor_row = -1
         self._update_table_headers()
@@ -213,58 +164,15 @@ class SelectionMixin:
         """Overwrites user selection with the depots Steam normally installs from package info / appcache."""
         self._user_interacted = True
         self._has_saved_selection = True
-
-        try:
-            from core.steam_package_info import get_steam_recommended_depots
-            rec_depots = get_steam_recommended_depots(self.app_id, self.depots, target_platform="linux")
-        except Exception as err:
-            logger.warning(f"[DepotSelection] Smart Select error: {err}")
-            rec_depots = []
-
-        if not rec_depots:
-            rec_depots = get_smart_default_depots(self.depots, target_platform="linux")
-
-        smart_depots = set(str(d) for d in rec_depots)
-
-        self.table_widget.blockSignals(True)
-        for i in range(self.table_widget.rowCount()):
-            id_item = self.table_widget.item(i, 0)
-            if id_item is None:
-                continue
-            role = id_item.data(Qt.ItemDataRole.UserRole + 2)
-            if role in ("missing", "expander"):
-                continue
-            depot_id = str(id_item.data(Qt.ItemDataRole.UserRole))
-            if depot_id in smart_depots:
-                id_item.setCheckState(Qt.CheckState.Checked)
-            else:
-                id_item.setCheckState(Qt.CheckState.Unchecked)
-        self.table_widget.blockSignals(False)
-        self.anchor_row = -1
-        self._update_table_headers()
+        self._apply_depot_checks(selection_policy.recommended_depots(self.app_id, self.depots, platform="linux"))
 
     def _select_platform(self, platform: str):
         """Smart select depots matching a platform (linux/windows), including shared depots and filtering out bonus media/32-bit."""
         self._user_interacted = True
         self._has_saved_selection = True
-        smart_depots = set(get_smart_default_depots(self.depots, target_platform=platform))
-
-        self.table_widget.blockSignals(True)
-        for i in range(self.table_widget.rowCount()):
-            id_item = self.table_widget.item(i, 0)
-            if id_item is None:
-                continue
-            role = id_item.data(Qt.ItemDataRole.UserRole + 2)
-            if role in ("missing", "expander"):
-                continue
-            depot_id = str(id_item.data(Qt.ItemDataRole.UserRole))
-            if depot_id in smart_depots:
-                id_item.setCheckState(Qt.CheckState.Checked)
-            else:
-                id_item.setCheckState(Qt.CheckState.Unchecked)
-        self.table_widget.blockSignals(False)
-        self.anchor_row = -1
-        self._update_table_headers()
+        self._apply_depot_checks(
+            selection_policy.recommended_depots(self.app_id, self.depots, platform=platform, use_steam=False)
+        )
 
     def _show_edition_menu(self):
         """Displays drop-up/down menu of available editions grouped by OS if multiple exist."""
@@ -296,31 +204,21 @@ class SelectionMixin:
             }
         """)
 
-        current_sel = set(self.get_selected_depots())
-
-        if len(self._available_platforms) > 1:
-            for plat in self._available_platforms:
-                plat_label = "Linux (Native)" if plat == "linux" else "Windows (Proton)"
-                sub_menu = menu.addMenu(plat_label)
+        groups = selection_policy.edition_menu(
+            self._available_platforms,
+            self._multi_platform_editions,
+            self.get_selected_depots(),
+        )
+        for group in groups:
+            sub_menu = menu.addMenu(group.label) if group.label else menu
+            if group.label:
                 sub_menu.setStyleSheet(menu.styleSheet())
-                eds = self._multi_platform_editions.get(plat, [])
-                for ed in eds:
-                    action = sub_menu.addAction(ed["name"])
-                    action.setCheckable(True)
-                    ed_depots = {str(d) for d in ed.get("depot_ids", set())}
-                    if current_sel == ed_depots:
-                        action.setChecked(True)
-                    action.triggered.connect(lambda checked, target_ed=ed: self._apply_edition_selection(target_ed))
-        else:
-            plat = self._available_platforms[0] if self._available_platforms else "windows"
-            eds = self._multi_platform_editions.get(plat, [])
-            for ed in eds:
-                action = menu.addAction(ed["name"])
+            for choice in group.choices:
+                action = sub_menu.addAction(choice.name)
                 action.setCheckable(True)
-                ed_depots = {str(d) for d in ed.get("depot_ids", set())}
-                if current_sel == ed_depots:
+                if choice.checked:
                     action.setChecked(True)
-                action.triggered.connect(lambda checked, target_ed=ed: self._apply_edition_selection(target_ed))
+                action.triggered.connect(lambda checked, target_ed=choice.edition: self._apply_edition_selection(target_ed))
 
         menu.adjustSize()
         menu_height = menu.sizeHint().height()
@@ -333,42 +231,15 @@ class SelectionMixin:
         """Apply the chosen edition to the depot checkboxes."""
         self._user_interacted = True
         self._has_saved_selection = True
-        full_name = edition.get("name") or edition.get("short_name", "Edition")
-        clean_name = re.sub(r"\s*\(All DLCs\)", "", full_name, flags=re.IGNORECASE).strip()
-        clean_name = re.sub(r"\s*\(Base Game Only\)", "", clean_name, flags=re.IGNORECASE).strip()
-        plat = edition.get("platform", "")
-        if getattr(self, "_available_platforms", None) and len(self._available_platforms) > 1:
-            plat_prefix = "Linux: " if plat == "linux" else "Win: "
-            btn_text = f"{plat_prefix}{clean_name} ▾"
-        else:
-            btn_text = f"{clean_name} ▾"
 
-        if len(btn_text) > 42:
-            display_text = f"{btn_text[:38].rstrip()}... ▾"
-        else:
-            display_text = btn_text
-
+        multi_platform = bool(getattr(self, "_available_platforms", None)) and len(self._available_platforms) > 1
         if hasattr(self, "edition_button"):
-            self.edition_button.setText(display_text)
-            self.edition_button.setToolTip(f"{plat.capitalize() + ': ' if plat else ''}{clean_name}")
-        target_depots = {str(d) for d in edition.get("depot_ids", set())}
+            self.edition_button.setText(
+                selection_policy.edition_button_text(edition, multi_platform=multi_platform)
+            )
+            self.edition_button.setToolTip(selection_policy.edition_button_tooltip(edition))
 
-        self.table_widget.blockSignals(True)
-        for i in range(self.table_widget.rowCount()):
-            id_item = self.table_widget.item(i, 0)
-            if id_item is None:
-                continue
-            role = id_item.data(Qt.ItemDataRole.UserRole + 2)
-            if role in ("missing", "expander"):
-                continue
-            depot_id = str(id_item.data(Qt.ItemDataRole.UserRole))
-            if depot_id in target_depots:
-                id_item.setCheckState(Qt.CheckState.Checked)
-            else:
-                id_item.setCheckState(Qt.CheckState.Unchecked)
-        self.table_widget.blockSignals(False)
-        self.anchor_row = -1
-        self._update_table_headers()
+        self._apply_depot_checks({str(d) for d in edition.get("depot_ids", set())})
 
     def _select_baseline_depots(self):
         """Legacy helper for selecting standard/baseline edition."""
