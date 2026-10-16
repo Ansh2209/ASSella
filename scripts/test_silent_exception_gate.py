@@ -250,7 +250,8 @@ def main() -> int:
         current = gate.analyse(REPO_ROOT / "src")
         regressions, _ = gate.compare(current, stored)
         check(regressions == [], "the tree holds no swallow the baseline does not know about")
-        check("managers/game_manager.py" in stored, "the worst offender is recorded in it")
+        check(stored and all(set(row) == {"broad", "narrow"} for row in stored.values()),
+              "the baseline lists a broad/narrow count per file")
 
     print(f"\n{'=' * 60}")
     if _failures:

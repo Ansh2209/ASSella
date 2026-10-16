@@ -71,10 +71,6 @@
     "broad": 7,
     "narrow": 15
   },
-  "core/tasks/process_zip_task.py": {
-    "broad": 14,
-    "narrow": 0
-  },
   "core/tasks/smart_update_task.py": {
     "broad": 1,
     "narrow": 0

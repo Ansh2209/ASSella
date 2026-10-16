@@ -248,8 +248,8 @@ class ProcessZipTask:
                         dt = lua_info.date_time
                         import datetime, time
                         lua_timestamp = int(time.mktime(datetime.datetime(*dt).timetuple()))
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[ProcessZipTask] could not read the LUA timestamp from the zip: {e}")
                     lua_content = zip_ref.read(lua_files[0]).decode("utf-8")
                     if lua_content:
                         ProcessZipTask._parse_lua(lua_content, game_data)
@@ -277,8 +277,8 @@ class ProcessZipTask:
                                         if DepotKeyManager:
                                             try:
                                                 extra_db_keys = DepotKeyManager.get_instance().get_depot_keys(_extracted_appid)
-                                            except Exception:
-                                                pass
+                                            except Exception as e:
+                                                logger.debug(f"[ProcessZipTask] could not read extra keys for {_extracted_appid}: {e}")
                                         merged_lua = smart_merge_lua(lua_content, cached_lua_text, extra_depot_keys=extra_db_keys)
                                         if merged_lua and merged_lua != lua_content:
                                             lua_content = merged_lua
@@ -306,8 +306,8 @@ class ProcessZipTask:
                         try:
                             from utils.manifest_resolver import sanitize_manifest_bytes
                             mf_data = sanitize_manifest_bytes(mf_data)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"[ProcessZipTask] manifest {os.path.basename(f)} could not be sanitised: {e}")
                         manifest_files[os.path.basename(f)] = mf_data
 
                 for depot_id_manifest in manifest_files:
@@ -366,8 +366,8 @@ class ProcessZipTask:
                 if DepotKeyManager and _appid_for_cache:
                     try:
                         known_app_depots.update(DepotKeyManager().get_depot_keys(_appid_for_cache).keys())
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[ProcessZipTask] could not read cached depot keys for {_appid_for_cache}: {e}")
 
                 standalone_dirs = [
                     Path(tempfile.gettempdir()) / "mistwalker_manifests",
@@ -388,11 +388,11 @@ class ProcessZipTask:
                                             try:
                                                 from utils.manifest_resolver import sanitize_manifest_bytes
                                                 raw_bytes = sanitize_manifest_bytes(raw_bytes)
-                                            except Exception:
-                                                pass
+                                            except Exception as e:
+                                                logger.warning(f"[ProcessZipTask] manifest {mf_file.name} could not be sanitised: {e}")
                                             manifest_files[mf_file.name] = raw_bytes
-                                        except Exception:
-                                            pass
+                                        except Exception as e:
+                                            logger.debug(f"[ProcessZipTask] could not read {mf_file}: {e}")
 
                 if game_data.get("dlcs"):
                     enriched_dlcs = {}
@@ -526,8 +526,8 @@ class ProcessZipTask:
                         if DepotKeyManager and _cur_appid:
                             try:
                                 d_key = DepotKeyManager.get_instance().get_depot_keys(_cur_appid).get(str(s_did), "")
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug(f"[ProcessZipTask] no key available for depot {s_did}: {e}")
                         if d_key:
                             desc = known_depot_descriptions.get(s_did, f"Depot {s_did}")
                             unfiltered_depots[str(s_did)] = {"key": d_key, "desc": desc, "system": None}
@@ -816,8 +816,8 @@ class ProcessZipTask:
                                             try:
                                                 found_manifest = cand.read_bytes()
                                                 break
-                                            except Exception:
-                                                pass
+                                            except Exception as e:
+                                                logger.debug(f"[ProcessZipTask] could not read {cand}: {e}")
                                     # Fallback: scan for any manifest matching this depot ID
                                     for mf in s_dir.glob(f"{m_did}_*.manifest"):
                                         parts = mf.stem.split("_")
@@ -826,8 +826,8 @@ class ProcessZipTask:
                                                 found_manifest = mf.read_bytes()
                                                 actual_mid = parts[1]
                                                 break
-                                            except Exception:
-                                                pass
+                                            except Exception as e:
+                                                logger.debug(f"[ProcessZipTask] could not read {mf}: {e}")
                                     if found_manifest:
                                         break
 
@@ -852,8 +852,8 @@ class ProcessZipTask:
                                                 try:
                                                     s_dir.mkdir(parents=True, exist_ok=True)
                                                     (s_dir / f"{m_did}_{actual_mid}.manifest").write_bytes(raw_bytes)
-                                                except Exception:
-                                                    pass
+                                                except Exception as e:
+                                                    logger.debug(f"[ProcessZipTask] could not cache the manifest in {s_dir}: {e}")
                                             logger.info(
                                                 f"[ProcessZipTask] at0-m successfully fetched missing manifest {m_did}_{actual_mid}"
                                             )
@@ -870,8 +870,8 @@ class ProcessZipTask:
                                     try:
                                         from utils.manifest_resolver import sanitize_manifest_bytes
                                         found_manifest = sanitize_manifest_bytes(found_manifest)
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        logger.warning(f"[ProcessZipTask] manifest {m_did}_{actual_mid} could not be sanitised: {e}")
                                     manifest_files[f"{m_did}_{actual_mid}.manifest"] = found_manifest
                                     game_data.setdefault("manifests", {})[str(m_did)] = str(actual_mid)
 
@@ -904,8 +904,8 @@ class ProcessZipTask:
                                         try:
                                             from managers.db_manager import DatabaseManager
                                             DatabaseManager().clear_missing_hubcap_depot(str(game_data.get("appid")), str(m_did))
-                                        except Exception:
-                                            pass
+                                        except Exception as e:
+                                            logger.debug(f"[ProcessZipTask] could not clear recovered depot {m_did} from the DB: {e}")
                                         logger.info(
                                             f"[ProcessZipTask] Seamlessly integrated recovered depot {m_did} ({m_name}) with manifest {actual_mid} and valid decryption key"
                                         )
@@ -962,8 +962,8 @@ class ProcessZipTask:
                         try:
                             from managers.db_manager import DatabaseManager
                             db_enrichments = DatabaseManager().get_depot_enrichments(str(game_data.get("appid", "")))
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"[ProcessZipTask] depot enrichments unavailable: {e}")
 
                         for depot_id, lua_data in filtered_depots.items():
                             final_depot_data = {"key": lua_data["key"]}
@@ -1105,8 +1105,8 @@ class ProcessZipTask:
                     try:
                         from utils.manifest_resolver import sanitize_manifest_bytes
                         content = sanitize_manifest_bytes(content)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"[ProcessZipTask] manifest {name} could not be sanitised: {e}")
                     with open(os.path.join(manifest_dir, name), "wb") as f:
                         f.write(content)
 
