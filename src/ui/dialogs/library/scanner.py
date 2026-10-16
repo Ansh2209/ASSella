@@ -8,11 +8,11 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QProgressDialog,
     QPushButton,
     QVBoxLayout,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.library.widgets import GameItemWidget
 
@@ -94,7 +94,7 @@ class LibraryScannerMixin:
         try:
             from managers.import_manager import ImportManager
         except ImportError:
-            QMessageBox.critical(self, "Error", "Import manager module not found.")
+            ThemedMessageBox.critical(self, "Error", "Import manager module not found.")
             return
 
         self.scan_imports_button.setEnabled(False)
@@ -126,7 +126,7 @@ class LibraryScannerMixin:
         self.scan_imports_button.setText("Scan for LUA")
 
         if not results:
-            QMessageBox.information(
+            ThemedMessageBox.information(
                 self, "Scan Complete",
                 "No new .lua files found in the cached_luas folder.\n\n"
                 "To import a game, place its .lua file in:\n"
@@ -244,7 +244,7 @@ class LibraryScannerMixin:
         def _import_selected():
             current = result_list.currentItem()
             if not current:
-                QMessageBox.warning(dialog, "No Selection", "Please select a game to import.")
+                ThemedMessageBox.warning(dialog, "No Selection", "Please select a game to import.")
                 return
             data = current.data(Qt.ItemDataRole.UserRole)
             dialog.close()
@@ -366,7 +366,7 @@ class LibraryScannerMixin:
         if error_count > 0 and ready_count == 0:
             msg_title = "Import Failed"
 
-        QMessageBox.information(
+        ThemedMessageBox.information(
             self, msg_title,
             f"Import results ({ready_count} ready, {error_count} failed):\n\n{summary_text}\n\n"
             "Games marked as 'Ready' are now registered and can be downloaded\n"

@@ -25,11 +25,11 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
     QCheckBox,
-    QMessageBox,
     QWidget,
     QFrame,
     QAbstractItemView,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.color_utils import get_dark_container_color
 from core.steamdb_scraper import SteamDBScraper
@@ -263,11 +263,11 @@ class ManualRollbackDialog(QDialog):
         manifest_id = self.manifest_input.text().strip()
 
         if not build_id or not manifest_id:
-            QMessageBox.warning(self, "Missing Information", "Please enter both Build ID and Manifest ID.")
+            ThemedMessageBox.warning(self, "Missing Information", "Please enter both Build ID and Manifest ID.")
             return
 
         if not build_id.isdigit() or not manifest_id.isdigit():
-            QMessageBox.warning(self, "Invalid Input", "Build ID and Manifest ID must be numeric digits only.")
+            ThemedMessageBox.warning(self, "Invalid Input", "Build ID and Manifest ID must be numeric digits only.")
             return
 
         self.selected_depot_id = str(depot)
@@ -605,7 +605,7 @@ class SteamDBHistoryDialog(QDialog):
         depots = self.cached_depots.get(build_id, {})
 
         if not depots:
-            QMessageBox.warning(self, "No Manifests", f"Could not find depot manifests for Build {build_id}.")
+            ThemedMessageBox.warning(self, "No Manifests", f"Could not find depot manifests for Build {build_id}.")
             return
 
         # Use the first depot

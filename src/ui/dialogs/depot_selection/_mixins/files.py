@@ -3,9 +3,7 @@ tree."""
 
 from PyQt6.QtCore import Qt
 
-from PyQt6.QtWidgets import (
-    QMessageBox,
-)
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.depot_selection.dump_runner import ManifestDumpRunner
 from ui.dialogs.depot_selection.manifest_dump import (
@@ -33,13 +31,13 @@ class FileCustomisationMixin:
     def _on_select_files_clicked(self):
         target_depot = self._first_checked_depot_id()
         if not target_depot:
-            QMessageBox.warning(self, "Warning", "Please select at least one depot first.")
+            ThemedMessageBox.warning(self, "Warning", "Please select at least one depot first.")
             return
 
         try:
             dump = prepare_manifest_dump(self.app_id, target_depot)
         except ManifestDumpError as e:
-            QMessageBox.critical(self, "Error", str(e))
+            ThemedMessageBox.critical(self, "Error", str(e))
             return
 
         runner = ManifestDumpRunner(self, dump)
@@ -49,7 +47,7 @@ class FileCustomisationMixin:
     def _on_dump_finished(self, dump, ok, message):
         """Open the file-selection tree over a listing that was written."""
         if not ok:
-            QMessageBox.critical(self, "Error", message)
+            ThemedMessageBox.critical(self, "Error", message)
             return
 
         from ui.dialogs.fileselection import FileSelectionDialog
@@ -65,7 +63,7 @@ class FileCustomisationMixin:
         try:
             if sel_dialog.exec():
                 self.selected_files = sel_dialog.selected_files
-                QMessageBox.information(
+                ThemedMessageBox.information(
                     self,
                     "Selection Confirmed",
                     f"Selected {len(self.selected_files)} file(s) for custom download.\nPress OK at the bottom to start installing."

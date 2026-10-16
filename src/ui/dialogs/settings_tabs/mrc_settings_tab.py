@@ -19,11 +19,11 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QLineEdit,
     QPushButton,
-    QMessageBox,
     QScrollArea,
     QFrame,
     QCheckBox,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from managers.mrc_config_manager import MRCConfigManager
 from utils.settings import get_settings
@@ -552,7 +552,7 @@ def create_mrc_settings_tab(dialog) -> QWidget:
         settings.sync()
         welcome_status.setText("Welcome: Will show next boot")
         welcome_status.setStyleSheet("color: #81C784; font-size: 8.5pt; font-weight: 500;")
-        QMessageBox.information(dialog, "Welcome Screen", "Welcome screen reset!\nIt will automatically show on the next launch.")
+        ThemedMessageBox.information(dialog, "Welcome Screen", "Welcome screen reset!\nIt will automatically show on the next launch.")
     reset_welcome_btn.clicked.connect(_on_reset_welcome)
     t_grid.addWidget(reset_welcome_btn, 0, 1)
 
@@ -596,7 +596,7 @@ def create_mrc_settings_tab(dialog) -> QWidget:
             clear_cache_btn.setText("Clear Cache"),
             clear_cache_btn.setEnabled(True)
         ))
-        QMessageBox.information(
+        ThemedMessageBox.information(
             dialog,
             "Cache Cleared",
             "Update status, build ID, and branch caches have been cleared successfully.\n\n"
@@ -629,7 +629,7 @@ def create_mrc_settings_tab(dialog) -> QWidget:
     def _on_lock_menu():
         settings.setValue("konami_settings_unlocked", False)
         settings.sync()
-        QMessageBox.information(
+        ThemedMessageBox.information(
             dialog,
             "Testing Menu Locked",
             "The secret Testing menu has been locked!\nIt will be hidden when Settings is reopened.\n(Enter the cheatcode again to unlock)"
@@ -643,7 +643,7 @@ def create_mrc_settings_tab(dialog) -> QWidget:
     def _on_reset_theme():
         settings.setValue("halloween_auto_applied", False)
         settings.sync()
-        QMessageBox.information(dialog, "Seasonal Theme", "Seasonal theme auto-activation flag reset.")
+        ThemedMessageBox.information(dialog, "Seasonal Theme", "Seasonal theme auto-activation flag reset.")
     reset_theme_btn.clicked.connect(_on_reset_theme)
     t_grid.addWidget(reset_theme_btn, 2, 2)
 

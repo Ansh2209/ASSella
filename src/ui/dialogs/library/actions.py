@@ -18,10 +18,10 @@ from PyQt6.QtWidgets import (
     QDialog,
     QGraphicsOpacityEffect,
     QMenu,
-    QMessageBox,
     QProgressDialog,
     QListWidgetItem,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.library.widgets import GameItemWidget
 
@@ -217,9 +217,9 @@ class LibraryActionsMixin:
         from utils.dlc_helpers import has_game_dlcs
         has_dlc = has_game_dlcs(appid, game_data.get("depots"))
         if not has_dlc:
-            from PyQt6.QtWidgets import QMessageBox
+            from ui.dialogs.themed_message_box import ThemedMessageBox
             name = game_data.get("game_name", "this game")
-            QMessageBox.information(
+            ThemedMessageBox.information(
                 self,
                 "No DLCs Detected",
                 f"No downloadable DLCs were detected for {name}."
@@ -275,14 +275,14 @@ class LibraryActionsMixin:
             "This will delete all files in the game directories and their Steam .acf files!"
         )
 
-        reply = QMessageBox.question(
+        reply = ThemedMessageBox.question(
             self,
             "Confirm Batch Uninstall",
             confirm_msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.No
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if reply != ThemedMessageBox.StandardButton.Yes:
             return
 
         progress = QProgressDialog("Uninstalling games...", None, 0, len(selected_games), self)
@@ -320,14 +320,14 @@ class LibraryActionsMixin:
             failed_str = "\n".join(failed_names[:10])
             if len(failed_names) > 10:
                 failed_str += f"\n\u2022 ...and {len(failed_names) - 10} more."
-            QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self,
                 "Uninstall Summary",
                 f"Successfully uninstalled {success_count} games.\n\n"
                 f"Failed to uninstall:\n{failed_str}"
             )
         else:
-            QMessageBox.information(
+            ThemedMessageBox.information(
                 self,
                 "Uninstall Complete",
                 f"Successfully uninstalled all {success_count} selected games."
@@ -716,13 +716,13 @@ class LibraryActionsMixin:
             logger.warning(f"[Library] Could not open the game folder: {e}")
 
     def _confirm_action(self, title: str, message: str) -> bool:
-        reply = QMessageBox.question(
+        reply = ThemedMessageBox.question(
             self,
             title,
             message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
         )
-        return reply == QMessageBox.StandardButton.Yes
+        return reply == ThemedMessageBox.StandardButton.Yes
 
     def _uninstall_game(self, game_data: dict, dialog: QDialog = None, opts: dict = None) -> None:
         if not self.game_manager:
@@ -753,13 +753,13 @@ class LibraryActionsMixin:
             confirm_msg = self.game_manager.get_uninstall_confirmation_message(game_data)
             progress_title = "Uninstalling DLC..." if is_dlc_only else "Uninstalling game..."
 
-        reply = QMessageBox.question(
+        reply = ThemedMessageBox.question(
             parent,
             confirm_title,
             confirm_msg,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if reply != ThemedMessageBox.StandardButton.Yes:
             return
 
         c_data = opts.get("compat", False)
@@ -802,7 +802,7 @@ class LibraryActionsMixin:
 
         parent = self._details_dialog if self._details_dialog else self
         if success:
-            QMessageBox.information(parent, "Success", "Operation completed.")
+            ThemedMessageBox.information(parent, "Success", "Operation completed.")
             if self._details_dialog:
                 try:
                     self._details_dialog.accept()
@@ -810,7 +810,7 @@ class LibraryActionsMixin:
                     logger.debug(f"[Library] Could not close the details dialog: {e}")
             self._refresh_game_list()
         else:
-            QMessageBox.critical(parent, "Error", f"Failed: {error}")
+            ThemedMessageBox.critical(parent, "Error", f"Failed: {error}")
 
     @staticmethod
     def _wipe_sls_only(game_data: dict) -> tuple:
@@ -1098,7 +1098,7 @@ class LibraryActionsMixin:
             except Exception as acf_err:
                 logger.warning(f"Fallback ACF generation failed during fix for {appid}: {acf_err}")
 
-        QMessageBox.information(
+        ThemedMessageBox.information(
             self,
             "Done",
             "Installation repaired. Steam will verify game files."
@@ -1177,16 +1177,16 @@ class LibraryActionsMixin:
         
         self.settings.remove(f"depot_selection/{appid}")
         self._update_depot_status_label(appid)
-        QMessageBox.information(self, "Reset Successful", "Depot selection has been reset to default.")
+        ThemedMessageBox.information(self, "Reset Successful", "Depot selection has been reset to default.")
 
     def _configure_depots(self, game_data: dict) -> None:
         appid = str(game_data.get("appid", "0"))
         if appid in ("0", "N/A", "unknown"):
-            QMessageBox.warning(self, "Error", "Invalid App ID.")
+            ThemedMessageBox.warning(self, "Error", "Invalid App ID.")
             return
 
         if not morrenus_api:
-            QMessageBox.critical(self, "Error", "API module missing.")
+            ThemedMessageBox.critical(self, "Error", "API module missing.")
             return
 
         name = game_data.get("game_name", "Unknown")
@@ -1281,12 +1281,12 @@ class LibraryActionsMixin:
                                 logger.warning(f"Could not sync AT0-M depots after selection: {_e}")
 
                         self._update_depot_status_label(appid)
-                        QMessageBox.information(self, "Success", "Depot selection saved successfully.")
+                        ThemedMessageBox.information(self, "Success", "Depot selection saved successfully.")
                     else:
-                        QMessageBox.warning(self, "Warning", "No depots selected. Depot selection not saved.")
+                        ThemedMessageBox.warning(self, "Warning", "No depots selected. Depot selection not saved.")
         except Exception as e:
             logger.error(f"Failed to show depot selection dialog: {e}", exc_info=True)
-            QMessageBox.critical(self, "Error", f"Failed to load depots: {e}")
+            ThemedMessageBox.critical(self, "Error", f"Failed to load depots: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # 5. Manifest Fetch, Smart Update & Job Submissions
@@ -1319,15 +1319,15 @@ class LibraryActionsMixin:
         """Trigger background manifest download and show progress."""
         api_key = self.settings.value("morrenus_api_key", "", type=str).strip()
         if not api_key:
-            QMessageBox.critical(self, "API Key Missing", "Please configure your Hubcap API key in Settings before downloading updates/manifests.")
+            ThemedMessageBox.critical(self, "API Key Missing", "Please configure your Hubcap API key in Settings before downloading updates/manifests.")
             return
         if not morrenus_api:
-            QMessageBox.critical(self, "Error", "API module missing.")
+            ThemedMessageBox.critical(self, "Error", "API module missing.")
             return
 
         app_id = str(game_data.get("appid"))
         if app_id in ("0", "N/A", "unknown"):
-            QMessageBox.critical(self, "Error", f"Invalid AppID: {app_id}")
+            ThemedMessageBox.critical(self, "Error", f"Invalid AppID: {app_id}")
             return
 
         if not hasattr(self, "_active_fetches"):
@@ -1498,7 +1498,7 @@ class LibraryActionsMixin:
                         f"[Smart Update] {name} ({app_id}): no cached keys — "
                         "falling back to classic path. Run a full manifest fetch to enable Smart Mode."
                     )
-                    QTimer.singleShot(0, lambda: QMessageBox.information(
+                    QTimer.singleShot(0, lambda: ThemedMessageBox.information(
                         self,
                         "Smart Update Mode",
                         f"Smart Update Mode is enabled but {name} has no cached depot keys yet.\n\n"
@@ -1657,7 +1657,7 @@ class LibraryActionsMixin:
             else:
                 logger.error(f"[VerifyFlow] Resolution error for AppID {app_id}: {outcome[1] if len(outcome) > 1 else '?'}")
                 try:
-                    QMessageBox.warning(self, "Verify Failed",
+                    ThemedMessageBox.warning(self, "Verify Failed",
                                         f"Could not resolve manifests for '{name}':\n{outcome[1] if len(outcome) > 1 else 'unknown error'}")
                 except Exception as e:
                     logger.debug(f"[VerifyFlow] Could not show the resolution error: {e}")
@@ -1678,19 +1678,19 @@ class LibraryActionsMixin:
         failed_ids = [str(d) for d, _ in failed]
         failed_desc = ", ".join(f"{did} ({err})" for did, err in failed)
         logger.warning(f"[VerifyFlow] Provider refresh failed for: {failed_desc}")
-        box = QMessageBox(self)
-        box.setWindowTitle("Latest Manifests Unreachable")
-        box.setText(
+        action = ThemedMessageBox.choices(
+            self,
+            "Latest Manifests Unreachable",
             "ASSella could not fetch the latest manifests for "
             f"{len(failed)} depot(s) ({', '.join(failed_ids)}) "
             "from Steam CDN or Hubcap.\n\n"
             "You can verify against your local manifests instead, but files "
-            "in those depots will be checked against the older version."
+            "in those depots will be checked against the older version.",
+            [("Verify With Local", "local"), ("Cancel", "cancel")],
+            default="local",
+            severity="warning",
         )
-        b_local = box.addButton("Verify With Local", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.exec()
-        if box.clickedButton() == b_local:
+        if action == "local":
             # Stash live GIDs minus the failed depots: the stage-2 live check
             # then guards everything we claimed, without nagging about the
             # depots the user explicitly accepted as stale.
@@ -1714,27 +1714,29 @@ class LibraryActionsMixin:
         refresh for "without" runs in the background.
         """
         new_desc = ", ".join(f"{n or d} [{d}]" for d, _, n in hubcap_needed)
-        box = QMessageBox(self)
-        box.setWindowTitle("New Depots Need Hubcap Fetch")
-        box.setText(
+        clicked = ThemedMessageBox.choices(
+            self,
+            "New Depots Need Hubcap Fetch",
             f"'{name}' has {len(hubcap_needed)} new depot(s) since your last fetch: "
             f"{new_desc}.\n\n"
             "Their encryption keys are only available via a full Hubcap bundle "
             "download (uses daily Hubcap quota).\n\n"
-            "How do you want to verify?"
+            "How do you want to verify?",
+            [
+                ("Download && Verify", "fetch"),
+                ("Verify Without New Depots", "without"),
+                ("Cancel", "cancel"),
+            ],
+            default="fetch",
+            severity="question",
         )
-        b_fetch = box.addButton("Download && Verify", QMessageBox.ButtonRole.AcceptRole)
-        b_without = box.addButton("Verify Without New Depots", QMessageBox.ButtonRole.ActionRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked == b_fetch:
+        if clicked == "fetch":
             logger.info(f"[VerifyFlow] User approved Hubcap full fetch for AppID {app_id}")
             # Stash live GIDs: the stage-2 live check then guards the Hubcap
             # bundle against ingestion lag before it is used for verification.
             game_data["_verify_live_gids"] = dict(live_gids or {})
             self._handle_download_manifest(app_id, name, game_data, dialog, branch=branch)
-        elif clicked == b_without:
+        elif clicked == "without":
             logger.info(f"[VerifyFlow] Verifying AppID {app_id} without {len(hubcap_needed)} new depot(s)")
             game_data["_verify_live_gids"] = dict(live_gids or {})
             if refreshable:
@@ -1776,23 +1778,25 @@ class LibraryActionsMixin:
     def _verify_offline_notice(self, app_id: str, game_data: dict, dialog,
                                local_zip: str, branch: str, name: str, fpath) -> bool:
         """Steam PICS and steamcmd both failed: Retry / local / Cancel."""
-        box = QMessageBox(self)
-        box.setWindowTitle("Steam Servers Unreachable")
-        box.setText(
+        clicked = ThemedMessageBox.choices(
+            self,
+            "Steam Servers Unreachable",
             "Could not reach Steam PICS or SteamCMD to check for manifest updates, "
             "so ASSella cannot confirm your local manifests are the latest.\n\n"
             "You can retry, verify against your local manifests (files are "
-            "checked against the cached version), or cancel."
+            "checked against the cached version), or cancel.",
+            [
+                ("Retry", "retry"),
+                ("Use Local Manifests", "local"),
+                ("Cancel", "cancel"),
+            ],
+            default="local",
+            severity="warning",
         )
-        b_retry = box.addButton("Retry", QMessageBox.ButtonRole.ActionRole)
-        b_local = box.addButton("Use Local Manifests", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton(QMessageBox.StandardButton.Cancel)
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked == b_retry:
+        if clicked == "retry":
             logger.info(f"[VerifyFlow] Retrying live lookup for AppID {app_id}")
             return self._run_verify_resolution(app_id, branch, name, game_data, dialog, fpath)
-        if clicked == b_local:
+        if clicked == "local":
             logger.warning(f"[VerifyFlow] Offline verify for AppID {app_id} using possibly-stale local bundle")
             game_data["_verify_offline_accepted"] = True
             self._use_local_verify_bundle(app_id, game_data, dialog, local_zip)
@@ -1835,7 +1839,7 @@ class LibraryActionsMixin:
 
         def on_error(err_msg: str):
             logger.error(f"[Smart Update] Error for {name} ({app_id}): {err_msg}")
-            QMessageBox.warning(self, "Smart Update Failed", f"Smart update failed for {name}:\n{err_msg}\n\nFalling back to classic fetch.")
+            ThemedMessageBox.warning(self, "Smart Update Failed", f"Smart update failed for {name}:\n{err_msg}\n\nFalling back to classic fetch.")
             self._handle_download_manifest(app_id, name, game_data, dialog, branch=branch)
             if runner in self._smart_runners:
                 self._smart_runners.remove(runner)
@@ -1850,7 +1854,7 @@ class LibraryActionsMixin:
     def _handle_download_manifest(self, app_id, name, game_data, dialog, branch: str = None) -> None:
         """Logic separated to flatten nesting in fetch_game_manifest."""
         if not morrenus_api:
-            QMessageBox.critical(self, "Error", "API module missing.")
+            ThemedMessageBox.critical(self, "Error", "API module missing.")
             return
 
         if not branch:
@@ -1907,7 +1911,7 @@ class LibraryActionsMixin:
                 self._show_depot_selection_dialog(fpath, target_game)
             else:
                 if not download_only:
-                    QMessageBox.critical(self, "Error", f"Failed to download manifest: {error}")
+                    ThemedMessageBox.critical(self, "Error", f"Failed to download manifest: {error}")
                 else:
                     logger.error(f"Background manifest download failed: {error}")
             return
@@ -1929,7 +1933,7 @@ class LibraryActionsMixin:
                     logger.error(f"Failed to parse zip and import keys/token for appid {appid}: {e}")
                 
                 name = game_data.get("game_name", f"App {appid}")
-                QMessageBox.information(self, "Refetch Manifest", f"Refetched manifest zip successfully for {name}!")
+                ThemedMessageBox.information(self, "Refetch Manifest", f"Refetched manifest zip successfully for {name}!")
             
             if not download_only:
                 try:
@@ -1946,10 +1950,10 @@ class LibraryActionsMixin:
                     logger.debug(f"[Library] Could not reset the validate button: {e}")
         else:
             if not download_only:
-                QMessageBox.critical(self, "Error", f"Failed: {error}")
+                ThemedMessageBox.critical(self, "Error", f"Failed: {error}")
             else:
                 name = game_data.get("game_name", f"App {game_data.get('appid')}")
-                QMessageBox.critical(self, "Refetch Manifest Error", f"Failed to refetch manifest for {name}:\n{error}")
+                ThemedMessageBox.critical(self, "Refetch Manifest Error", f"Failed to refetch manifest for {name}:\n{error}")
                 logger.error(f"Background manifest download failed for appid {game_data.get('appid')}: {error}")
             if self._details_dialog:
                 try:
@@ -2020,14 +2024,14 @@ class LibraryActionsMixin:
 
             msg += "Do you want to continue anyway?"
             
-            btn = QMessageBox.warning(
+            btn = ThemedMessageBox.warning(
                 self, 
                 "Hubcap Manifest Not Ready", 
                 msg, 
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
+                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.No
             )
-            if btn != QMessageBox.StandardButton.Yes:
+            if btn != ThemedMessageBox.StandardButton.Yes:
                 logger.info("User cancelled download due to stale Hubcap manifest")
                 if hasattr(self, "_active_fetches"):
                     self._active_fetches.discard(app_id)
@@ -2150,14 +2154,14 @@ class LibraryActionsMixin:
                         "This usually means Hubcap has not yet ingested the latest Steam update.\n\n"
                         "Do you want to continue with this version anyway?"
                     )
-                    btn = QMessageBox.warning(
+                    btn = ThemedMessageBox.warning(
                         self,
                         "Manifest Outdated",
                         msg,
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        QMessageBox.StandardButton.No
+                        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                        ThemedMessageBox.StandardButton.No
                     )
-                    if btn != QMessageBox.StandardButton.Yes:
+                    if btn != ThemedMessageBox.StandardButton.Yes:
                         logger.info("User aborted task due to post-download manifest mismatch")
                         if hasattr(self, "_active_fetches"):
                             self._active_fetches.discard(appid)

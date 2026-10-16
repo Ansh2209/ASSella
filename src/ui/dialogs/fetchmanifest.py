@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QVBoxLayout,
     QWidget,
     QTabWidget,
@@ -29,6 +28,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QSizePolicy,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 
 from core import morrenus_api
@@ -1216,7 +1216,7 @@ class FetchManifestDialog(QDialog):
         selected_library_path = ""
         libraries = steam_helpers.get_steam_libraries()
         if not libraries:
-            QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self,
                 "No Steam Library Found",
                 "Steam has not initialized any library folders yet.\n\n"
@@ -1347,7 +1347,7 @@ class FetchManifestDialog(QDialog):
             msg = f"No downloadable depots with valid keys/manifests were found for {parsed_data.get('game_name', 'this game')}."
             if missing_depots:
                 msg += f"\n\nUnavailable depots: {', '.join(str(d) for d in missing_depots)}"
-            QMessageBox.warning(self, "No Depots Available", msg)
+            ThemedMessageBox.warning(self, "No Depots Available", msg)
             return
 
         if parsed_data.get("depots"):
@@ -1557,7 +1557,7 @@ class FetchManifestDialog(QDialog):
     def _handle_error(self, message):
         logger.error(f"Operation failed: {message}")
         self._set_loading_active(False)
-        QMessageBox.critical(self, "Error", message)
+        ThemedMessageBox.critical(self, "Error", message)
         self.status_label.setText("Error occurred")
 
     def on_task_error(self, error_info):
@@ -1585,17 +1585,17 @@ class FetchManifestDialog(QDialog):
     def _download_workshop(self):
         api_key = self.settings.value("morrenus_api_key", "", type=str) if self.settings else ""
         if not api_key:
-            QMessageBox.warning(self, "No API Key", "Please enter your Hubcab API key in ACCELA Settings first.")
+            ThemedMessageBox.warning(self, "No API Key", "Please enter your Hubcab API key in ACCELA Settings first.")
             return
 
         raw = self.ids_input.toPlainText().strip()
         if not raw:
-            QMessageBox.warning(self, "No IDs", "Please enter at least one Workshop ID or URL.")
+            ThemedMessageBox.warning(self, "No IDs", "Please enter at least one Workshop ID or URL.")
             return
 
         wids = parse_workshop_ids(raw)
         if not wids:
-            QMessageBox.warning(self, "No Valid IDs", "Could not parse any Workshop IDs from the input.")
+            ThemedMessageBox.warning(self, "No Valid IDs", "Could not parse any Workshop IDs from the input.")
             return
 
         max_downloads = self.settings.value("workshop_max_downloads", 4, type=int) if self.settings else 4
@@ -1616,7 +1616,7 @@ class FetchManifestDialog(QDialog):
                     else:
                         return
             else:
-                QMessageBox.warning(
+                ThemedMessageBox.warning(
                     self,
                     "No Steam Library Found",
                     "Steam has not initialized any library folders yet.\n\n"
@@ -1632,10 +1632,10 @@ class FetchManifestDialog(QDialog):
         main_window = self.parent_window
         if main_window and hasattr(main_window, "job_queue") and main_window.job_queue:
             main_window.job_queue.add_workshop_job(wids, api_key, max_downloads, cellid, steam_integration, dest_path)
-            QMessageBox.information(self, "Job Queued", f"Successfully added Workshop download job with {len(wids)} items to the queue.")
+            ThemedMessageBox.information(self, "Job Queued", f"Successfully added Workshop download job with {len(wids)} items to the queue.")
             self.accept()
         else:
-            QMessageBox.critical(self, "Error", "Could not access the application job queue.")
+            ThemedMessageBox.critical(self, "Error", "Could not access the application job queue.")
 
     def _rotate_placeholder(self) -> None:
         if not hasattr(self, "search_input") or not self.search_input:

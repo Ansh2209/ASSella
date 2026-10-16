@@ -14,9 +14,9 @@ from PyQt6.QtWidgets import (
     QSlider,
     QTabWidget,
     QFileDialog,
-    QMessageBox,
     QDialog,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.settings_tabs.windows_depot_warning import WindowsDepotWarningDialog
 from utils.helpers import create_checkbox_setting
@@ -153,7 +153,7 @@ def create_downloads_tab(dialog) -> QWidget:
                     dialog.dl_location_combo.insertItem(insert_pos, _fmt_path(path), path)
                     dialog.dl_location_combo.setCurrentIndex(insert_pos)
             elif path:
-                QMessageBox.warning(
+                ThemedMessageBox.warning(
                     dialog,
                     "Invalid Location",
                     "System temporary directories (/tmp, AppImage mounts, etc.) cannot be used as a download location.",
@@ -418,7 +418,7 @@ def create_downloads_tab(dialog) -> QWidget:
                     if pt != t and pt in dialog.depot_toggles
                 )
                 if not other_active:
-                    QMessageBox.warning(
+                    ThemedMessageBox.warning(
                         dialog,
                         "Platform Required",
                         "At least one platform depot type (Windows, Linux, macOS, or Android) must remain enabled so game files can be detected."

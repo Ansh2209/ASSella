@@ -27,10 +27,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QGridLayout,
     QScrollArea,
-    QMessageBox,
     QProgressDialog,
     QApplication,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.game_details.widgets import CenteredComboBox, MaterialTile
 from ui.dialogs.game_details.hero_header import thin_line, get_last_checked
@@ -1073,7 +1073,7 @@ def trigger_rollback_job(dialog, depot_id, build_id: str, manifest_id: str = Non
     elif depot_id and manifest_id:
         depots_map = {str(depot_id): str(manifest_id)}
     else:
-        QMessageBox.warning(dialog, "Missing Fields", "Please specify Depot ID, Build ID, and Manifest ID.")
+        ThemedMessageBox.warning(dialog, "Missing Fields", "Please specify Depot ID, Build ID, and Manifest ID.")
         return
 
     dialog._last_rollback_pin_build = pin_build
@@ -1132,7 +1132,7 @@ def trigger_rollback_job(dialog, depot_id, build_id: str, manifest_id: str = Non
                 except Exception as e:
                     logger.debug(f"[GameDetails] Could not close the progress dialog: {e}")
             if error_msg:
-                QMessageBox.critical(dialog, "Manifest Retrieval Failed", f"Failed to download manifest from Hubcap:\n\n{error_msg}")
+                ThemedMessageBox.critical(dialog, "Manifest Retrieval Failed", f"Failed to download manifest from Hubcap:\n\n{error_msg}")
                 return
             do_package_and_submit_manual_job(dialog, None, None, depots_map, build_id, pin_build=pin_build)
 
@@ -1154,7 +1154,7 @@ def on_manifest_fetch_completed(dialog, error_msg, src_manifest_path_str, manife
 
     if error_msg:
         global_manifests_dir = get_base_path() / "manifests"
-        QMessageBox.critical(
+        ThemedMessageBox.critical(
             dialog,
             "Manifest Retrieval Failed",
             f"Failed to automatically download manifest from Hubcap.\n\n"
@@ -1210,7 +1210,7 @@ def do_package_and_submit_manual_job(dialog, src_manifest_path, manifest_filenam
             dialog.exclude_tile.setEnabled(False)
     except Exception as e:
         logger.error(f"Failed to create temporary manifest zip: {e}", exc_info=True)
-        QMessageBox.critical(dialog, "Error", f"Failed to package manifest file: {e}")
+        ThemedMessageBox.critical(dialog, "Error", f"Failed to package manifest file: {e}")
         return
 
     is_vapor_mode = bool(
@@ -1249,7 +1249,7 @@ def do_package_and_submit_manual_job(dialog, src_manifest_path, manifest_filenam
             f"The manifest(s) were seeded into Steam's depotcache.<br><br>"
             f"<i>Steam will apply this build automatically on next launch or update.</i>"
         )
-        QMessageBox.information(dialog, "Native Rollback Applied", msg)
+        ThemedMessageBox.information(dialog, "Native Rollback Applied", msg)
         return
 
     game_data = dialog.game_data.copy()
@@ -1427,7 +1427,7 @@ def uninstall_scroll_to_bottom(dialog) -> None:
 def do_dlc_uninstall(dialog) -> None:
     checked = [did for did, cb in getattr(dialog, "_dlc_checkboxes", {}).items() if cb.isChecked()]
     if not checked:
-        QMessageBox.information(dialog, "Nothing selected", "Select at least one DLC to remove.")
+        ThemedMessageBox.information(dialog, "Nothing selected", "Select at least one DLC to remove.")
         return
     gd = dict(dialog.game_data)
     gd["_dlc_uninstall_ids"] = checked
@@ -1645,16 +1645,17 @@ def on_netsock_btn_clicked(dialog) -> None:
     is_currently_active = bool(cur_opt and "netsock.so" in cur_opt)
 
     if not is_currently_active:
-        reply = QMessageBox.warning(
+        from ui.dialogs.themed_message_box import ThemedMessageBox
+        reply = ThemedMessageBox.warning(
             dialog,
             "Netsock Compatibility Warning",
             "Netsock injects via LD_AUDIT for Steam Networking Sockets multiplayer.\n\n"
             "⚠️ Notice: This may not work with Easy Anti-Cheat (EAC) games or titles with strict anti-cheat.\n\n"
             "Do you want to enable Netsock for this game?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+            buttons=ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            default_button=ThemedMessageBox.StandardButton.Yes,
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if reply != ThemedMessageBox.StandardButton.Yes:
             dialog.netsock_tile.setChecked(False)
             dialog.netsock_tile.update_state(False, dialog.accent_color, active_sub="Active", inactive_sub="Inactive")
             return
@@ -1666,19 +1667,20 @@ def on_netsock_btn_clicked(dialog) -> None:
             dialog.netsock_tile.setChecked(True)
             dialog.netsock_tile.update_state(True, dialog.accent_color, active_sub="Active", inactive_sub="Inactive")
             dialog.netsock_tile.setToolTip("Netsock LD_AUDIT patch active. Click to disable.")
-            QMessageBox.information(dialog, "Netsock Enabled", "Netsock multiplayer patch has been enabled for this game.")
+            ThemedMessageBox.information(dialog, "Netsock Enabled", "Netsock multiplayer patch has been enabled for this game.")
         else:
-            QMessageBox.warning(dialog, "Error", "Failed to write LaunchOptions to config.yaml.")
+            ThemedMessageBox.warning(dialog, "Error", "Failed to write LaunchOptions to config.yaml.")
             dialog.netsock_tile.setChecked(False)
             dialog.netsock_tile.update_state(False, dialog.accent_color, active_sub="Active", inactive_sub="Inactive")
     else:
+        from ui.dialogs.themed_message_box import ThemedMessageBox
         if remove_launch_option(config, str(dialog.appid)):
             dialog.netsock_tile.setChecked(False)
             dialog.netsock_tile.update_state(False, dialog.accent_color, active_sub="Active", inactive_sub="Inactive")
             dialog.netsock_tile.setToolTip("Enable Netsock LD_AUDIT patch for Steam Networking Sockets.")
-            QMessageBox.information(dialog, "Netsock Disabled", "Netsock multiplayer patch has been removed for this game.")
+            ThemedMessageBox.information(dialog, "Netsock Disabled", "Netsock multiplayer patch has been removed for this game.")
         else:
-            QMessageBox.warning(dialog, "Error", "Failed to remove LaunchOptions from config.yaml.")
+            ThemedMessageBox.warning(dialog, "Error", "Failed to remove LaunchOptions from config.yaml.")
 
 
 def on_eos_btn_clicked(dialog) -> None:
@@ -1695,29 +1697,29 @@ def on_eos_btn_clicked(dialog) -> None:
         if status == "active":
             success = EOSDetector.remove_proxy(install_path)
             if success:
-                QMessageBox.information(dialog, "EOS Proxy", "Epic Online Services proxy removed successfully.")
+                ThemedMessageBox.information(dialog, "EOS Proxy", "Epic Online Services proxy removed successfully.")
             else:
-                QMessageBox.warning(dialog, "EOS Proxy", "Failed to remove Epic Online Services proxy.")
+                ThemedMessageBox.warning(dialog, "EOS Proxy", "Failed to remove Epic Online Services proxy.")
         elif status == "stale":
             success = EOSDetector.apply_proxy(install_path)
             if success:
-                QMessageBox.information(dialog, "EOS Proxy", "Epic Online Services proxy reapplied successfully.")
+                ThemedMessageBox.information(dialog, "EOS Proxy", "Epic Online Services proxy reapplied successfully.")
             else:
-                QMessageBox.warning(dialog, "EOS Proxy", "Failed to reapply Epic Online Services proxy.")
+                ThemedMessageBox.warning(dialog, "EOS Proxy", "Failed to reapply Epic Online Services proxy.")
         else:
             success = EOSDetector.apply_proxy(install_path)
             if success:
-                QMessageBox.information(dialog, "EOS Proxy", "Epic Online Services proxy enabled successfully.")
+                ThemedMessageBox.information(dialog, "EOS Proxy", "Epic Online Services proxy enabled successfully.")
             else:
                 from utils.eos_detector import ensure_eos_proxy_dll
                 proxy_src = ensure_eos_proxy_dll()
                 if not proxy_src or not proxy_src.exists():
-                    QMessageBox.critical(dialog, "Error", "EOS proxy DLL (EOSSDK-Win64-Shipping.dll) could not be found or downloaded.")
+                    ThemedMessageBox.critical(dialog, "Error", "EOS proxy DLL (EOSSDK-Win64-Shipping.dll) could not be found or downloaded.")
                 else:
-                    QMessageBox.warning(dialog, "EOS Proxy", "No target EOSSDK-Win64-Shipping.dll found to replace.")
+                    ThemedMessageBox.warning(dialog, "EOS Proxy", "No target EOSSDK-Win64-Shipping.dll found to replace.")
     except Exception as e:
         logger.error(f"Failed to toggle EOS Proxy: {e}", exc_info=True)
-        QMessageBox.critical(dialog, "Error", f"Failed to toggle EOS Proxy:\n{e}")
+        ThemedMessageBox.critical(dialog, "Error", f"Failed to toggle EOS Proxy:\n{e}")
 
     update_eos_btn_state(dialog)
 
@@ -1996,16 +1998,16 @@ def on_hubcap_status_changed(dialog, changed_appid, needs_update, update_in_prog
 def on_pin_build_toggled(dialog, pinned: bool) -> None:
     from utils.dlc_helpers import is_dlc_only_mode
     if pinned and is_dlc_only_mode(dialog.appid):
-        res = QMessageBox.warning(
+        res = ThemedMessageBox.warning(
             dialog,
             "Pin Build Warning",
             f"'{dialog.game_data.get('game_name', 'This game')}' is currently in DLC-Only mode.\n\n"
             "Pinning a build for a DLC-only game is typically not required and may freeze manifest tracking.\n\n"
             "Are you sure you want to enable Pin Build?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.No,
         )
-        if res != QMessageBox.StandardButton.Yes:
+        if res != ThemedMessageBox.StandardButton.Yes:
             if hasattr(dialog, "pin_tile") and dialog.pin_tile:
                 dialog.pin_tile.blockSignals(True)
                 dialog.pin_tile.setChecked(False)
@@ -2245,29 +2247,29 @@ def handle_move_dlc_to_dlcdata(dialog) -> None:
 
     cp = get_user_config_path()
     if not cp.exists():
-        QMessageBox.warning(dialog, "Config Not Found", "SLSsteam config.yaml could not be found.")
+        ThemedMessageBox.warning(dialog, "Config Not Found", "SLSsteam config.yaml could not be found.")
         return
 
     current_dlcs = get_dlc_data(cp, dialog.appid)
     game_name = dialog.game_data.get("game_name", f"AppID {dialog.appid}")
 
     if current_dlcs:
-        ans = QMessageBox.question(
+        ans = ThemedMessageBox.question(
             dialog,
             "Revert DLC from DlcData",
             f"This game currently has {len(current_dlcs)} DLC(s) configured under DlcData in SLSsteam config.yaml.\n\n"
             f"Are you sure you want to revert and remove these DLC entries from DlcData for '{game_name}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
         )
-        if ans == QMessageBox.StandardButton.Yes:
+        if ans == ThemedMessageBox.StandardButton.Yes:
             if remove_dlc_data(cp, dialog.appid):
-                QMessageBox.information(
+                ThemedMessageBox.information(
                     dialog,
                     "DlcData Reverted",
                     f"✓ Successfully removed DlcData entries for '{game_name}'.",
                 )
             else:
-                QMessageBox.warning(dialog, "Action Failed", "Could not remove entries from DlcData.")
+                ThemedMessageBox.warning(dialog, "Action Failed", "Could not remove entries from DlcData.")
             refresh_dlcdata_btn_text(dialog)
         return
 
@@ -2280,13 +2282,13 @@ def handle_move_dlc_to_dlcdata(dialog) -> None:
         f"You can revert this action at any time using this same button.\n\n"
         f"Do you want to proceed?"
     )
-    ans = QMessageBox.question(
+    ans = ThemedMessageBox.question(
         dialog,
         "Move DLC to DlcData (Advanced)",
         warn_msg,
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
     )
-    if ans != QMessageBox.StandardButton.Yes:
+    if ans != ThemedMessageBox.StandardButton.Yes:
         return
 
     dialog.dlcdata_exp_btn.setEnabled(False)
@@ -2296,7 +2298,7 @@ def handle_move_dlc_to_dlcdata(dialog) -> None:
     try:
         dlc_list = get_all_dlcs_for_app(dialog.appid, dialog.game_data)
         if not dlc_list:
-            QMessageBox.information(
+            ThemedMessageBox.information(
                 dialog,
                 "No DLCs Found",
                 f"No downloadable or store DLCs could be found for '{game_name}'.",
@@ -2306,20 +2308,20 @@ def handle_move_dlc_to_dlcdata(dialog) -> None:
         dlc_dict = {str(d["dlc_appid"]): d["dlc_name"] for d in dlc_list}
         ok = add_dlc_data_batch(cp, dialog.appid, dlc_dict)
         if ok:
-            QMessageBox.information(
+            ThemedMessageBox.information(
                 dialog,
                 "DLCs Moved to DlcData",
                 f"✓ Successfully wrote {len(dlc_dict)} DLC(s) for '{game_name}' to DlcData in config.yaml.\n\n"
                 f"SLSsteam will now explicitly report all these DLCs to the game.",
             )
         else:
-            QMessageBox.critical(
+            ThemedMessageBox.critical(
                 dialog,
                 "Write Failed",
                 "Failed to write entries to DlcData in config.yaml.",
             )
     except Exception as e:
-        QMessageBox.critical(dialog, "Error", f"Failed to move DLCs: {e}")
+        ThemedMessageBox.critical(dialog, "Error", f"Failed to move DLCs: {e}")
     finally:
         dialog.dlcdata_exp_btn.setEnabled(True)
         refresh_dlcdata_btn_text(dialog)
@@ -2463,15 +2465,18 @@ def on_move_to_vapor_clicked(dialog) -> None:
     # Verify plugins are present before converting to AT0-M
     from utils.plugin_manager import are_plugins_present, is_plugin_check_bypassed
     if not are_plugins_present():
-        box = QMessageBox(dialog)
-        box.setWindowTitle("AT0-M Plugins Required")
-        box.setIcon(QMessageBox.Icon.Warning)
-        box.setText("AT0-M mode requires SLSsteam plugins (download interceptor and spliced-tickets.lua).\n\nThe plugins were not found in your SLSsteam plugins directory.")
-        box.setInformativeText("Please go to Settings -> AT0-M and enable/deploy plugin support (or enable 'I'm using custom plugins (Advanced)') before moving games to AT0-M.")
-        settings_btn = box.addButton("Open AT0-M Settings", QMessageBox.ButtonRole.ActionRole)
-        box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        if box.clickedButton() == settings_btn:
+        action = ThemedMessageBox.choices(
+            dialog,
+            "AT0-M Plugins Required",
+            "AT0-M mode requires SLSsteam plugins (download interceptor and spliced-tickets.lua).\n\n"
+            "The plugins were not found in your SLSsteam plugins directory.",
+            [("Open AT0-M Settings", "settings"), ("Cancel", "cancel")],
+            default="cancel",
+            severity="warning",
+            informative="Please go to Settings -> AT0-M and enable/deploy plugin support "
+            "(or enable 'I'm using custom plugins (Advanced)') before moving games to AT0-M.",
+        )
+        if action == "settings":
             parent = getattr(dialog, "parent_window", None)
             while parent and not hasattr(parent, "open_settings") and hasattr(parent, "parent"):
                 parent = parent.parent()
@@ -2486,18 +2491,18 @@ def on_move_to_vapor_clicked(dialog) -> None:
         return
 
     if is_plugin_check_bypassed() and not are_plugins_present(ignore_bypass=True):
-        warn_box = QMessageBox.warning(
+        warn_box = ThemedMessageBox.warning(
             dialog,
             "Custom Plugins Active",
             "Custom plugins mode is active. Third-party plugin support and compatibility cannot be guaranteed.\n\n"
             "Do you want to proceed with converting to AT0-M?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.No,
         )
-        if warn_box != QMessageBox.StandardButton.Yes:
+        if warn_box != ThemedMessageBox.StandardButton.Yes:
             return
 
-    reply = QMessageBox.question(
+    reply = ThemedMessageBox.question(
         dialog,
         "Move to plugin AT0-M",
         f"Are you sure you want to convert '{game_name}' to AT0-M (Steam Native)?\n\n"
@@ -2505,10 +2510,10 @@ def on_move_to_vapor_clicked(dialog) -> None:
         "• Required AppID, DepotIDs, and DecryptionKeys will be registered in SLSsteam config.\n"
         "• Updates will be handled natively by Steam client instead of ACCELA.\n\n"
         "Do you want to proceed?",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.No,
     )
-    if reply != QMessageBox.StandardButton.Yes:
+    if reply != ThemedMessageBox.StandardButton.Yes:
         return
 
     from managers.db_manager import DatabaseManager
@@ -2661,7 +2666,7 @@ def on_move_to_vapor_clicked(dialog) -> None:
     if unkeyed_depots:
         logger.warning(f"[VaporTransition] Depots missing decryption keys: {unkeyed_depots}. Excluded to prevent Steam download errors.")
         depot_ids = [d for d in depot_ids if d not in unkeyed_depots]
-        QMessageBox.warning(
+        ThemedMessageBox.warning(
             dialog,
             "Unkeyed Depots Excluded",
             f"The following depot(s) have no decryption keys available (e.g. blacklisted in Hubcap):\n\n"
@@ -2761,7 +2766,7 @@ def on_move_to_vapor_clicked(dialog) -> None:
 
     threading.Thread(target=_delayed_atom_api_worker, daemon=True).start()
 
-    QMessageBox.information(
+    ThemedMessageBox.information(
         dialog,
         "Moved to plugin AT0-M",
         f"'{game_name}' has been successfully moved to AT0-M mode.\n"
@@ -2797,7 +2802,7 @@ def on_remove_from_vapor_clicked(dialog) -> None:
     appid = str(dialog.appid)
     game_name = game_data.get("game_name") or f"App {appid}"
 
-    reply = QMessageBox.question(
+    reply = ThemedMessageBox.question(
         dialog,
         "Move to ASSella",
         f"Move '{game_name}' from AT0-M to ASSella Managed?\n\n"
@@ -2805,10 +2810,10 @@ def on_remove_from_vapor_clicked(dialog) -> None:
         "• Marks the install as ASSella-managed (.DepotDownloader)\n"
         "• Prompts for depot selection and verifies game files\n\n"
         "Do you want to proceed?",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.No,
     )
-    if reply != QMessageBox.StandardButton.Yes:
+    if reply != ThemedMessageBox.StandardButton.Yes:
         return
 
     from utils.plugin_games import convert_plugin_game_to_accela
@@ -2867,7 +2872,7 @@ def on_remove_from_vapor_clicked(dialog) -> None:
         except Exception as e:
             logger.warning(f"[AtomTransition] Could not trigger manifest verification: {e}")
 
-    QMessageBox.information(
+    ThemedMessageBox.information(
         dialog,
         "Moved to ACCELA",
         f"'{game_name}' is now managed by ACCELA.\n"

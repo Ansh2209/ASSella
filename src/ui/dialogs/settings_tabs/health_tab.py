@@ -12,8 +12,8 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QScrollArea,
     QSizePolicy,
-    QMessageBox,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 logger = logging.getLogger(__name__)
 
@@ -478,14 +478,14 @@ def on_sls_version_tile_clicked(dialog) -> None:
     current_status = getattr(dialog.health_sls_ver_btn, "status_lbl", None)
     status_text = current_status.text() if current_status else ""
     if "Update!" in status_text and hasattr(dialog, "tab_widget") and dialog.tab_widget:
-        reply = QMessageBox.question(
+        reply = ThemedMessageBox.question(
             dialog,
             "SLSsteam Update Available",
             "A newer SLSsteam build is available. Switch to the SLS tab to install or update?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes
         )
-        if reply == QMessageBox.StandardButton.Yes:
+        if reply == ThemedMessageBox.StandardButton.Yes:
             for i in range(dialog.tab_widget.count()):
                 if dialog.tab_widget.tabText(i) == "SLS":
                     dialog.tab_widget.setCurrentIndex(i)
@@ -588,7 +588,7 @@ def apply_health_recommended_settings(dialog) -> None:
         dialog.hide_android_depots_checkbox.setChecked(True)
 
     update_rec_score_badge(dialog)
-    QMessageBox.information(dialog, "Settings Applied", "Recommended workflow settings applied successfully!")
+    ThemedMessageBox.information(dialog, "Settings Applied", "Recommended workflow settings applied successfully!")
 
 
 def run_assfixer_check(dialog) -> None:
@@ -661,22 +661,22 @@ def handle_assfixer_repair_done(dialog, result) -> None:
     if success:
         dialog.assfixer_status_lbl.setText(f"[OK] {msg}")
         dialog.assfixer_status_lbl.setStyleSheet("color: #9ece6a; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
-        QMessageBox.information(dialog, "ASSfixer", msg)
+        ThemedMessageBox.information(dialog, "ASSfixer", msg)
     else:
         dialog.assfixer_status_lbl.setText(f"[FAIL] {msg}")
         dialog.assfixer_status_lbl.setStyleSheet("color: #f7768e; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
-        QMessageBox.warning(dialog, "ASSfixer", msg)
+        ThemedMessageBox.warning(dialog, "ASSfixer", msg)
 
 
 def run_assfixer_restore(dialog) -> None:
-    reply = QMessageBox.question(
+    reply = ThemedMessageBox.question(
         dialog,
         "Restore Config Backup",
         "Are you sure you want to restore the latest config backup?\nThis will overwrite current config.yaml.",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.No,
     )
-    if reply != QMessageBox.StandardButton.Yes:
+    if reply != ThemedMessageBox.StandardButton.Yes:
         return
 
     try:
@@ -687,12 +687,12 @@ def run_assfixer_restore(dialog) -> None:
             dialog.assfixer_status_lbl.setText(f"[OK] {msg}")
             dialog.assfixer_status_lbl.setStyleSheet("color: #9ece6a; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
             dialog.assfixer_status_lbl.show()
-            QMessageBox.information(dialog, "Backup Restored", msg)
+            ThemedMessageBox.information(dialog, "Backup Restored", msg)
         else:
             dialog.assfixer_status_lbl.setText(f"[FAIL] {msg}")
             dialog.assfixer_status_lbl.setStyleSheet("color: #f7768e; font-size: 8.5pt; margin-top: 2px; border: none; background: transparent;")
             dialog.assfixer_status_lbl.show()
-            QMessageBox.warning(dialog, "Restore Failed", msg)
+            ThemedMessageBox.warning(dialog, "Restore Failed", msg)
 
     except Exception as e:
-        QMessageBox.critical(dialog, "Restore Error", str(e))
+        ThemedMessageBox.critical(dialog, "Restore Error", str(e))

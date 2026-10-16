@@ -27,8 +27,8 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
     QAbstractItemView,
-    QMessageBox,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.game_details.hero_header import section_title
 from utils.yaml_config_manager import (
@@ -1334,16 +1334,16 @@ def init_depots_tab(dialog) -> None:
         """Unlock custom depot and configuration selection after confirmation dialog."""
         nonlocal is_unlocked
         if not is_unlocked:
-            reply = QMessageBox.warning(
+            reply = ThemedMessageBox.warning(
                 dialog,
                 "Advanced Configuration",
                 "Modifying depot and configuration entries is intended for advanced users only.\n\n"
                 "Excluding required depots or keys may prevent Steam from downloading or launching the game properly.\n\n"
                 "Do you want to unlock custom configuration editing?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.No,
             )
-            if reply == QMessageBox.StandardButton.Yes:
+            if reply == ThemedMessageBox.StandardButton.Yes:
                 is_unlocked = True
                 unlock_btn.setText("Unlocked")
                 unlock_btn.setStyleSheet(unlock_btn_style_unlocked)
@@ -1522,7 +1522,7 @@ def init_depots_tab(dialog) -> None:
     def _on_refetch():
         """Refetch fresh Lua metadata and keys from Hubcap API."""
         from core import morrenus_api
-        from PyQt6.QtWidgets import QMessageBox
+        from ui.dialogs.themed_message_box import ThemedMessageBox
 
         stats = morrenus_api.get_user_stats()
         daily_limit = stats.get("daily_limit") or stats.get("role_daily_limit") or 135
@@ -1531,7 +1531,7 @@ def init_depots_tab(dialog) -> None:
         remaining = max(0, daily_limit - daily_usage)
 
         if not can_make_requests or remaining <= 0:
-            QMessageBox.warning(
+            ThemedMessageBox.warning(
                 dialog,
                 "API Token Limit Reached",
                 f"Daily Hubcap API token limit reached (0/{daily_limit} tokens remaining).\n\n"
@@ -1541,16 +1541,16 @@ def init_depots_tab(dialog) -> None:
             status_lbl.setText(f"API token limit reached (0/{daily_limit}). Please wait for daily reset.")
             return
 
-        reply = QMessageBox.question(
+        reply = ThemedMessageBox.question(
             dialog,
             "Confirm API Refetch",
             f"This action will consume your daily Hubcap API tokens.\n\n"
             f"You have {remaining}/{daily_limit} tokens remaining.\n\n"
             f"Do you want to continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.Cancel,
+            ThemedMessageBox.StandardButton.Cancel,
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if reply != ThemedMessageBox.StandardButton.Yes:
             return
 
         refetch_btn.setEnabled(False)

@@ -12,10 +12,10 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QPushButton,
     QColorDialog,
-    QMessageBox,
     QApplication,
     QSlider,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.helpers import create_checkbox_setting, create_font_setting, FontSelectionDialog
 
@@ -379,7 +379,7 @@ def is_too_close(accent: QColor, bg: QColor, threshold: int = 100) -> bool:
 
 
 def show_color_warning() -> None:
-    QMessageBox.warning(
+    ThemedMessageBox.warning(
         None,
         "Invalid Color",
         "This color is too dark and will make the interface unusable.",
@@ -449,7 +449,7 @@ def save_style_settings(dialog) -> bool:
     dialog.settings.setValue("font-file", "")
 
     if is_too_close(QColor(u_accent), QColor(u_bg)):
-        QMessageBox.warning(
+        ThemedMessageBox.warning(
             dialog,
             "Invalid Color",
             "Background too similar to accent color.",

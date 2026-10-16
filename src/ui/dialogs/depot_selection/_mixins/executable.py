@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 
-from PyQt6.QtWidgets import QMessageBox
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.depot_selection import executable_probe
 
@@ -38,17 +38,17 @@ class ExecutableVerifyMixin:
 
         # If a depot containing the executable is found, check if it's selected
         if depot_with_exe and str(depot_with_exe) not in [str(d) for d in selected_depots]:
-            reply = QMessageBox.warning(
+            reply = ThemedMessageBox.warning(
                 self,
                 "Missing Game Executable",
                 f"The launch executable '{Path(exe_name).name}' was detected in Depot {depot_with_exe}, "
                 f"which is currently NOT selected.\n\n"
                 f"Without this depot, Steam will fail to launch the game ('Missing Executable').\n\n"
                 f"Would you like to select Depot {depot_with_exe} and proceed?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Ignore | QMessageBox.StandardButton.Cancel,
-                QMessageBox.StandardButton.Yes,
+                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.Ignore | ThemedMessageBox.StandardButton.Cancel,
+                ThemedMessageBox.StandardButton.Yes,
             )
-            if reply == QMessageBox.StandardButton.Yes:
+            if reply == ThemedMessageBox.StandardButton.Yes:
                 self.table_widget.blockSignals(True)
                 for i in range(self.table_widget.rowCount()):
                     id_item = self.table_widget.item(i, 0)
@@ -58,7 +58,7 @@ class ExecutableVerifyMixin:
                 self.table_widget.blockSignals(False)
                 self._update_table_headers()
                 return True
-            elif reply == QMessageBox.StandardButton.Ignore:
+            elif reply == ThemedMessageBox.StandardButton.Ignore:
                 return True
             else:
                 return False

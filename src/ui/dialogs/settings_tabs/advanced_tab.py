@@ -11,9 +11,9 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSlider,
-    QMessageBox,
     QComboBox,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.helpers import create_checkbox_setting
 from utils.yaml_config_manager import is_slssteam_mode_enabled
@@ -226,30 +226,28 @@ def goldberg_checked_warning_from_mode(dialog, type) -> None:
 
 
 def goldberg_warning_box(dialog, checkbox, warning) -> bool:
-    msg_box = QMessageBox(dialog)
-    msg_box.setWindowTitle("Warning")
-    msg_box.setText(warning)
-    msg_box.setStandardButtons(
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    reply = ThemedMessageBox.warning(
+        dialog,
+        "Warning",
+        warning,
+        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.No,
     )
-    msg_box.setDefaultButton(QMessageBox.StandardButton.No)
-    reply = msg_box.exec()
 
-    if reply == QMessageBox.StandardButton.No:
+    if reply == ThemedMessageBox.StandardButton.No:
         checkbox.setChecked(False)
         checkbox.checkbox.setCheckState(Qt.CheckState.Unchecked)
         return True
 
-    confirm_box = QMessageBox(dialog)
-    confirm_box.setWindowTitle("Warning")
-    confirm_box.setText(warning + " \n\nAre you sure?")
-    confirm_box.setStandardButtons(
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+    second_reply = ThemedMessageBox.warning(
+        dialog,
+        "Warning",
+        warning + " \n\nAre you sure?",
+        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.No,
     )
-    confirm_box.setDefaultButton(QMessageBox.StandardButton.No)
-    second_reply = confirm_box.exec()
 
-    if second_reply == QMessageBox.StandardButton.No:
+    if second_reply == ThemedMessageBox.StandardButton.No:
         checkbox.setChecked(False)
         checkbox.checkbox.setCheckState(Qt.CheckState.Unchecked)
         return True

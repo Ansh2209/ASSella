@@ -17,11 +17,11 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
     QButtonGroup,
-    QMessageBox,
     QApplication,
     QSizePolicy,
     QWidget,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.depotselection import format_size
 from ui.dialogs.depot_selection import storage_targets
@@ -724,13 +724,13 @@ class SingleDepotSelectionDialog(QDialog):
 
     def _on_select_files_clicked(self):
         if not self.depot_checkbox.isChecked():
-            QMessageBox.warning(self, "Warning", "Please check the depot first before selecting files.")
+            ThemedMessageBox.warning(self, "Warning", "Please check the depot first before selecting files.")
             return
 
         try:
             dump = prepare_manifest_dump(self.app_id, str(self.single_depot_id))
         except ManifestDumpError as e:
-            QMessageBox.critical(self, "Error", str(e))
+            ThemedMessageBox.critical(self, "Error", str(e))
             return
 
         runner = ManifestDumpRunner(self, dump)
@@ -740,7 +740,7 @@ class SingleDepotSelectionDialog(QDialog):
     def _on_dump_finished(self, dump, ok, message):
         """Open the file-selection tree over a listing that was written."""
         if not ok:
-            QMessageBox.critical(self, "Error", message)
+            ThemedMessageBox.critical(self, "Error", message)
             return
 
         from ui.dialogs.fileselection import FileSelectionDialog
@@ -839,7 +839,7 @@ class SingleDepotSelectionDialog(QDialog):
 
     def _on_ok_clicked(self):
         if not self.depot_checkbox.isChecked():
-            QMessageBox.warning(self, "No Depots Selected", "Please select the depot to proceed with download.")
+            ThemedMessageBox.warning(self, "No Depots Selected", "Please select the depot to proceed with download.")
             return
         self.accept()
 

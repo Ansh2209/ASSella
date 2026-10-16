@@ -17,11 +17,11 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QStackedWidget,
     QInputDialog,
-    QMessageBox,
     QSizePolicy,
     QDialog,
     QCheckBox,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from PyQt6 import sip
 from ui.material_progress import MaterialSpinner
@@ -765,7 +765,7 @@ class BuildDepotsSelectionDialog(QDialog):
     def _confirm(self):
         self.selected_depots = {did: mid for did, (cb, mid) in self.checkboxes.items() if cb.isChecked()}
         if not self.selected_depots:
-            QMessageBox.warning(self, "No Depots Selected", "Please select at least one depot to proceed.")
+            ThemedMessageBox.warning(self, "No Depots Selected", "Please select at least one depot to proceed.")
             return
         self.accept()
 
@@ -778,7 +778,7 @@ def on_builds_download_clicked(dialog) -> None:
 
     depots = dialog._cached_build_depots.get(build_id) or item.get("depots", {})
     if not depots:
-        QMessageBox.warning(dialog, "No Manifest", "No depot manifests found for this build.")
+        ThemedMessageBox.warning(dialog, "No Manifest", "No depot manifests found for this build.")
         return
 
     # Filter depots respecting the user's platform visibility preferences
@@ -799,7 +799,7 @@ def on_builds_download_clicked(dialog) -> None:
         did = next(iter(valid_depots.keys()))
         mid = valid_depots[did].get("manifest_id")
         if not mid:
-            QMessageBox.warning(dialog, "No Manifest ID", f"Could not find manifest ID for depot {did}.")
+            ThemedMessageBox.warning(dialog, "No Manifest ID", f"Could not find manifest ID for depot {did}.")
             return
         dialog._trigger_rollback_job(str(did), str(build_id), str(mid), pin_build=should_pin)
         return

@@ -20,9 +20,9 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QScrollArea,
-    QMessageBox,
     QApplication,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from core.steam_helpers import get_steam_libraries, find_steam_install
 from utils.workshop_helpers import fetch_workshop_details, strip_emojis, delete_workshop_item
@@ -382,14 +382,14 @@ def on_workshop_mods_scanned(dialog, ws_mods: list) -> None:
 
 def delete_workshop_item_dialog(dialog, wid: str, mod_path: str, title: str) -> None:
     """Prompt user to confirm deletion of workshop item and refresh list."""
-    reply = QMessageBox.question(
+    reply = ThemedMessageBox.question(
         dialog,
         "Delete Workshop Mod",
         f"Are you sure you want to delete '{title}' (WID: {wid})?\nThis will permanently remove the item files.",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.No,
     )
-    if reply == QMessageBox.StandardButton.Yes:
+    if reply == ThemedMessageBox.StandardButton.Yes:
         delete_workshop_item(dialog.appid, wid, mod_path)
         scan_workshop_mods_async(dialog)
 
@@ -417,12 +417,12 @@ def update_workshop_items(dialog, wids: List[str]) -> None:
 
         if mw and hasattr(mw, "job_queue"):
             mw.job_queue.add_workshop_job(wids, api_key, max_downloads, cellid, steam_integration, dest_path)
-            QMessageBox.information(
+            ThemedMessageBox.information(
                 dialog,
                 "Workshop Update",
                 f"Queued update for {len(wids)} workshop mod(s)!\nCheck Job Manager for download progress.",
             )
         else:
-            QMessageBox.warning(dialog, "Error", "Job queue manager not available.")
+            ThemedMessageBox.warning(dialog, "Error", "Job queue manager not available.")
     except Exception as e:
         logger.error(f"Failed to queue workshop update: {e}")

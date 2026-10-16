@@ -19,9 +19,9 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QButtonGroup,
     QProgressBar,
-    QMessageBox,
     QFrame,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from core.steam_helpers import get_steam_libraries, find_steam_install
 from utils.paths import is_valid_download_directory
@@ -253,7 +253,7 @@ class MoveStorageDialog(QDialog):
     def _start_move(self):
         checked_id = self.btn_group.checkedId()
         if checked_id < 0 or checked_id >= len(self.target_libs):
-            QMessageBox.warning(self, "No Storage Selected", "Please select a target storage library.")
+            ThemedMessageBox.warning(self, "No Storage Selected", "Please select a target storage library.")
             return
 
         target_lib = self.target_libs[checked_id]
@@ -266,7 +266,7 @@ class MoveStorageDialog(QDialog):
             free_bytes = shutil.disk_usage(target_lib).free
             game_size = self.game_data.get("size_on_disk", 0)
             if game_size and free_bytes < (game_size + 1024**3):  # 1GB margin
-                QMessageBox.warning(
+                ThemedMessageBox.warning(
                     self,
                     "Insufficient Disk Space",
                     f"Target drive only has {_format_bytes(free_bytes)} free, which may not be enough for this game ({_format_bytes(game_size)})."
@@ -296,7 +296,7 @@ class MoveStorageDialog(QDialog):
         self.cancel_btn.setEnabled(True)
 
         if not success:
-            QMessageBox.critical(self, "Move Failed", f"Failed to move game storage:\n\n{msg}")
+            ThemedMessageBox.critical(self, "Move Failed", f"Failed to move game storage:\n\n{msg}")
             return
 
         new_install_path = msg
@@ -333,7 +333,7 @@ class MoveStorageDialog(QDialog):
             except Exception as e:
                 logger.warning(f"Could not update plugin_library.json installdir: {e}")
 
-        QMessageBox.information(
+        ThemedMessageBox.information(
             self,
             "Move Complete",
             f"Successfully moved '{self.game_name}' to:\n{target_lib}"

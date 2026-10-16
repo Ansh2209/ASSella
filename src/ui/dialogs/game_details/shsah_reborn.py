@@ -18,10 +18,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QScrollArea,
     QStackedWidget,
-    QMessageBox,
     QSizePolicy,
     QDialog,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.material_progress import MaterialSpinner
 from ui.dialogs.game_details.widgets import SwitchToggle
@@ -495,7 +495,7 @@ def _set_all_achievements(dialog, unlock: bool) -> None:
 def _save_achievements(dialog) -> None:
     """Commit toggled states and write binary VDF file."""
     if not dialog.achievements_list or not dialog.achievements_account_id:
-        QMessageBox.warning(dialog, "Save Failed", "No account ID or achievements found.")
+        ThemedMessageBox.warning(dialog, "Save Failed", "No account ID or achievements found.")
         return
 
     try:
@@ -519,7 +519,7 @@ def _save_achievements(dialog) -> None:
             f"✓ Saved ({unlocked_count}/{total_count} unlocked) to {saved_path.name}! Restart game/Steam to apply."
         )
 
-        QMessageBox.information(
+        ThemedMessageBox.information(
             dialog,
             "Achievements Saved",
             f"Successfully updated achievements!\n\n"
@@ -529,4 +529,4 @@ def _save_achievements(dialog) -> None:
         )
     except Exception as e:
         logger.exception(f"Error saving user stats: {e}")
-        QMessageBox.critical(dialog, "Save Error", f"Failed to save achievements:\n{e}")
+        ThemedMessageBox.critical(dialog, "Save Error", f"Failed to save achievements:\n{e}")

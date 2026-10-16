@@ -24,8 +24,8 @@ from PyQt6.QtWidgets import (
     QFrame,
     QWidget,
     QScrollArea,
-    QMessageBox,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialog_titlebar import DialogTitleBar
 from utils.settings import get_settings
@@ -394,7 +394,7 @@ class SteamLibraryDialog(QDialog):
                 break
 
         if not self.selected_path:
-            QMessageBox.warning(self, "No Selection", "Please select a Steam library folder.")
+            ThemedMessageBox.warning(self, "No Selection", "Please select a Steam library folder.")
             return
 
         logger.info(f"User selected Steam library: {self.selected_path}")

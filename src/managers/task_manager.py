@@ -14,7 +14,8 @@ import urllib.error
 
 # QObject and pyqtSlot for robust threading
 from PyQt6.QtCore import QTimer, Qt, QObject, pyqtSlot, pyqtSignal
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QFileDialog
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 try:
     import psutil
@@ -335,7 +336,7 @@ class TaskManager(
             else:
                 self._show_depot_selection_dialog()
         else:
-            QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self.main_window,
                 "No Depots Found",
                 "Zip file processed, but no downloadable depots were found.",
@@ -493,8 +494,8 @@ class TaskManager(
 
             if self.settings.value("demo_mode", False, type=bool):
                 logger.info("[DemoMode] Demo Mode active: reached depot selection successfully. Skipping download and caching.")
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.information(
+                from ui.dialogs.themed_message_box import ThemedMessageBox
+                ThemedMessageBox.information(
                     self.main_window,
                     "Demo Mode Active",
                     "Demo Mode: Reached the depot selection screen successfully!\n\n"
@@ -600,8 +601,8 @@ class TaskManager(
                 default_dir = os.path.expanduser("~/.local/share/ACCELA/downloads")
                 os.makedirs(default_dir, exist_ok=True)
                 return default_dir
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
+            from ui.dialogs.themed_message_box import ThemedMessageBox
+            ThemedMessageBox.warning(
                 self.main_window,
                 "No Steam Library Found",
                 "Steam has not initialized any library folders yet.\n\n"
@@ -885,8 +886,8 @@ class TaskManager(
             # Enforce that dest_path is strictly a valid Steam library
             steam_libs = steam_helpers.get_steam_libraries()
             if not steam_libs:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(
+                from ui.dialogs.themed_message_box import ThemedMessageBox
+                ThemedMessageBox.warning(
                     self.main_window,
                     "No Steam Library Found",
                     "Steam has not initialized any library folders yet.\n\n"
@@ -1249,8 +1250,8 @@ class TaskManager(
         from core import steam_helpers
         steam_libs = steam_helpers.get_steam_libraries()
         if not steam_libs:
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(
+            from ui.dialogs.themed_message_box import ThemedMessageBox
+            ThemedMessageBox.warning(
                 self.main_window,
                 "No Steam Library Found",
                 "Steam has not initialized any library folders yet.\n\n"
@@ -1338,7 +1339,7 @@ class TaskManager(
             return
 
         _, error_value, _ = error_info
-        QMessageBox.critical(
+        ThemedMessageBox.critical(
             self.main_window, "Error", f"An error occurred: {error_value}"
         )
         if not self.is_cancelling:
@@ -1573,14 +1574,14 @@ class TaskManager(
 
     def cancel_current_job(self):
         if self.workshop_task and self.current_job:
-            reply = QMessageBox.question(
+            reply = ThemedMessageBox.question(
                 self.main_window,
                 "Cancel Job",
                 "Are you sure you want to cancel the Workshop download?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.No,
             )
-            if reply == QMessageBox.StandardButton.No:
+            if reply == ThemedMessageBox.StandardButton.No:
                 return
             logger.info("--- Cancelling Workshop job ---")
             self.is_cancelling = True
@@ -1593,17 +1594,17 @@ class TaskManager(
         if not self.download_task or not self.current_job:
             return
 
-        reply = QMessageBox.question(
+        reply = ThemedMessageBox.question(
             self.main_window,
             "Cancel Job",
             f"Are you sure you want to cancel the download for '{
                 os.path.basename(self.current_job)
             }'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.No,
         )
 
-        if reply == QMessageBox.StandardButton.No:
+        if reply == ThemedMessageBox.StandardButton.No:
             return
 
         logger.info(f"--- Cancelling job: {os.path.basename(self.current_job)} ---")
@@ -1662,19 +1663,19 @@ class TaskManager(
             message = (
                 "Existing installation detected. Delete files for this canceled job?"
             )
-            default_button = QMessageBox.StandardButton.No
+            default_button = ThemedMessageBox.StandardButton.No
         else:
             message = "Delete partially downloaded files for this job?"
-            default_button = QMessageBox.StandardButton.Yes
+            default_button = ThemedMessageBox.StandardButton.Yes
 
-        reply = QMessageBox.question(
+        reply = ThemedMessageBox.question(
             self.main_window,
             "Cancel Download",
             message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
             default_button,
         )
-        return reply == QMessageBox.StandardButton.Yes
+        return reply == ThemedMessageBox.StandardButton.Yes
 
     def _kill_download_process(self):
         if self.download_task and self.download_task.process:
@@ -1769,7 +1770,7 @@ class TaskManager(
 
     def _on_slssteam_download_complete(self, message):
         logger.info(f"SLSsteam download completed: {message}")
-        QMessageBox.information(
+        ThemedMessageBox.information(
             self.main_window, "SLSsteam Installation Complete", message
         )
         self.slssteam_download_task = None
@@ -1777,7 +1778,7 @@ class TaskManager(
 
     def _handle_slssteam_download_error(self):
         logger.error("SLSsteam download failed")
-        QMessageBox.critical(
+        ThemedMessageBox.critical(
             self.main_window,
             "Error",
             "Failed to download SLSsteam. Check internet connection.",

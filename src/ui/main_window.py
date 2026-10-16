@@ -18,13 +18,13 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QLabel,
     QMainWindow,
-    QMessageBox,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
     QHBoxLayout,
     QPushButton,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from managers.app_update_manager import AppUpdateManager
 from managers.game_manager import GameManager
@@ -473,10 +473,11 @@ class MainWindow(QMainWindow):
     def on_minigame_completed(self, score: int) -> None:
         """Handle minigame completion."""
         logger.info(f"Lain minigame completed with score: {score}")
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("The Wired")
-        msg_box.setText(f"Connection Terminated\n\nFinal Score: {score}")
-        msg_box.exec()
+        ThemedMessageBox.information(
+            self,
+            "The Wired",
+            f"Connection Terminated\n\nFinal Score: {score}",
+        )
 
     @staticmethod
     def _setup_windows_taskbar() -> None:
@@ -1765,7 +1766,7 @@ class MainWindow(QMainWindow):
         # Guard: don't start Update All while an update check is still running
         gm = self.game_manager
         if gm and (getattr(gm, "manifest_check_task", None) is not None or getattr(gm, "manifest_check_runner", None) is not None):
-            QMessageBox.information(self, "Update Check Running", "Please wait for the update check to finish before queuing updates.")
+            ThemedMessageBox.information(self, "Update Check Running", "Please wait for the update check to finish before queuing updates.")
             return
         self._update_all_running = True
 
@@ -1789,7 +1790,7 @@ class MainWindow(QMainWindow):
 
         if not updateable_games:
             self._update_all_running = False
-            QMessageBox.information(
+            ThemedMessageBox.information(
                 self,
                 "No Updates Available",
                 "All games in your library are up to date!",
@@ -2100,14 +2101,14 @@ class MainWindow(QMainWindow):
     def _show_update_all_skip_notice(self, names_text: str, all_skipped: bool) -> None:
         """Show a non-blocking notice when some games were skipped in Update All."""
         if all_skipped:
-            QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self,
                 "Update All — Manual Action Required",
                 f"All pending updates were skipped because they require manual depot selection.\n\n"
                 f"Please update these games individually:\n{names_text}",
             )
         else:
-            QMessageBox.information(
+            ThemedMessageBox.information(
                 self,
                 "Update All — Some Games Skipped",
                 f"Updates were queued, but the following game(s) need manual depot selection:\n\n"
@@ -2182,7 +2183,7 @@ class MainWindow(QMainWindow):
                 logger.info(f"Packaged {len(files_to_zip)} loose files into temporary zip: {temp_path}")
             except Exception as e:
                 logger.error(f"Failed to create temporary zip for dropped files: {e}")
-                QMessageBox.critical(self, "Error", f"Failed to package dropped files: {e}")
+                ThemedMessageBox.critical(self, "Error", f"Failed to package dropped files: {e}")
 
         if not zips_to_queue:
             return
@@ -2494,7 +2495,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_update_success(self) -> None:
-        QMessageBox.information(
+        ThemedMessageBox.information(
             self,
             "Update Installed",
             "The update has been downloaded and installed successfully.\n\n"
@@ -2503,7 +2504,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_update_failed(self, error_msg: str) -> None:
-        QMessageBox.warning(
+        ThemedMessageBox.warning(
             self,
             "Update Failed",
             f"Failed to download or apply the update.\n\nError: {error_msg}"

@@ -31,9 +31,9 @@ from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
     QVBoxLayout,
-    QMessageBox,
     QWidget,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.image_fetcher import ImageFetcher
 from utils.settings import get_settings
@@ -409,7 +409,7 @@ class DepotSelectionDialog(
         # 1. Validate depot selection
         selected_depots = self.get_selected_depots()
         if not selected_depots:
-            QMessageBox.warning(self, "No Depots Selected", "Please select at least one depot to proceed.")
+            ThemedMessageBox.warning(self, "No Depots Selected", "Please select at least one depot to proceed.")
             return
 
         # 1b. Missing executable pre-flight guard
@@ -422,7 +422,7 @@ class DepotSelectionDialog(
         # 2. Validate storage selection if enabled
         if self.show_storage and hasattr(self, "_storage_paths") and self._storage_paths:
             if not self.selected_storage_path:
-                QMessageBox.warning(self, "No Storage Selected", "Please select a storage location before proceeding.")
+                ThemedMessageBox.warning(self, "No Storage Selected", "Please select a storage location before proceeding.")
                 return
 
         # 3. Promote header image to permanent cache since user is downloading

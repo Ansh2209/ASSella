@@ -14,9 +14,9 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QLineEdit,
-    QMessageBox,
     QFrame,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from core.lua_tools_api import LuaToolsAPI
 
@@ -262,7 +262,7 @@ def create_luatools_tab(dialog) -> QWidget:
     def start_browser_login():
         ok, auth_url = LuaToolsAPI.start_pkce_login()
         if not ok:
-            QMessageBox.critical(dialog, "Login Error", auth_url)
+            ThemedMessageBox.critical(dialog, "Login Error", auth_url)
             return
 
         dialog.luatools_browser_btn.setEnabled(False)
@@ -284,13 +284,13 @@ def create_luatools_tab(dialog) -> QWidget:
         if status == "success":
             stop_pkce_polling()
             update_ui_status()
-            QMessageBox.information(dialog, "Success", "Successfully connected to lua.tools!")
+            ThemedMessageBox.information(dialog, "Success", "Successfully connected to lua.tools!")
         elif status == "error":
             stop_pkce_polling()
-            QMessageBox.warning(dialog, "Login Failed", res.get("error", "Unknown error during authorization."))
+            ThemedMessageBox.warning(dialog, "Login Failed", res.get("error", "Unknown error during authorization."))
         elif status == "timeout":
             stop_pkce_polling()
-            QMessageBox.warning(dialog, "Login Timeout", "Authorization timed out. Please try again.")
+            ThemedMessageBox.warning(dialog, "Login Timeout", "Authorization timed out. Please try again.")
 
     def stop_pkce_polling():
         dialog.luatools_poll_timer.stop()
@@ -302,7 +302,7 @@ def create_luatools_tab(dialog) -> QWidget:
     def redeem_code():
         code = dialog.luatools_code_input.text().strip().upper()
         if len(code) != 6:
-            QMessageBox.warning(dialog, "Code Required", "Please enter a valid 6-character login code.")
+            ThemedMessageBox.warning(dialog, "Code Required", "Please enter a valid 6-character login code.")
             return
 
         dialog.luatools_redeem_btn.setEnabled(False)
@@ -312,22 +312,22 @@ def create_luatools_tab(dialog) -> QWidget:
             if ok:
                 dialog.luatools_code_input.clear()
                 update_ui_status()
-                QMessageBox.information(dialog, "Connected", msg)
+                ThemedMessageBox.information(dialog, "Connected", msg)
             else:
-                QMessageBox.warning(dialog, "Connection Failed", msg)
+                ThemedMessageBox.warning(dialog, "Connection Failed", msg)
         finally:
             dialog.luatools_redeem_btn.setEnabled(True)
             dialog.luatools_redeem_btn.setText("Connect Code")
 
     def disconnect_account():
-        reply = QMessageBox.question(
+        reply = ThemedMessageBox.question(
             dialog,
             "Disconnect",
             "Are you sure you want to log out from lua.tools?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.No,
         )
-        if reply == QMessageBox.StandardButton.Yes:
+        if reply == ThemedMessageBox.StandardButton.Yes:
             LuaToolsAPI.clear_session()
             update_ui_status()
 

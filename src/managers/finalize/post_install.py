@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from PyQt6.QtCore import QTimer, QMetaObject, Qt, pyqtSlot, pyqtSignal
-from PyQt6.QtWidgets import QFileDialog, QMessageBox
+from PyQt6.QtWidgets import QFileDialog
 
 from core import steam_helpers
 from utils.activity import COMPONENT, CONFIG, log_step

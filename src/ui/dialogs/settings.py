@@ -12,12 +12,12 @@ from PyQt6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
-    QMessageBox,
     QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.dialog_helpers import create_standard_buttons
 from ui.dialogs.settings_sls import create_sls_tab
@@ -738,7 +738,7 @@ class SettingsDialog(QDialog):
         except Exception as e:
             import traceback
             logger.error(f"Error saving settings: {e}\n{traceback.format_exc()}")
-            QMessageBox.critical(
+            ThemedMessageBox.critical(
                 self,
                 "Error Saving Settings",
                 f"An error occurred while saving settings:\n{e}\n\nSee log file for details."

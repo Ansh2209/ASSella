@@ -15,10 +15,10 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QFrame,
-    QMessageBox,
     QApplication,
     QSizePolicy,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from core.lua_tools_api import LuaToolsAPI
 from managers.fix_manager import FixManager
@@ -289,21 +289,21 @@ def init_luafix_tab(dialog) -> None:
 
     def on_apply_fix_clicked(fix, game_path):
         if not game_path or not Path(game_path).is_dir():
-            QMessageBox.critical(dialog, "Error", f"Game directory not found at:\n{game_path}")
+            ThemedMessageBox.critical(dialog, "Error", f"Game directory not found at:\n{game_path}")
             return
 
         # Check authentication
         auth_status = LuaToolsAPI.get_auth_status()
         if not auth_status.get("authenticated"):
-            reply = QMessageBox.question(
+            reply = ThemedMessageBox.question(
                 dialog,
                 "Authentication Required",
                 "Downloading fixes from lua.tools requires connecting your free account.\n\n"
                 "Would you like to open Settings to sign in now?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
+                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.Yes,
             )
-            if reply == QMessageBox.StandardButton.Yes:
+            if reply == ThemedMessageBox.StandardButton.Yes:
                 if hasattr(dialog, "main_window") and dialog.main_window:
                     dialog.main_window.open_settings(initial_tab="LuaTools")
                 else:
@@ -315,16 +315,16 @@ def init_luafix_tab(dialog) -> None:
         fix_title = fix.get("title") or "Fix"
         fix_filename = fix.get("fixFilename") or "fix.zip"
 
-        confirm = QMessageBox.question(
+        confirm = ThemedMessageBox.question(
             dialog,
             "Apply Fix",
             f"Are you sure you want to apply '{fix_title}' to {dialog.game_data.get('game_name', 'this game')}?\n\n"
             f"Archive: {fix_filename}\n"
             "Existing game files will be backed up automatically for safe 1-click removal.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes,
         )
-        if confirm != QMessageBox.StandardButton.Yes:
+        if confirm != ThemedMessageBox.StandardButton.Yes:
             return
 
         # Download & apply with progress
@@ -332,7 +332,7 @@ def init_luafix_tab(dialog) -> None:
         try:
             zip_path, err = LuaToolsAPI.download_fix_zip(fix_id, dialog.appid)
             if not zip_path:
-                QMessageBox.critical(dialog, "Download Failed", f"Could not download fix:\n{err}")
+                ThemedMessageBox.critical(dialog, "Download Failed", f"Could not download fix:\n{err}")
                 return
 
             ok, msg = FixManager.apply_fix(
@@ -343,33 +343,33 @@ def init_luafix_tab(dialog) -> None:
                 zip_path=zip_path,
             )
             if ok:
-                QMessageBox.information(dialog, "Success", msg)
+                ThemedMessageBox.information(dialog, "Success", msg)
                 load_fixes()
             else:
-                QMessageBox.critical(dialog, "Application Failed", msg)
+                ThemedMessageBox.critical(dialog, "Application Failed", msg)
         finally:
             QApplication.restoreOverrideCursor()
 
     def on_remove_fix_clicked(game_path):
-        confirm = QMessageBox.question(
+        confirm = ThemedMessageBox.question(
             dialog,
             "Remove Fix",
             "Are you sure you want to remove this fix?\n\n"
             "All original game files will be restored from backup.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.No,
         )
-        if confirm != QMessageBox.StandardButton.Yes:
+        if confirm != ThemedMessageBox.StandardButton.Yes:
             return
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             ok, msg = FixManager.remove_fix(game_path)
             if ok:
-                QMessageBox.information(dialog, "Fix Removed", msg)
+                ThemedMessageBox.information(dialog, "Fix Removed", msg)
                 load_fixes()
             else:
-                QMessageBox.critical(dialog, "Removal Failed", msg)
+                ThemedMessageBox.critical(dialog, "Removal Failed", msg)
         finally:
             QApplication.restoreOverrideCursor()
 

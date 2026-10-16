@@ -14,10 +14,10 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QPushButton,
     QSlider,
-    QMessageBox,
     QSizePolicy,
     QScrollArea,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.helpers import create_checkbox_setting
 
@@ -510,25 +510,25 @@ def uninstall_assela(dialog) -> None:
     desktop_entry = os.path.expanduser("~/.local/share/applications/accela.desktop")
     has_backup = os.path.isfile(backup_path)
 
-    reply = QMessageBox.question(
+    reply = ThemedMessageBox.question(
         dialog,
         "Uninstall ASSella",
         "This will remove ASSella and revert the desktop shortcut to ACCELA.\n\nAre you sure?",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
     )
-    if reply != QMessageBox.StandardButton.Yes:
+    if reply != ThemedMessageBox.StandardButton.Yes:
         return
 
     restore = False
     if has_backup:
-        restore_reply = QMessageBox.question(
+        restore_reply = ThemedMessageBox.question(
             dialog,
             "Restore Original ACCELA?",
             "A backup of the original ACCELA (ACCELA.AppImage.bak) was found.\n\n"
             "Would you like to restore it after uninstalling ASSella?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
         )
-        restore = restore_reply == QMessageBox.StandardButton.Yes
+        restore = restore_reply == ThemedMessageBox.StandardButton.Yes
 
     errors = []
 
@@ -576,9 +576,9 @@ def uninstall_assela(dialog) -> None:
             errors.append(f"Could not update desktop entry: {e}")
 
     if errors:
-        QMessageBox.warning(dialog, "Uninstall — Partial", "\n".join(errors))
+        ThemedMessageBox.warning(dialog, "Uninstall — Partial", "\n".join(errors))
     else:
         msg = "ASSella has been uninstalled."
         if restore:
             msg += "\nOriginal ACCELA has been restored."
-        QMessageBox.information(dialog, "Done", msg)
+        ThemedMessageBox.information(dialog, "Done", msg)

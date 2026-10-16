@@ -29,7 +29,6 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QProgressDialog,
     QPushButton,
     QSizePolicy,
@@ -38,6 +37,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.image_fetcher import ImageFetcher
 from utils.settings import get_settings
@@ -1535,7 +1535,7 @@ class ModernDepotSelectionDialog(QDialog):
                list(manifests_dir.glob(f"accela_fetch_{app_id}_*.zip"))
 
         if not zips:
-            QMessageBox.critical(self, "Error", f"No manifest zip file found for AppID {app_id} in {manifests_dir}.")
+            ThemedMessageBox.critical(self, "Error", f"No manifest zip file found for AppID {app_id} in {manifests_dir}.")
             return
         zips.sort(key=lambda x: x.stat().st_mtime, reverse=True)
         zip_path = str(zips[0])
@@ -1548,7 +1548,7 @@ class ModernDepotSelectionDialog(QDialog):
             from utils.steam_manifest import safe_extract_zip
             safe_extract_zip(zip_path, temp_dir)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to extract manifest zip: {e}")
+            ThemedMessageBox.critical(self, "Error", f"Failed to extract manifest zip: {e}")
             return
 
         depot_key = None
@@ -1573,7 +1573,7 @@ class ModernDepotSelectionDialog(QDialog):
                 pass
 
         if not depot_key:
-            QMessageBox.critical(self, "Error", f"Could not find depot key for depot {target_depot}.")
+            ThemedMessageBox.critical(self, "Error", f"Could not find depot key for depot {target_depot}.")
             return
 
         keys_path = os.path.join(temp_dir, "depot.keys")
@@ -1581,12 +1581,12 @@ class ModernDepotSelectionDialog(QDialog):
             with open(keys_path, "w") as kf:
                 kf.write(f"{target_depot};{depot_key}\n")
         except OSError as e:
-            QMessageBox.critical(self, "Error", f"Failed to write keys file: {e}")
+            ThemedMessageBox.critical(self, "Error", f"Failed to write keys file: {e}")
             return
 
         manifest_files = list(Path(temp_dir).glob(f"{target_depot}_*.manifest")) or list(Path(temp_dir).glob("*.manifest"))
         if not manifest_files:
-            QMessageBox.critical(self, "Error", f"No manifest file found for depot {target_depot}.")
+            ThemedMessageBox.critical(self, "Error", f"No manifest file found for depot {target_depot}.")
             return
 
         manifest_path = manifest_files[0]
@@ -1629,12 +1629,12 @@ class ModernDepotSelectionDialog(QDialog):
         def _on_finished(success: bool, err: str):
             progress_dialog.close()
             if not success:
-                QMessageBox.critical(self, "Error", f"Failed to load file list: {err}")
+                ThemedMessageBox.critical(self, "Error", f"Failed to load file list: {err}")
                 return
 
             txt_path = os.path.join(temp_dir, f"manifest_{target_depot}_{manifest_id}.txt")
             if not os.path.exists(txt_path):
-                QMessageBox.critical(self, "Error", "Failed to locate generated file list.")
+                ThemedMessageBox.critical(self, "Error", "Failed to locate generated file list.")
                 return
 
             from ui.dialogs.fileselection import FileSelectionDialog
@@ -1649,7 +1649,7 @@ class ModernDepotSelectionDialog(QDialog):
             )
             if sel_dlg.exec():
                 self.selected_files = sel_dlg.selected_files
-                QMessageBox.information(
+                ThemedMessageBox.information(
                     self,
                     "Selection Confirmed",
                     f"Selected {len(self.selected_files)} file(s) for depot {target_depot}.\nPress OK at the bottom to download.",

@@ -17,10 +17,10 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QHeaderView,
     QApplication,
-    QMessageBox,
     QFileDialog,
     QProgressDialog,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 logger = logging.getLogger(__name__)
 
@@ -498,7 +498,7 @@ class FileSelectionDialog(QDialog):
     def _on_confirm(self):
         selected = self._collect_selected_files()
         if not selected:
-            QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self, "Warning", "Please select at least one file to download."
             )
             return
@@ -508,18 +508,18 @@ class FileSelectionDialog(QDialog):
     def _on_direct_download_clicked(self):
         selected = self._collect_selected_files()
         if not selected:
-            QMessageBox.warning(self, "No Files Selected", "Please select at least one file to download.")
+            ThemedMessageBox.warning(self, "No Files Selected", "Please select at least one file to download.")
             return
 
         dest_folder = self.dest_edit.text().strip()
         if not dest_folder:
-            QMessageBox.warning(self, "No Destination", "Please choose a destination folder.")
+            ThemedMessageBox.warning(self, "No Destination", "Please choose a destination folder.")
             return
 
         try:
             os.makedirs(dest_folder, exist_ok=True)
         except OSError as e:
-            QMessageBox.critical(self, "Error", f"Failed to create destination folder:\n{e}")
+            ThemedMessageBox.critical(self, "Error", f"Failed to create destination folder:\n{e}")
             return
 
         # Resolve manifest and keys if not passed explicitly
@@ -543,10 +543,10 @@ class FileSelectionDialog(QDialog):
                 keys_path = cand_keys
 
         if not manifest_file or not os.path.exists(manifest_file):
-            QMessageBox.critical(self, "Error", f"Could not find depot manifest file in {temp_dir}.")
+            ThemedMessageBox.critical(self, "Error", f"Could not find depot manifest file in {temp_dir}.")
             return
         if not keys_path or not os.path.exists(keys_path):
-            QMessageBox.critical(self, "Error", f"Could not find depot decryption keys file in {temp_dir}.")
+            ThemedMessageBox.critical(self, "Error", f"Could not find depot decryption keys file in {temp_dir}.")
             return
 
         # Write selective filelist
@@ -556,7 +556,7 @@ class FileSelectionDialog(QDialog):
                 for fp in selected:
                     fl.write(fp.replace("\\", "/") + "\n")
         except OSError as e:
-            QMessageBox.critical(self, "Error", f"Failed to write filelist: {e}")
+            ThemedMessageBox.critical(self, "Error", f"Failed to write filelist: {e}")
             return
 
         from utils.helpers import get_dotnet_path, resource_path
@@ -600,19 +600,20 @@ class FileSelectionDialog(QDialog):
                     pass
 
             if success:
-                box = QMessageBox(self)
-                box.setWindowTitle("Download Complete")
-                box.setText(f"Successfully downloaded {len(selected)} file(s) to:\n{dest_folder}")
-                open_btn = box.addButton("Open Folder", QMessageBox.ButtonRole.ActionRole)
-                box.addButton(QMessageBox.StandardButton.Ok)
-                box.exec()
-                if box.clickedButton() == open_btn:
+                action = ThemedMessageBox.choices(
+                    self,
+                    "Download Complete",
+                    f"Successfully downloaded {len(selected)} file(s) to:\n{dest_folder}",
+                    [("Open Folder", "open"), ("Close", "close")],
+                    default="open",
+                )
+                if action == "open":
                     QDesktopServices.openUrl(QUrl.fromLocalFile(dest_folder))
             else:
                 if "cancelled" in err.lower():
-                    QMessageBox.information(self, "Cancelled", "Direct download was cancelled.")
+                    ThemedMessageBox.information(self, "Cancelled", "Direct download was cancelled.")
                 else:
-                    QMessageBox.critical(self, "Download Error", f"Download failed:\n{err}")
+                    ThemedMessageBox.critical(self, "Download Error", f"Download failed:\n{err}")
 
         thread.progress_signal.connect(on_progress)
         thread.finished_signal.connect(on_finished)

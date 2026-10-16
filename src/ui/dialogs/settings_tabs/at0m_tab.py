@@ -15,10 +15,10 @@ from PyQt6.QtWidgets import (
     QLabel,
     QComboBox,
     QPushButton,
-    QMessageBox,
     QMenu,
     QFileDialog,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.helpers import create_checkbox_setting
 from utils.color_utils import get_semantic_colors
@@ -398,7 +398,7 @@ def create_at0m_tab(dialog) -> QWidget:
     def _on_custom_plugins_toggled(checked: bool):
         dialog.settings.setValue("custom_plugins_advanced", checked)
         if checked:
-            QMessageBox.warning(
+            ThemedMessageBox.warning(
                 dialog,
                 "Custom Plugins (Advanced)",
                 "Bypassing plugin presence verification enables native downloads and game transfers with custom or third-party Lua plugins.\n\n"
@@ -578,15 +578,15 @@ def create_at0m_tab(dialog) -> QWidget:
             button.setText(orig_text)
             _refresh_deploy_ui()
             if not ok:
-                QMessageBox.warning(dialog, t, f"Failed downloading/deploying {f}:\n{msg}")
+                ThemedMessageBox.warning(dialog, t, f"Failed downloading/deploying {f}:\n{msg}")
             elif skipped:
-                QMessageBox.information(
+                ThemedMessageBox.information(
                     dialog,
                     t,
                     f"{t} ({f}) is already active and up to date."
                 )
             else:
-                QMessageBox.information(
+                ThemedMessageBox.information(
                     dialog,
                     t,
                     f"Successfully activated {t} ({f})!\nAny alternative interceptor plugins were safely archived as .bak."
@@ -603,14 +603,14 @@ def create_at0m_tab(dialog) -> QWidget:
         _deploy_single("spacebunny1.5.lua", "SpaceBunny 1.5", dialog.btn_spacebunny_plugin)
 
     def _on_spliced_tickets_clicked():
-        reply = QMessageBox.warning(
+        reply = ThemedMessageBox.warning(
             dialog,
             "Legality Warning",
             "Bypassing DRM is illegal in many countries, make sure you are aware of this!",
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
+            ThemedMessageBox.StandardButton.Ok | ThemedMessageBox.StandardButton.Cancel,
+            ThemedMessageBox.StandardButton.Cancel,
         )
-        if reply != QMessageBox.StandardButton.Ok:
+        if reply != ThemedMessageBox.StandardButton.Ok:
             return
 
         try:

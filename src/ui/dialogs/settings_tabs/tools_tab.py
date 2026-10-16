@@ -16,8 +16,8 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QPushButton,
     QFileDialog,
-    QMessageBox,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from ui.dialogs.settings_tabs.components_card import (
     create_components_card,
@@ -221,7 +221,7 @@ def add_tool_button(layout: QVBoxLayout, text: str, tooltip: str, slot) -> QPush
 def run_schema_grabber_manually(dialog) -> None:
     helper_path = Paths.deps("schema-grabber/login_helper.py")
     if not helper_path.exists():
-        QMessageBox.critical(dialog, "Error", f"Achievements helper missing at: {helper_path}")
+        ThemedMessageBox.critical(dialog, "Error", f"Achievements helper missing at: {helper_path}")
         return
 
     cmd = []
@@ -264,16 +264,13 @@ def launch_terminal_command(cmd: list, cwd: str, needs_env: bool = False) -> Non
             except FileNotFoundError:
                 continue
 
-    msg_box = QMessageBox()
-    msg_box.setWindowTitle("Terminal Not Found")
-    msg_box.setText(
+    ThemedMessageBox.information(
+        None,
+        "Terminal Not Found",
         "Could not automatically launch a terminal.\n"
-        "Please open a terminal and run:\n"
+        "Please open a terminal and run:",
+        informative=" ".join(cmd_str),
     )
-    msg_box.setInformativeText(" ".join(cmd_str))
-    msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
-    msg_box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-    msg_box.exec()
 
 
 def run_steamless_manually(dialog) -> None:
@@ -332,7 +329,7 @@ def manage_registry(filename: str, success_msg: str) -> None:
     reg_path = os.path.join(base, filename)
 
     if not os.path.exists(reg_path):
-        QMessageBox.critical(None, "Error", f"Missing {filename}")
+        ThemedMessageBox.critical(None, "Error", f"Missing {filename}")
         return
 
     try:
@@ -346,9 +343,9 @@ def manage_registry(filename: str, success_msg: str) -> None:
 
         subprocess.run(["regedit", "/s", str(tmp_name)], check=True, shell=True)
         os.unlink(tmp_name)
-        QMessageBox.information(None, "Success", success_msg)
+        ThemedMessageBox.information(None, "Success", success_msg)
     except (IOError, OSError, subprocess.SubprocessError) as e:
-        QMessageBox.critical(None, "Error", f"Registry error: {e}")
+        ThemedMessageBox.critical(None, "Error", f"Registry error: {e}")
 
 
 def update_achievements_button_state(dialog) -> None:
@@ -365,7 +362,7 @@ def update_asshead_status_ui(dialog) -> None:
 def open_sls_config(dialog) -> None:
     from utils.assfixer import DEFAULT_CONFIG_PATH
     if not DEFAULT_CONFIG_PATH.exists():
-        QMessageBox.warning(dialog, "Open Config", "SLSsteam config.yaml does not exist.")
+        ThemedMessageBox.warning(dialog, "Open Config", "SLSsteam config.yaml does not exist.")
         return
 
     try:
@@ -373,19 +370,19 @@ def open_sls_config(dialog) -> None:
         if not opened:
             webbrowser.open(DEFAULT_CONFIG_PATH.as_uri())
     except Exception as e:
-        QMessageBox.critical(dialog, "Error", f"Failed to open config.yaml:\n{e}")
+        ThemedMessageBox.critical(dialog, "Error", f"Failed to open config.yaml:\n{e}")
 
 
 def restore_sls_backup(dialog) -> None:
     from utils.assfixer import restore_latest_backup, DEFAULT_CONFIG_PATH
 
-    reply = QMessageBox.question(
+    reply = ThemedMessageBox.question(
         dialog, "Restore Backup",
         "Are you sure you want to restore the latest backup? This will overwrite your current config.yaml.",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        QMessageBox.StandardButton.No
+        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+        ThemedMessageBox.StandardButton.No
     )
-    if reply != QMessageBox.StandardButton.Yes:
+    if reply != ThemedMessageBox.StandardButton.Yes:
         return
 
     success, msg, bak_path = restore_latest_backup(DEFAULT_CONFIG_PATH)
@@ -400,9 +397,9 @@ def restore_sls_backup(dialog) -> None:
                 QMetaObject.invokeMethod(dialog.main_window, "refresh_system_status", Qt.ConnectionType.QueuedConnection)
 
         threading.Thread(target=run_check, daemon=True).start()
-        QMessageBox.information(dialog, "Restore Backup", msg)
+        ThemedMessageBox.information(dialog, "Restore Backup", msg)
     else:
-        QMessageBox.critical(dialog, "Restore Backup Error", msg)
+        ThemedMessageBox.critical(dialog, "Restore Backup Error", msg)
 
 
 def run_asshead_fixer(dialog) -> None:
@@ -427,12 +424,12 @@ def run_asshead_fixer(dialog) -> None:
         detail_msg = msg
         if bak_path:
             detail_msg += f"\n\nA backup of your previous config has been saved to:\n{bak_path}"
-        QMessageBox.information(dialog, "ASShead Config Fixer", detail_msg)
+        ThemedMessageBox.information(dialog, "ASShead Config Fixer", detail_msg)
     else:
         update_asshead_status_ui(dialog)
         if dialog.main_window and hasattr(dialog.main_window, "refresh_system_status"):
             dialog.main_window.refresh_system_status()
-        QMessageBox.critical(dialog, "ASShead Config Fixer Error", f"Failed to fix configuration:\n{msg}")
+        ThemedMessageBox.critical(dialog, "ASShead Config Fixer Error", f"Failed to fix configuration:\n{msg}")
 
 
 def run_denuvo_sync(dialog) -> None:
@@ -462,7 +459,7 @@ def on_denuvo_sync_finished(dialog) -> None:
         count = res.get("count", 0)
         if dialog.main_window and hasattr(dialog.main_window, "refresh_system_status"):
             dialog.main_window.refresh_system_status()
-        QMessageBox.information(
+        ThemedMessageBox.information(
             dialog,
             "Denuvo Sync",
             f"Successfully synced Denuvo games to your SLSsteam configuration.\nBlocked games count: {count}"
@@ -470,7 +467,7 @@ def on_denuvo_sync_finished(dialog) -> None:
     else:
         if dialog.main_window and hasattr(dialog.main_window, "refresh_system_status"):
             dialog.main_window.refresh_system_status()
-        QMessageBox.critical(
+        ThemedMessageBox.critical(
             dialog,
             "Denuvo Sync Error",
             f"Denuvo Sync failed:\n{res.get('error')}"
