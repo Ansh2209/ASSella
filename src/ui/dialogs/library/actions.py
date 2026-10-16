@@ -76,6 +76,17 @@ class DepotSelection(NamedTuple):
 class LibraryActionsMixin:
     """Mixin combining Multi-Selection FAB, Batch Actions, and Game Operations."""
 
+    def _dialog_parent(self):
+        """The window a dialog raised by a library action should sit on.
+
+        When the game-details window is open the action was started from it, so
+        a dialog centred on the library window behind it can end up out of
+        sight. The details window is a *preference*, never a requirement -
+        library actions have to keep working with it closed - so this falls
+        back to the library window itself.
+        """
+        return self._details_dialog or self
+
     # ─────────────────────────────────────────────────────────────────────────
     # 1. Floating Action Button (FAB) & Selection Management
     # ─────────────────────────────────────────────────────────────────────────
@@ -800,7 +811,7 @@ class LibraryActionsMixin:
             self._uninstall_progress_dialog.close()
             self._uninstall_progress_dialog = None
 
-        parent = self._details_dialog if self._details_dialog else self
+        parent = self._dialog_parent()
         if success:
             ThemedMessageBox.information(parent, "Success", "Operation completed.")
             if self._details_dialog:
@@ -1230,7 +1241,7 @@ class LibraryActionsMixin:
                     parsed_data.get("game_name", ""),
                     depots,
                     parsed_data.get("header_url"),
-                    self,
+                    self._dialog_parent(),
                     selected_depots=selected_depots,
                     is_single_depot=(len(depots) == 1),
                     missing_hubcap_depots=parsed_data.get("missing_depots_from_hubcap"),
@@ -1371,7 +1382,7 @@ class LibraryActionsMixin:
                         )
                         accent = getattr(self, "accent_color", "#4c8df5")
                         prompt = RecommendedBuildPromptDialog(
-                            parent=self,
+                            parent=self._dialog_parent(),
                             app_id=str(app_id),
                             game_name=name,
                             recommended_build_id=rec_bid,
@@ -1390,7 +1401,7 @@ class LibraryActionsMixin:
                         elif action == ACTION_BROWSE:
                             from ui.dialogs.build_selection_dialog import BuildSelectionDialog
                             dlg = BuildSelectionDialog(
-                                parent=self,
+                                parent=self._dialog_parent(),
                                 app_id=str(app_id),
                                 game_name=name,
                                 current_build_id=current_bid,
