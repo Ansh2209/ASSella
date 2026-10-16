@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_dialog import install_themed_frame
 
 from utils.color_utils import get_dark_container_color
 from core.steamdb_scraper import SteamDBScraper
@@ -95,12 +96,6 @@ class ManualRollbackDialog(QDialog):
 
     def _init_ui(self):
         self.setStyleSheet(f"""
-            QDialog {{
-                background-color: #16171b;
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 12px;
-            }}
             QLabel {{
                 color: #E2E2E6;
                 background: transparent;
@@ -141,9 +136,7 @@ class ManualRollbackDialog(QDialog):
             }}
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(14)
+        layout = install_themed_frame(self, margins=(24, 20, 24, 20), spacing=14)
 
         # Title
         title_lbl = QLabel("Manual Version Rollback")
@@ -312,12 +305,6 @@ class SteamDBHistoryDialog(QDialog):
 
     def _init_ui(self):
         self.setStyleSheet(f"""
-            QDialog {{
-                background-color: #141518;
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 12px;
-            }}
             QLabel {{
                 color: #E2E2E6;
                 background: transparent;
@@ -365,9 +352,7 @@ class SteamDBHistoryDialog(QDialog):
             }}
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setSpacing(8)
+        layout = install_themed_frame(self, margins=(18, 14, 18, 14), spacing=8)
 
         # Header
         top_row = QHBoxLayout()

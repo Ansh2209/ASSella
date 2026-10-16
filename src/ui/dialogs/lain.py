@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_dialog import install_themed_frame
 
 from components.custom_widgets import ScaledButton, ScaledFontLabel
 
@@ -192,7 +193,7 @@ class LainMinigameDialog(QDialog):
 
     def _setup_ui(self) -> None:
         """Orchestrate the creation of the user interface."""
-        self.layout = QVBoxLayout(self)
+        self.layout = install_themed_frame(self, margins=(12, 10, 12, 12), spacing=8)
         self._create_header()
         self._create_stats_display()
         self._create_terminal_display()

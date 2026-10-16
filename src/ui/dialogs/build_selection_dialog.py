@@ -29,6 +29,7 @@ from ui.material_progress import MaterialSpinner
 from utils.color_utils import get_dark_container_color, get_best_foreground_color
 from utils.settings import get_settings
 from utils.qt_utils import clear_layout
+from ui.dialogs.themed_dialog import install_themed_frame
 
 logger = logging.getLogger("ACCELA.build_selection")
 
@@ -92,14 +93,6 @@ class BuildSelectionDialog(QDialog):
         self.setWindowTitle(f"Build History — {self.game_name}")
         self.setMinimumSize(460, 380)
         self.resize(480, 400)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #12131a;
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 10px;
-            }
-        """)
 
         self.builds_loaded.connect(self._on_builds_loaded)
         self.builds_error.connect(self._on_builds_error)
@@ -109,9 +102,7 @@ class BuildSelectionDialog(QDialog):
         self._load_builds()
 
     def _build_ui(self):
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(16, 16, 16, 16)
-        main_layout.setSpacing(12)
+        main_layout = install_themed_frame(self, margins=(16, 16, 16, 16), spacing=12)
 
         # --- Header ---
         header_layout = QVBoxLayout()

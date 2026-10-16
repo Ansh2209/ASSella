@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 from ui.dialogs.themed_file_dialog import ThemedFileDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
 from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+from ui.dialogs.themed_dialog import install_themed_frame
 
 logger = logging.getLogger(__name__)
 
@@ -109,10 +110,6 @@ class FileSelectionDialog(QDialog):
 
         self.setStyleSheet(
             f"""
-            QDialog {{
-                background-color: {self.background_color};
-                color: #FFFFFF;
-            }}
             QLabel {{
                 color: #FFFFFF;
                 font-size: 9.5pt;
@@ -175,9 +172,7 @@ class FileSelectionDialog(QDialog):
             """
         )
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout = install_themed_frame(self, margins=(12, 12, 12, 12), spacing=10)
 
         # Header info
         info_label = QLabel(

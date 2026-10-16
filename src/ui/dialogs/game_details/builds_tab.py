@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_dialog import install_themed_frame
 
 from PyQt6 import sip
 from ui.material_progress import MaterialSpinner
@@ -668,10 +669,6 @@ class BuildDepotsSelectionDialog(QDialog):
         self.checkboxes: Dict[str, tuple] = {}
 
         self.setStyleSheet(f"""
-            QDialog {{
-                background-color: #1a1b26;
-                color: #FFFFFF;
-            }}
             QCheckBox {{
                 color: #FFFFFF;
                 font-size: 9pt;
@@ -690,9 +687,7 @@ class BuildDepotsSelectionDialog(QDialog):
             }}
         """)
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(18, 18, 18, 18)
+        layout = install_themed_frame(self, margins=(18, 18, 18, 18), spacing=12)
 
         # Header
         title = QLabel(f"<b>Build {build_id} Depots</b>")

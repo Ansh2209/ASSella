@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QFrame,
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_dialog import install_themed_frame
 
 from core.steam_helpers import get_steam_libraries, find_steam_install
 from utils.paths import is_valid_download_directory
@@ -94,17 +95,9 @@ class MoveStorageDialog(QDialog):
         self.worker: Optional[StorageMoveWorker] = None
 
         self.setWindowTitle(f"Move Game Storage - {self.game_name}")
-        self.setFixedSize(500, 360)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #12131a;
-                color: #FFFFFF;
-            }
-        """)
+        self.setFixedWidth(500)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(14)
+        layout = install_themed_frame(self, margins=(20, 20, 20, 20), spacing=14)
 
         title = QLabel(f"Move <b>{self.game_name}</b> to another drive")
         title.setStyleSheet("font-size: 11pt; font-weight: bold; color: #FFFFFF;")
@@ -249,6 +242,9 @@ class MoveStorageDialog(QDialog):
         btn_layout.addWidget(self.move_btn)
 
         layout.addLayout(btn_layout)
+
+        # The title bar and frame add height; size to the finished layout.
+        self.adjustSize()
 
     def _start_move(self):
         checked_id = self.btn_group.checkedId()

@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QFrame,
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_dialog import install_themed_frame
 
 from utils.color_utils import get_best_foreground_color
 from utils.paths import Paths
@@ -74,21 +75,11 @@ class ManualManifestDialog(QDialog):
 
         self.setWindowTitle("Manual Manifest Override")
         self.setFixedWidth(460)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #12131a;
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 10px;
-            }
-        """)
 
         self._build_ui()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(12)
+        layout = install_themed_frame(self, margins=(18, 16, 18, 16), spacing=12)
 
         # Title & Subtitle with SteamDB Patchnotes Button
         header_layout = QVBoxLayout()

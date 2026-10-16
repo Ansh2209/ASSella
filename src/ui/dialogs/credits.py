@@ -20,6 +20,7 @@ from PyQt6.QtGui import QFont
 
 from utils.settings import get_settings
 from utils.version import app_version
+from ui.dialogs.themed_dialog import install_themed_frame
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,6 @@ class CreditsDialog(QDialog):
 
         self.setStyleSheet(
             f"""
-            QDialog {{
-                background-color: #151515;
-            }}
             QLabel {{
                 color: #e0e0e0;
                 background: transparent;
@@ -100,9 +98,7 @@ class CreditsDialog(QDialog):
             """
         )
 
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(20, 20, 20, 16)
-        main_layout.setSpacing(0)
+        main_layout = install_themed_frame(self, margins=(20, 20, 20, 16), spacing=0)
 
         # ── Header ──────────────────────────────────────────────────────────
         main_layout.addWidget(self._build_header())
