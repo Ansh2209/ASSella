@@ -167,9 +167,10 @@ class BuildUIMixin:
         self.table_widget.setColumnCount(3)
         self.table_widget.setHorizontalHeaderLabels(["Select", "Configuration", "Size"])
         self.table_widget.setIconSize(QSize(76, 16))
-        self.table_widget.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.table_widget.horizontalHeader().setSectionsClickable(True)
-        self.table_widget.horizontalHeader().sectionClicked.connect(self._on_header_section_clicked)
+        # The default header installed here is replaced below by DepotHeaderView
+        # (which sets its own alignment, clickability and select-all handler),
+        # so nothing may be configured on it - a second connection here was dead
+        # code that made it look like select-all was wired twice.
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)

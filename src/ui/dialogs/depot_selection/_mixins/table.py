@@ -528,15 +528,9 @@ class DepotTableMixin:
 
     def _on_header_section_clicked(self, logical_index: int):
         if logical_index == 0:
-            total = 0
-            checked = 0
-            for r in range(self.table_widget.rowCount()):
-                item = self.table_widget.item(r, 0)
-                if item and item.data(Qt.ItemDataRole.UserRole + 2) != "expander":
-                    total += 1
-                    if item.checkState() == Qt.CheckState.Checked:
-                        checked += 1
-            if checked == total and total > 0:
-                self._toggle_all_checkboxes(check=False)
-            else:
-                self._toggle_all_checkboxes(check=True)
+            rows = list(self._selectable_rows())
+            checked = sum(
+                1 for _r, item in rows if item.checkState() == Qt.CheckState.Checked
+            )
+            all_chosen = bool(rows) and checked == len(rows)
+            self._toggle_all_checkboxes(check=not all_chosen)

@@ -141,20 +141,30 @@ class SelectionMixin:
 
         self._update_table_headers()
 
+    def _selectable_rows(self):
+        """The rows select-all may tick: real, visible depots as ``(row, item)``.
+
+        The question "can this row carry a tick?" is the policy module's, so the
+        header handler's tally and the ticking here always agree.
+        """
+        for i in range(self.table_widget.rowCount()):
+            id_item = self.table_widget.item(i, 0)
+            if id_item is None:
+                continue
+            if not selection_policy.counts_toward_select_all(
+                id_item.data(Qt.ItemDataRole.UserRole + 2),
+                self.table_widget.isRowHidden(i),
+            ):
+                continue
+            yield i, id_item
+
     def _toggle_all_checkboxes(self, check=True):
         self._user_interacted = True
         self._has_saved_selection = True
         state = Qt.CheckState.Checked if check else Qt.CheckState.Unchecked
         self.table_widget.blockSignals(True)
-        for i in range(self.table_widget.rowCount()):
-            id_item = self.table_widget.item(i, 0)
-            if id_item is not None:
-                role = id_item.data(Qt.ItemDataRole.UserRole + 2)
-                if role in ("missing", "expander"):
-                    continue
-                if self.table_widget.isRowHidden(i):
-                    continue
-                id_item.setCheckState(state)
+        for _i, id_item in self._selectable_rows():
+            id_item.setCheckState(state)
         self.table_widget.blockSignals(False)
 
         self.anchor_row = -1

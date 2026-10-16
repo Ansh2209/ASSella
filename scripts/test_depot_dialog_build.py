@@ -288,6 +288,36 @@ def main() -> int:
     offered = dlg5._first_checked_depot_id()
     check(offered != "1004",
           f"a ticked missing depot is not offered to Browse Files ({offered!r})")
+
+    # ------------------------------------------- the select-all click toggles
+    print("\n=== the select-all header click toggles both ways ===")
+    # Regression: the handler counted every non-expander row as selectable while
+    # the ticking skipped 'missing' and hidden rows, so "everything is chosen"
+    # was unreachable as soon as a missing depot was listed - the click re-ticked
+    # forever and could never clear the table.
+
+    def selectable_states():
+        return [
+            table.item(i, 0).checkState() == Qt.CheckState.Checked
+            for i in range(table.rowCount())
+            if table.item(i, 0).data(Qt.ItemDataRole.UserRole + 2) not in ("missing", "expander")
+            and not table.isRowHidden(i)
+        ]
+
+    # The missing depot's box is unticked here, which is what the table shows in
+    # practice - and it is that unticked row the old handler counted, so a
+    # checked one would have hidden the bug.
+    table.item(missing_rows[0], 0).setCheckState(Qt.CheckState.Unchecked)
+    dlg5._toggle_all_checkboxes(check=False)
+    check(not any(selectable_states()), "starts from nothing ticked")
+    dlg5._on_header_section_clicked(0)
+    first = selectable_states()
+    check(bool(first) and all(first), "the first click ticks every selectable depot")
+    dlg5._on_header_section_clicked(0)
+    check(not any(selectable_states()),
+          "a second click clears them - the unticked missing depot no longer blocks it")
+    check(table.item(missing_rows[0], 0).checkState() == Qt.CheckState.Unchecked,
+          "the missing depot's own box is never touched")
     dlg5.close()
 
     # ------------------------------------------- missing depots, no metadata

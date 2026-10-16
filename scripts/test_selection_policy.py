@@ -195,6 +195,19 @@ def main() -> int:
     check(sp.edition_menu([], editions, [])[0].label is None,
           "an unknown platform list still leaves a usable menu")
 
+    # --------------------------------------------- which rows select-all counts
+    print("=== which rows the select-all click may tick ===")
+    check(sp.counts_toward_select_all("", False) is True,
+          "an ordinary visible depot can be ticked")
+    check(sp.counts_toward_select_all("missing", False) is False,
+          "a Hubcap-only depot has no tick box and is not counted")
+    check(sp.counts_toward_select_all("expander", False) is False,
+          "the hidden-depot expander is not counted")
+    check(sp.counts_toward_select_all("", True) is False,
+          "a hidden row is not on screen and is not counted")
+    check(sp.counts_toward_select_all("missing", True) is False,
+          "a hidden Hubcap-only depot is still not a tick")
+
     # ------------------------------------------------------- Qt stays out
     print("=== the module stays Qt-free ===")
     import subprocess

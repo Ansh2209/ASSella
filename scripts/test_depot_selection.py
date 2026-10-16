@@ -159,6 +159,11 @@ def main() -> int:
     check("setSortingEnabled(False)" in dlg_src, "sorting explicitly disabled")
     check("_on_header_section_clicked" in dlg_src, "header select-all handler present")
     check("set_check_state_and_count" in dlg_src, "header checkbox state/count still updated")
+    check("_selectable_rows" in dlg_src, "select-all walks one shared set of selectable rows")
+    check(dlg_src.count("_selectable_rows()") == 2,
+          "the header tally and the ticking both go through that one walk")
+    check("counts_toward_select_all" in dlg_src,
+          "whether a row may carry a tick is the policy module's rule")
     check("def __lt__" not in (pkg / "items.py").read_text(),
           "item classes no longer implement __lt__")
 

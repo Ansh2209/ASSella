@@ -6,7 +6,8 @@ that set is policy, not widgets - the depots Steam would install, the depots a
 platform preset wants, the depots the DLC rules allow - and the rules are worth
 pinning down: a base-game depot is never DLC, DLC for both Windows and Linux
 means no automatic choice at all, and one-KB stubs are skipped unless there are
-so many DLCs that they must all be real.
+so many DLCs that they must all be real. The select-all header click asks the
+same kind of question - which rows may carry a tick - so its rule lives here too.
 
 The mixin keeps the table walking, the checkboxes, the menu widget and the
 warning boxes; everything decided here is Qt-free and tested against plain
@@ -26,6 +27,23 @@ STUB_SIZE_LIMIT = 1024
 # Past this many DLC depots the stub filter is dropped: a game with this many
 # DLCs packs real content into small depots, so nothing is filtered out.
 BYPASS_SIZE_LIMIT_AT = 64
+
+# Row roles that can never carry a tick: the hidden-depot section expander, and
+# Hubcap-only depots that are not part of the package at all.
+NON_SELECTABLE_ROLES = ("expander", "missing")
+
+
+def counts_toward_select_all(role, hidden: bool) -> bool:
+    """Whether the select-all header click may tick this row.
+
+    The header click asks "is every row already chosen?" and then ticks or
+    unticks the rest. Only rows that can actually carry a tick count towards
+    that: a Hubcap-only depot is not selectable and a hidden row is not on
+    screen. Counting either made "everything is chosen" unreachable, so the
+    click re-ticked forever instead of clearing. Both the counting and the
+    ticking go through this one rule so they cannot drift apart again.
+    """
+    return role not in NON_SELECTABLE_ROLES and not hidden
 
 
 def depot_data(depots: Dict[Any, Any], depot_id) -> dict:
