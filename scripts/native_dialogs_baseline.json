@@ -1,0 +1,144 @@
+{
+  "managers/app_update_manager.py": {
+    "message_box": 2,
+    "progress_dialog": 1
+  },
+  "managers/emulation/chmod.py": {
+    "message_box": 1
+  },
+  "managers/emulation/goldberg.py": {
+    "message_box": 4
+  },
+  "managers/job_queue_manager.py": {
+    "message_box": 2
+  },
+  "managers/task_manager.py": {
+    "file_dialog": 1,
+    "message_box": 11
+  },
+  "ui/dialogs/branch_selection_dialog.py": {
+    "input_dialog": 1
+  },
+  "ui/dialogs/depot_selection/_mixins/executable.py": {
+    "message_box": 1
+  },
+  "ui/dialogs/depot_selection/_mixins/files.py": {
+    "message_box": 4
+  },
+  "ui/dialogs/depot_selection/dialog.py": {
+    "message_box": 2
+  },
+  "ui/dialogs/depot_selection/dump_runner.py": {
+    "progress_dialog": 1
+  },
+  "ui/dialogs/fetchmanifest.py": {
+    "file_dialog": 1,
+    "message_box": 9
+  },
+  "ui/dialogs/fileselection.py": {
+    "file_dialog": 1,
+    "message_box": 10,
+    "progress_dialog": 1
+  },
+  "ui/dialogs/game_details/builds_tab.py": {
+    "message_box": 3
+  },
+  "ui/dialogs/game_details/depots_tab.py": {
+    "message_box": 3
+  },
+  "ui/dialogs/game_details/info_tab.py": {
+    "message_box": 31
+  },
+  "ui/dialogs/game_details/luafix_tab.py": {
+    "message_box": 9
+  },
+  "ui/dialogs/game_details/shsah_reborn.py": {
+    "message_box": 3
+  },
+  "ui/dialogs/game_details/tickets_tab.py": {
+    "file_dialog": 1,
+    "message_box": 15
+  },
+  "ui/dialogs/game_details/tools_tab.py": {
+    "message_box": 9
+  },
+  "ui/dialogs/game_details/workshop_tab.py": {
+    "message_box": 3
+  },
+  "ui/dialogs/lain.py": {
+    "message_box": 1
+  },
+  "ui/dialogs/library/actions.py": {
+    "message_box": 31,
+    "progress_dialog": 2
+  },
+  "ui/dialogs/library/scanner.py": {
+    "message_box": 4,
+    "progress_dialog": 1
+  },
+  "ui/dialogs/manual_manifest_dialog.py": {
+    "message_box": 3
+  },
+  "ui/dialogs/modern_depot_selection.py": {
+    "message_box": 8,
+    "progress_dialog": 1
+  },
+  "ui/dialogs/move_storage_dialog.py": {
+    "message_box": 4
+  },
+  "ui/dialogs/rollback_dialogs.py": {
+    "message_box": 3
+  },
+  "ui/dialogs/settings.py": {
+    "message_box": 1
+  },
+  "ui/dialogs/settings_sls.py": {
+    "file_dialog": 2,
+    "message_box": 11
+  },
+  "ui/dialogs/settings_tabs/advanced_tab.py": {
+    "message_box": 2
+  },
+  "ui/dialogs/settings_tabs/assela_tab.py": {
+    "message_box": 4
+  },
+  "ui/dialogs/settings_tabs/at0m_tab.py": {
+    "message_box": 5
+  },
+  "ui/dialogs/settings_tabs/components_card.py": {
+    "message_box": 2
+  },
+  "ui/dialogs/settings_tabs/downloads_tab.py": {
+    "file_dialog": 1,
+    "message_box": 2
+  },
+  "ui/dialogs/settings_tabs/health_tab.py": {
+    "message_box": 8
+  },
+  "ui/dialogs/settings_tabs/luatools_tab.py": {
+    "message_box": 8
+  },
+  "ui/dialogs/settings_tabs/mrc_settings_tab.py": {
+    "message_box": 4
+  },
+  "ui/dialogs/settings_tabs/style_tab.py": {
+    "color_dialog": 2,
+    "message_box": 2
+  },
+  "ui/dialogs/settings_tabs/tools_tab.py": {
+    "file_dialog": 3,
+    "message_box": 14
+  },
+  "ui/dialogs/settings_tabs/webui_tab.py": {
+    "message_box": 7
+  },
+  "ui/dialogs/single_depot_dialog.py": {
+    "message_box": 4
+  },
+  "ui/dialogs/steamlibrary.py": {
+    "message_box": 1
+  },
+  "ui/main_window.py": {
+    "message_box": 8
+  }
+}

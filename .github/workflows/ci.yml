@@ -137,6 +137,14 @@ jobs:
         run: |
           python scripts/check_silent_exceptions.py
 
+      # Native Qt dialogs paint themselves in the desktop's theme and carry the
+      # desktop's decorations, so a window that uses one does not look like
+      # ASSella. The ones left are frozen; this fails on a new one, and the
+      # baseline tightens as each file migrates to the themed replacements.
+      - name: No New Native Dialogs
+        run: |
+          python scripts/check_native_dialogs.py
+
       # Behavioural suites. All are hermetic: no Steam install, no network, no
       # display and no pre-existing SLSsteam config, so they are safe on a clean
       # runner. They cover the logic that regresses silently - depot->app
@@ -157,6 +165,7 @@ jobs:
                        test_storage_targets test_depot_metadata \
                        test_executable_probe test_selection_policy \
                        test_silent_exception_gate \
+                       test_native_dialog_gate \
                        test_themed_message_box \
                        test_language_depots; do
             echo "::group::$suite"
