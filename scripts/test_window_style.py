@@ -11,8 +11,12 @@ can appear.
     python3 scripts/test_window_style.py
 """
 import importlib.util
+import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PyQt6.QtWidgets import QApplication, QLabel, QWidget
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SRC_DIR = REPO_ROOT / "src"
@@ -47,9 +51,37 @@ def load_module(name, path):
 
 
 def main() -> int:
+    app = QApplication.instance() or QApplication([])
     style = load_module(
         "assella_window_style",
         SRC_DIR / "ui" / "dialogs" / "game_details" / "window_style.py",
+    )
+
+    # ------------------------------------ local tab styles adapt as one sweep
+    print("=== existing child styles adapt to light surfaces ===")
+    sample = "QLabel { color: #FFFFFF; background: rgba(255, 255, 255, 0.08); }"
+    dark_css = style.adapt_stylesheet_for_surface(sample, "#111318")
+    light_css = style.adapt_stylesheet_for_surface(sample, "#f4f4f4")
+    check(dark_css == sample, "dark-surface child CSS remains byte-identical")
+    check("color: #121214" in light_css, "light-surface white text becomes dark ink")
+    check("rgba(0, 0, 0, 0.08)" in light_css, "light-surface white tint flips and keeps alpha")
+    check(
+        style.adapt_stylesheet_for_surface("color: #E0E0E0;", "#ffffff") == "color: #121214;",
+        "light-surface legacy gray text becomes readable ink",
+    )
+
+    root = QWidget()
+    root.background_color = "#f4f4f4"
+    child = QLabel(root)
+    child.setStyleSheet(sample)
+    style.adapt_child_stylesheets(root)
+    check("color: #121214" in child.styleSheet(), "child-widget sweep applies adaptive CSS")
+    check("rgba(0, 0, 0, 0.08)" in child.styleSheet(), "child-widget sweep adapts overlays too")
+    root.close()
+    dialog_source = (SRC_DIR / "ui" / "dialogs" / "gamelibrary_v2.py").read_text()
+    check(
+        "adapt_child_stylesheets(self)" in dialog_source,
+        "the Game Details window runs the adaptive sweep after building its tabs",
     )
 
     # ------------------------------------------------- the polarity helper
@@ -131,6 +163,7 @@ def main() -> int:
         check("#E0E0E0" not in css, f"{background}: the old hardcoded item ink is gone")
 
     print(f"\n{'=' * 60}")
+    del app
     if _failures:
         print(f"FAILED: {len(_failures)} check(s)")
         for f in _failures:

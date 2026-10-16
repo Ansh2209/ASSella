@@ -20,8 +20,46 @@ from utils.color_utils import (
     get_best_foreground_color,
     get_dark_container_color,
     get_raised_surface_tokens,
+    is_light_color,
     surface_overlay_rgb,
 )
+import re
+
+from PyQt6.QtWidgets import QWidget
+
+
+_WHITE_RGBA = re.compile(
+    r"rgba\(\s*255\s*,\s*255\s*,\s*255\s*,\s*([0-9]*\.?[0-9]+)\s*\)",
+    re.IGNORECASE,
+)
+_WHITE_INK = re.compile(r"#(?:FFFFFF|E0E0E0|DDDDDD)\b", re.IGNORECASE)
+
+
+def adapt_stylesheet_for_surface(stylesheet: str, background: str) -> str:
+    """Flip hard-coded light ink and overlays when a child sits on a light surface.
+
+    The Game Details tabs have accumulated local stylesheets over time.  Their
+    dark-theme literals are intentional and remain byte-identical there; on a
+    light/custom background this translates white text to readable dark ink and
+    white translucent overlays to their black equivalents without changing alpha.
+    """
+    if not is_light_color(background) or not stylesheet:
+        return stylesheet
+
+    ink = get_best_foreground_color(background)
+    adapted = _WHITE_RGBA.sub(lambda match: f"rgba(0, 0, 0, {match.group(1)})", stylesheet)
+    return _WHITE_INK.sub(ink, adapted)
+
+
+def adapt_child_stylesheets(root) -> None:
+    """Adapt existing child-widget stylesheets to the Game Details surface."""
+    background = getattr(root, "background_color", "#111318")
+    for widget in root.findChildren(QWidget):
+        stylesheet = widget.styleSheet()
+        if stylesheet:
+            adapted = adapt_stylesheet_for_surface(stylesheet, background)
+            if adapted != stylesheet:
+                widget.setStyleSheet(adapted)
 
 
 def ink_on(background: str, alpha: float) -> str:

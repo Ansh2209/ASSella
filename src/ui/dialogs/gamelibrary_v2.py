@@ -31,7 +31,11 @@ from ui.dialogs.game_details.widgets import (
     MaterialTile,
 )
 
-from ui.dialogs.game_details.window_style import build_stylesheet, ink_on
+from ui.dialogs.game_details.window_style import (
+    adapt_child_stylesheets,
+    build_stylesheet,
+    ink_on,
+)
 
 from ui.dialogs.game_details.hero_header import (
     load_hero_image,
@@ -362,6 +366,7 @@ class GameDetailsDialogV2(QDialog):
 
         self._switch_tab(0)
         self._init_slsonline_logic()
+        adapt_child_stylesheets(self)
 
     def _switch_tab(self, index):
         self.stacked.setCurrentIndex(index)
@@ -388,6 +393,7 @@ class GameDetailsDialogV2(QDialog):
                     }}
                     QPushButton:hover {{ color: {self.accent_color}; }}
                 """)
+        adapt_child_stylesheets(self)
 
         if hasattr(self, "builds_page_index") and index == self.builds_page_index:
             self._ensure_builds_loaded()
@@ -778,4 +784,3 @@ class GameDetailsDialogV2(QDialog):
             self._cached_luafix_res = res_data
             if hasattr(self, "_luafix_bridge"):
                 self._luafix_bridge.loaded.emit(res_data)
-
