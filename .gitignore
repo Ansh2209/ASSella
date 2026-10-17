@@ -50,3 +50,8 @@ src/deps/SLScheevo/
 # ── OS junk ─────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+
+# ── VitePress / Docs ────────────────────────────────────────────────────────
+node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
