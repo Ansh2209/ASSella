@@ -53,6 +53,7 @@ def main():
     check(search.panel.parentWidget() is window, "results panel is a main-window child")
     search._position_panel()
     check(search.panel.x() >= 0 and search.panel.y() > 0, "results panel positions below its field")
+    check(search.panel.width() == search.input.width(), "results panel width strictly matches the search bar width")
 
     print("=== API and local library entries share the existing ranking policy ===")
     old_search = morrenus_api.search_games
@@ -81,10 +82,30 @@ def main():
     search._on_item_clicked(item)
     check(window.fetch_requests == ["10"], "selected AppID starts the existing fetch path")
 
-    source = (SRC_DIR / "ui" / "bottom_titlebar.py").read_text()
+    from utils.settings import get_settings
+    settings = get_settings()
+
+    print("=== title bar search optional toggle test ===")
+    window.show()
+    # 1. When toggle is disabled (default): title label and classic search button visible, widget hidden
+    settings.setValue("title_bar_search_enabled", False)
+    titlebar.refresh_search_mode()
+    check(titlebar.search_controller.input.isHidden(), "search input is hidden when title_bar_search_enabled is False")
+    check(not titlebar.title_label.isHidden(), "ASSella title label is visible when title_bar_search_enabled is False")
+    check(not titlebar.search_button.isHidden(), "Search button is visible when title_bar_search_enabled is False")
+
+    # 2. When toggle is enabled: search widget visible, title label and search button hidden
+    settings.setValue("title_bar_search_enabled", True)
+    titlebar.refresh_search_mode()
+    check(not titlebar.search_controller.input.isHidden(), "search input is visible when title_bar_search_enabled is True")
+    check(titlebar.title_label.isHidden(), "ASSella title label is hidden when title_bar_search_enabled is True")
+    check(titlebar.search_button.isHidden(), "Search button is hidden when title_bar_search_enabled is True")
+
+    # Reset back to False
+    settings.setValue("title_bar_search_enabled", False)
+    titlebar.refresh_search_mode()
+
     main_source = (SRC_DIR / "ui" / "main_window.py").read_text()
-    check('QLabel("ASSella")' not in source, "the old centered ASSella title is removed")
-    check("self.search_button" not in source, "the redundant search button is removed")
     check("def open_fetch_dialog(self, initial_query: str = \"\")" in main_source,
           "fetch workflow accepts a selected AppID")
 

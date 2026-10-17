@@ -26,6 +26,7 @@ from .assets import (
     MAXIMIZE,
     MINIMIZE,
     POWER_SVG,
+    SEARCH_SVG,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,11 +62,13 @@ class BottomTitleBar(QFrame):
         self.no_previous_state = True
 
         self.navi_label: Optional[QLabel] = None
+        self.title_label: Optional[QLabel] = None
         self.search_controller = None
         self.logo_label: Optional[QLabel] = None
 
         # Buttons
         self.status_button: Optional[QPushButton] = None
+        self.search_button: Optional[QPushButton] = None
         self.game_library_button: Optional[QPushButton] = None
         self.settings_button: Optional[QPushButton] = None
         self.minimize_button: Optional[QPushButton] = None
@@ -91,17 +94,41 @@ class BottomTitleBar(QFrame):
         left_widget = self._create_left_section()
         right_widget = self._create_right_section()
 
+        self.title_label = QLabel("ASSella")
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
+        )
+
         from ui.top_bar_search import TopBarSearch
         self.search_controller = TopBarSearch(self.parent_window, self)
 
-        # col 0: left  (stretch=1) | col 1: title (stretch=2) | col 2: right (stretch=1)
-        # Equal stretch on columns 0 and 2 keeps the title in the true centre.
+        # col 0: left  (stretch=1) | col 1: title/search (stretch=2) | col 2: right (stretch=1)
         grid.addWidget(left_widget, 0, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        grid.addWidget(self.title_label, 0, 1, Qt.AlignmentFlag.AlignCenter)
         grid.addWidget(self.search_controller.input, 0, 1, Qt.AlignmentFlag.AlignCenter)
         grid.addWidget(right_widget, 0, 2, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 2)
         grid.setColumnStretch(2, 1)
+
+        self.refresh_search_mode()
+
+    def refresh_search_mode(self) -> None:
+        """Toggle between the live top-bar search widget and the classic title + search button."""
+        settings = get_settings()
+        use_widget = settings.value("title_bar_search_enabled", False, type=bool)
+
+        if self.search_controller and self.search_controller.input:
+            self.search_controller.input.setVisible(use_widget)
+            if not use_widget:
+                self.search_controller.close()
+
+        if self.title_label:
+            self.title_label.setVisible(not use_widget)
+
+        if self.search_button:
+            self.search_button.setVisible(not use_widget)
 
     def _create_left_section(self) -> QWidget:
         """Create the left section containing animation and version."""
@@ -174,6 +201,11 @@ class BottomTitleBar(QFrame):
         )
         self.status_button.setVisible(False)
 
+        self.search_button = self._create_svg_button(
+            SEARCH_SVG, getattr(parent, "open_fetch_dialog", None), "Download Game"
+        )
+        layout.addWidget(self.search_button)
+
         self.game_library_button = self._create_svg_button(
             BOOK_SVG, getattr(parent, "open_game_library", None), "Game Library"
         )
@@ -242,14 +274,20 @@ class BottomTitleBar(QFrame):
             }}
         """
         )
+        if self.title_label:
+            self.title_label.setStyleSheet(f"color: {accent_color}; font-weight: bold; font-size: 14px;")
 
     def update_style(self) -> None:
         """Update the style when colors change."""
         self._apply_style()
         self._update_button_colors()
         self._update_button_styles()
+        if self.title_label:
+            accent_color = get_settings().value("accent_color", "#C06C84")
+            self.title_label.setStyleSheet(f"color: {accent_color}; font-weight: bold; font-size: 14px;")
         if self.search_controller:
             self.search_controller._apply_style()
+        self.refresh_search_mode()
 
     def _update_button_styles(self) -> None:
         """Update all button styles with custom border and background."""
@@ -275,6 +313,7 @@ class BottomTitleBar(QFrame):
         """
 
         buttons = [
+            self.search_button,
             self.minimize_button,
             self.maximize_button,
             self.game_library_button,
@@ -293,6 +332,7 @@ class BottomTitleBar(QFrame):
         accent_color = settings.value("accent_color", "#C06C84")
 
         buttons = [
+            (self.search_button, SEARCH_SVG),
             (self.minimize_button, MINIMIZE),
             (self.maximize_button, MAXIMIZE),
             (self.game_library_button, BOOK_SVG),

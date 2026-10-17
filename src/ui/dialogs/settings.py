@@ -93,6 +93,7 @@ class SettingsDialog(QDialog):
         self.accent_reset_button = None
         self.all_games_online_checkbox = None
         self.enable_eosproxy_default_checkbox = None
+        self.title_bar_search_checkbox = None
         self.bg_color_button = None
         self.bg_reset_button = None
         self.titlebar_position_checkbox = None
@@ -127,6 +128,7 @@ class SettingsDialog(QDialog):
 
         # Save original API keys for restore on cancel
         self._original_morrenus_key = self.settings.value("morrenus_api_key", "", type=str)
+        self._original_title_bar_search = self.settings.value("title_bar_search_enabled", False, type=bool)
         self.settings.sync()
         self._original_ignore_online_fixes = self.settings.value("luatools_ignore_online_fixes", False, type=bool)
         self._original_steam_username = self.settings.value("steam_username", "", type=str)
@@ -760,6 +762,12 @@ class SettingsDialog(QDialog):
             self.settings.setValue("simplify_denuvo_status", self._original_simplify_denuvo_status)
         if hasattr(self, "_original_ignore_online_fixes"):
             self.settings.setValue("luatools_ignore_online_fixes", self._original_ignore_online_fixes)
+        if hasattr(self, "_original_title_bar_search"):
+            self.settings.setValue("title_bar_search_enabled", self._original_title_bar_search)
+            if self.main_window and hasattr(self.main_window, "bottom_titlebar"):
+                titlebar = getattr(self.main_window, "bottom_titlebar", None)
+                if titlebar and hasattr(titlebar, "refresh_search_mode"):
+                    titlebar.refresh_search_mode()
 
         if hasattr(self, "_origins_movie") and self._origins_movie:
             self._origins_movie.stop()
@@ -980,6 +988,11 @@ class SettingsDialog(QDialog):
             self.settings.setValue(
                 "check_updates_on_boot",
                 self.check_updates_on_boot_checkbox.isChecked()
+            )
+        if hasattr(self, "title_bar_search_checkbox") and self.title_bar_search_checkbox is not None:
+            self.settings.setValue(
+                "title_bar_search_enabled",
+                self.title_bar_search_checkbox.isChecked(),
             )
 
         if hasattr(self, "update_provider_combo") and self.update_provider_combo:

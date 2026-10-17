@@ -11,47 +11,69 @@ from PyQt6.QtWidgets import (
 
 class SearchItemWidget(QWidget):
     """Custom widget for displaying polished search results — styled like the game library cards."""
-    def __init__(self, name: str, app_id: str, in_library: bool, is_cached: bool = False, parent=None):
+    def __init__(self, name: str, app_id: str, in_library: bool, is_cached: bool = False, parent=None, compact: bool = False):
         super().__init__(parent)
         self.name = name
         self.app_id = app_id
         self.in_library = in_library
         self.is_cached = is_cached
+        self.compact = compact
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 1, 16, 1)
-        layout.setSpacing(16)
+        if compact:
+            layout.setContentsMargins(0, 1, 10, 1)
+            layout.setSpacing(10)
+        else:
+            layout.setContentsMargins(0, 1, 16, 1)
+            layout.setSpacing(16)
 
         # --- Image (same proportions as library cards) ---
         self.img_lbl = QLabel()
-        self.img_lbl.setFixedSize(200, 94)
+        if compact:
+            self.img_lbl.setFixedSize(92, 44)
+            self.img_lbl.setStyleSheet(
+                "border-top-left-radius: 6px;"
+                "border-bottom-left-radius: 6px;"
+                "border-top-right-radius: 0px;"
+                "border-bottom-right-radius: 0px;"
+                "background-color: rgba(255,255,255,0.04);"
+                "color: rgba(255,255,255,0.5);"
+                "font-size: 13px; font-weight: bold;"
+            )
+        else:
+            self.img_lbl.setFixedSize(200, 94)
+            self.img_lbl.setStyleSheet(
+                "border-top-left-radius: 10px;"
+                "border-bottom-left-radius: 10px;"
+                "border-top-right-radius: 0px;"
+                "border-bottom-right-radius: 0px;"
+                "background-color: rgba(255,255,255,0.04);"
+                "color: rgba(255,255,255,0.5);"
+                "font-size: 20px; font-weight: bold;"
+            )
         self.img_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.img_lbl.setText(name[:2].upper())
-        self.img_lbl.setStyleSheet(
-            "border-top-left-radius: 10px;"
-            "border-bottom-left-radius: 10px;"
-            "border-top-right-radius: 0px;"
-            "border-bottom-right-radius: 0px;"
-            "background-color: rgba(255,255,255,0.04);"
-            "color: rgba(255,255,255,0.5);"
-            "font-size: 20px; font-weight: bold;"
-        )
         self.img_lbl.setScaledContents(True)
         layout.addWidget(self.img_lbl)
 
         # --- Info column ---
         info_col = QVBoxLayout()
-        info_col.setContentsMargins(0, 10, 0, 10)
-        info_col.setSpacing(5)
+        if compact:
+            info_col.setContentsMargins(0, 2, 0, 2)
+            info_col.setSpacing(2)
+        else:
+            info_col.setContentsMargins(0, 10, 0, 10)
+            info_col.setSpacing(5)
 
         # Top row: game name + minimal ProtonDB badge
         name_row = QHBoxLayout()
-        name_row.setSpacing(8)
+        name_row.setSpacing(compact and 4 or 8)
         name_row.setContentsMargins(0, 0, 0, 0)
 
         self.name_lbl = QLabel(name)
         name_color = "#77DD77" if in_library else "#FFFFFF"
-        self.name_lbl.setStyleSheet(f"font-size: 14px; font-weight: bold; color: {name_color};")
+        font_size = "12px" if compact else "14px"
+        self.name_lbl.setStyleSheet(f"font-size: {font_size}; font-weight: bold; color: {name_color};")
         self.name_lbl.setWordWrap(False)
         name_row.addWidget(self.name_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -67,26 +89,27 @@ class SearchItemWidget(QWidget):
 
         # Bottom: AppID + Denuvo status row
         self.meta_row = QHBoxLayout()
-        self.meta_row.setSpacing(6)
+        self.meta_row.setSpacing(compact and 4 or 6)
         self.meta_row.setContentsMargins(0, 0, 0, 0)
 
+        meta_font_size = "10px" if compact else "11px"
         self.appid_lbl = QLabel(f"App ID: {app_id}")
-        self.appid_lbl.setStyleSheet("font-size: 11px; color: rgba(255,255,255,0.50);")
+        self.appid_lbl.setStyleSheet(f"font-size: {meta_font_size}; color: rgba(255,255,255,0.50);")
         self.meta_row.addWidget(self.appid_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.denuvo_lbl = QLabel()
         self.denuvo_lbl.hide()
-        self.denuvo_lbl.setStyleSheet("font-size: 11px; font-weight: bold;")
+        self.denuvo_lbl.setStyleSheet(f"font-size: {meta_font_size}; font-weight: bold;")
         self.meta_row.addWidget(self.denuvo_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
 
         if in_library:
             self.in_lib_lbl = QLabel("•  In Library")
-            self.in_lib_lbl.setStyleSheet("font-size: 11px; color: #81C784; font-weight: bold;")
+            self.in_lib_lbl.setStyleSheet(f"font-size: {meta_font_size}; color: #81C784; font-weight: bold;")
             self.meta_row.addWidget(self.in_lib_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
 
         if is_cached:
             self.cached_lbl = QLabel("•  Cached")
-            self.cached_lbl.setStyleSheet("font-size: 11px; color: #4FC3F7; font-weight: bold;")
+            self.cached_lbl.setStyleSheet(f"font-size: {meta_font_size}; color: #4FC3F7; font-weight: bold;")
             self.meta_row.addWidget(self.cached_lbl, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.meta_row.addStretch()

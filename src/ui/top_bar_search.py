@@ -26,11 +26,39 @@ class _SearchLineEdit(QLineEdit):
             self._search.panel.hide()
             self.clearFocus()
             return
+        if event.key() == Qt.Key.Key_Down and self._search.panel.isVisible():
+            if self._search.results.count() > 0:
+                self._search.results.setFocus()
+                if self._search.results.currentRow() < 0:
+                    self._search.results.setCurrentRow(0)
+                return
         super().keyPressEvent(event)
 
     def focusOutEvent(self, event):
         super().focusOutEvent(event)
-        QTimer.singleShot(0, self._search._hide_if_focus_left)
+        QTimer.singleShot(150, self._search._hide_if_focus_left)
+
+
+class _ResultsListWidget(QListWidget):
+    def __init__(self, parent, search):
+        super().__init__(parent)
+        self._search = search
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Escape:
+            self._search.panel.hide()
+            self._search.input.setFocus()
+            return
+        if event.key() == Qt.Key.Key_Up and self.currentRow() <= 0:
+            self.setCurrentRow(-1)
+            self._search.input.setFocus()
+            return
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            item = self.currentItem()
+            if item and item.data(Qt.ItemDataRole.UserRole):
+                self._search._on_item_clicked(item)
+                return
+        super().keyPressEvent(event)
 
 
 class TopBarSearch:
@@ -38,6 +66,8 @@ class TopBarSearch:
 
     DEBOUNCE_MS = 400
     MAX_RESULTS = 8
+    ITEM_HEIGHT = 48
+    MAX_VISIBLE_ITEMS = 4.5
 
     def __init__(self, main_window, title_bar):
         self.main_window = main_window
@@ -51,8 +81,8 @@ class TopBarSearch:
         self.input.setObjectName("mainGameSearch")
         self.input.setPlaceholderText("Search games…")
         self.input.setClearButtonEnabled(True)
-        self.input.setMinimumWidth(220)
-        self.input.setMaximumWidth(9000)
+        target_w = max(340, min(480, main_window.width() - 320))
+        self.input.setFixedWidth(target_w)
         self.input.setFixedHeight(26)
         self.input.setToolTip("Search games by name or App ID")
 
@@ -63,9 +93,10 @@ class TopBarSearch:
         panel_layout = QVBoxLayout(self.panel)
         panel_layout.setContentsMargins(6, 6, 6, 6)
         panel_layout.setSpacing(2)
-        self.results = QListWidget(self.panel)
+        self.results = _ResultsListWidget(self.panel, self)
         self.results.setObjectName("mainGameSearchResults")
         self.results.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.results.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.results.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
         self.results.itemClicked.connect(self._on_item_clicked)
         panel_layout.addWidget(self.results)
@@ -82,18 +113,19 @@ class TopBarSearch:
         settings = get_settings()
         background = settings.value("background_color", "#000000")
         accent = settings.value("accent_color", "#C06C84")
-        # Blend into the title bar: no border, no rounded corners, semi-transparent fill
-        # that hints at the accent only when focused.
         self.input.setStyleSheet(
             f"QLineEdit {{ background: rgba(255,255,255,0.06); color: white; "
-            f"border: none; padding: 2px 9px; }}"
-            f"QLineEdit:focus {{ background: rgba(255,255,255,0.10); }}"
+            f"border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 2px 9px; }}"
+            f"QLineEdit:focus {{ background: rgba(255,255,255,0.10); border-color: {accent}; }}"
         )
         self.panel.setStyleSheet(
             f"QFrame#mainGameSearchPanel {{ background: {background}; border: 1px solid {accent}; border-radius: 10px; }}"
             "QListWidget { background: transparent; border: none; outline: none; }"
-            "QListWidget::item { border-radius: 8px; }"
+            "QListWidget::item { border-radius: 6px; margin: 1px 0px; }"
             f"QListWidget::item:selected {{ background: rgba(255,255,255,0.10); }}"
+            "QScrollBar:vertical { border: none; background: rgba(0,0,0,0.25); width: 4px; margin: 2px 0px; border-radius: 2px; }"
+            f"QScrollBar::handle:vertical {{ background: {accent}; min-height: 20px; border-radius: 2px; }}"
+            "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
         )
 
     def _on_text_changed(self, text):
@@ -171,7 +203,8 @@ class TopBarSearch:
             return
         for index, game in enumerate(games[: self.MAX_RESULTS]):
             self._add_result(game, generation, index)
-        self.results.setFixedHeight(min(8, len(games)) * 74)
+        visible_count = min(len(games), self.MAX_VISIBLE_ITEMS)
+        self.results.setFixedHeight(int(visible_count * self.ITEM_HEIGHT))
         self._position_panel()
         self.panel.show()
         self.panel.raise_()
@@ -185,7 +218,7 @@ class TopBarSearch:
         item = QListWidgetItem(text)
         item.setFlags(Qt.ItemFlag.NoItemFlags)
         self.results.addItem(item)
-        self.results.setFixedHeight(44)
+        self.results.setFixedHeight(36)
 
     def _add_result(self, game, generation, index):
         from utils.search_ranking import extract_app_id, extract_game_name
@@ -200,7 +233,7 @@ class TopBarSearch:
         in_library = bool(manager and manager.get_game(app_id) is not None)
         item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, (app_id, name))
-        item.setSizeHint(QSize(0, 72))
+        item.setSizeHint(QSize(0, self.ITEM_HEIGHT))
         self.results.addItem(item)
         widget = SearchItemWidget(
             name,
@@ -208,10 +241,9 @@ class TopBarSearch:
             in_library,
             is_cached=ImageFetcher.get_cache_path(app_id).exists(),
             parent=self.panel,
+            compact=True,
         )
         widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-        widget.img_lbl.setFixedSize(130, 64)
-        widget.setMinimumHeight(68)
         self.results.setItemWidget(item, widget)
         if index < 4:
             self._fetch_image(widget, app_id, generation)
@@ -287,22 +319,31 @@ class TopBarSearch:
         if not self.panel or not self.input:
             return
         anchor = self.input.mapTo(self.main_window, self.input.rect().bottomLeft())
-        width = max(420, self.input.width() + 180)
-        width = min(width, self.main_window.width() - 24)
-        x = max(12, min(anchor.x() - (width - self.input.width()) // 2, self.main_window.width() - width - 12))
-        y = anchor.y() + 5
-        if y + self.panel.sizeHint().height() > self.main_window.height() - 8:
-            y = max(8, anchor.y() - self.panel.sizeHint().height() - self.input.height() - 6)
-        self.panel.setGeometry(x, y, width, self.panel.sizeHint().height())
+        # Width strictly matches the search input field width
+        width = self.input.width()
+        x = anchor.x()
+        y = anchor.y() + 4
+        panel_h = self.panel.sizeHint().height()
+        max_h = max(80, self.main_window.height() - y - 16)
+        if panel_h > max_h:
+            panel_h = max_h
+        self.panel.setGeometry(x, y, width, panel_h)
 
     def reposition(self):
+        target_w = max(340, min(480, self.main_window.width() - 320))
+        if self.input.width() != target_w:
+            self.input.setFixedWidth(target_w)
         if self.panel.isVisible():
             self._position_panel()
 
     def _hide_if_focus_left(self):
         from PyQt6.QtWidgets import QApplication
         focused = QApplication.focusWidget()
-        if focused is not self.input and not (focused and self.panel.isAncestorOf(focused)):
+        if (
+            focused is not self.input
+            and focused is not self.results
+            and not (focused and self.panel.isAncestorOf(focused))
+        ):
             self.panel.hide()
 
     def close(self):
