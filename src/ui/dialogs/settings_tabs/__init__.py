@@ -19,6 +19,8 @@ from ui.dialogs.settings_tabs.health_tab import (
     run_assfixer_repair,
     handle_assfixer_repair_done,
     run_assfixer_restore,
+    on_h3adcrab_clicked,
+    on_r3set_crab_clicked,
 )
 from ui.dialogs.settings_tabs.tools_tab import (
     create_tools_tab,

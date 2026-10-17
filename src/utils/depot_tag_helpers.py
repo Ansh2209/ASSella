@@ -274,6 +274,10 @@ def format_depot_row_label(
         or bool(re.search(r"\bDLC\s+\d+", base_desc, re.IGNORECASE))
     )
 
+    raw_name = str(depot_data.get("name") or "").strip()
+    if (not base_desc or re.fullmatch(r"Depot \d+", base_desc.strip(), re.IGNORECASE)) and raw_name and not re.fullmatch(r"Depot \d+", raw_name, re.IGNORECASE):
+        base_desc = raw_name
+
     clean_desc = base_desc
     # Strip existing platform, arch, dlc, and language tags from clean_desc
     clean_desc = re.sub(
@@ -320,7 +324,13 @@ def format_depot_row_label(
     tag_str = " ".join(tags)
     clean_desc = clean_desc.strip()
     if not clean_desc or re.fullmatch(r"Depot \d+", clean_desc, re.IGNORECASE):
-        clean_desc = depot_data.get("name") or clean_desc or f"Depot {depot_id}"
+        fallback_name = depot_data.get("name") or clean_desc or f"Depot {depot_id}"
+        clean_desc = re.sub(
+            r"\[(?:Windows|Linux|macOS|Android|iOS|SteamDeck|Deck|All)(?:,\s*(?:Windows|Linux|macOS|Android|iOS|SteamDeck|Deck|All))*\]\s*",
+            "",
+            fallback_name,
+            flags=re.IGNORECASE,
+        ).strip() or fallback_name
 
     if tag_str:
         return f"{tag_str}  {clean_desc}".strip()

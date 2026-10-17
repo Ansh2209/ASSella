@@ -1166,7 +1166,8 @@ class ModernDepotSelectionDialog(QDialog):
 
             # Col 2: Platform Badge
             oslist = (d_data.get("oslist") or "").lower()
-            plat_icon = get_os_icon(d_data.get("oslist"))
+            tint = QColor(self.accent_color) if hasattr(self, "accent_color") and self.accent_color else None
+            plat_icon = get_os_icon(d_data.get("oslist"), tint_color=tint)
             if "windows" in oslist:
                 plat_badge = "Windows"
             elif "linux" in oslist:

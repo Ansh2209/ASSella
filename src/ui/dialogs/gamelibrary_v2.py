@@ -184,8 +184,8 @@ class GameDetailsDialogV2(QDialog):
         from utils.workshop_helpers import check_game_workshop_available_async
         check_game_workshop_available_async(self.appid, self.game_data, callback=self.workshop_check_finished.emit)
 
-        # Check lua.tools fixes availability asynchronously
-        if self.settings.value("luatools_unlocked", False, type=bool):
+        # Check lua.tools fixes availability asynchronously (only if unlocked & authenticated)
+        if self._is_luatools_available():
             self._check_luafix_async()
 
         # Initial cached builds status for instant display (scraping is deferred until user clicks Builds tab)
@@ -308,7 +308,7 @@ class GameDetailsDialogV2(QDialog):
             self.ws_page_index = 4
             self._tickets_tab_index = 5
 
-        if self.settings.value("luatools_unlocked", False, type=bool):
+        if self._is_luatools_available():
             idx = len(self._pages_info)
             self._pages_info.append(("LuaFix", idx))
             self.luafix_page_index = idx
@@ -360,7 +360,7 @@ class GameDetailsDialogV2(QDialog):
         self._init_achievements_tab()
         self._init_workshop_tab()
         self._init_tickets_tab()
-        if self.settings.value("luatools_unlocked", False, type=bool):
+        if self._is_luatools_available():
             self._init_luafix_tab()
         root.addWidget(self.stacked, 1)
 
@@ -756,11 +756,24 @@ class GameDetailsDialogV2(QDialog):
     # ──────────────────────────────────────────
     #  LuaFix Tab Delegations (lua.tools integration)
     # ──────────────────────────────────────────
+    def _is_luatools_available(self) -> bool:
+        """LuaFix tab is available only if unlocked via secret AND user is authenticated."""
+        if not self.settings.value("luatools_unlocked", False, type=bool):
+            return False
+        try:
+            from core.lua_tools_api import LuaToolsAPI
+            return LuaToolsAPI.is_authenticated(allow_cached=True)
+        except Exception:
+            return False
+
     def _init_luafix_tab(self):
         init_luafix_tab(self)
 
     def _check_luafix_async(self):
         """Asynchronously check if this game has eligible fixes on lua.tools."""
+        if not self._is_luatools_available():
+            return
+
         def _worker():
             try:
                 from core.lua_tools_api import LuaToolsAPI
@@ -778,6 +791,10 @@ class GameDetailsDialogV2(QDialog):
 
     @pyqtSlot(bool, object)
     def _on_luafix_check_finished(self, has_fixes: bool, res_data: object):
+        if not self._is_luatools_available():
+            if hasattr(self, "luafix_tab_btn") and self.luafix_tab_btn:
+                self.luafix_tab_btn.setVisible(False)
+            return
         if hasattr(self, "luafix_tab_btn") and self.luafix_tab_btn:
             self.luafix_tab_btn.setVisible(has_fixes)
         if has_fixes and res_data:

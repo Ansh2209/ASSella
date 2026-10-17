@@ -243,9 +243,9 @@ def create_luatools_tab(dialog) -> QWidget:
     dialog.luatools_poll_timer = QTimer(dialog)
     dialog.luatools_poll_timer.setInterval(800)
 
-    # Helper function to refresh UI
+    # Helper function to refresh UI (uses local cache first to avoid blocking GUI thread)
     def update_ui_status():
-        status = LuaToolsAPI.get_auth_status()
+        status = LuaToolsAPI.get_auth_status(allow_cached=True)
         if status.get("authenticated"):
             name = status.get("display_name", "Connected")
             dialog.luatools_status_dot.setStyleSheet("color: #22c55e; font-size: 14pt;")
@@ -338,7 +338,7 @@ def create_luatools_tab(dialog) -> QWidget:
     dialog.luatools_redeem_btn.clicked.connect(redeem_code)
     dialog.luatools_disconnect_btn.clicked.connect(disconnect_account)
 
-    # Initial state
-    update_ui_status()
+    # Attach handler for lazy invocation when the LuaTools tab is accessed
+    dialog.update_luatools_ui_status = update_ui_status
 
     return tab

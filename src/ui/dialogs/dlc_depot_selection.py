@@ -653,7 +653,8 @@ class DlcDepotSelectionDialog(QDialog):
             self.table.setItem(row, 0, id_item)
 
             # Col 1: DLC Name with OS icon and [DLC] tag
-            os_icon = get_os_icon(d_data.get("oslist"))
+            tint = QColor(self.accent_color) if hasattr(self, "accent_color") and self.accent_color else None
+            os_icon = get_os_icon(d_data.get("oslist"), tint_color=tint)
             clean_name = format_depot_row_label(
                 did_str,
                 d_data,

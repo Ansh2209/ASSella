@@ -231,14 +231,14 @@ def run_schema_grabber_manually(dialog) -> None:
     launch_terminal_command(cmd, str(helper_path.parent))
 
 
-def launch_terminal_command(cmd: list, cwd: str, needs_env: bool = False) -> None:
+def launch_terminal_command(cmd: list, cwd: str, needs_env: bool = False) -> bool:
     cmd_str = [str(part) for part in cmd]
     cwd = str(cwd)
     if sys.platform == "win32":
         q_cmd = " ".join([f'"{c}"' if " " in str(c) else str(c) for c in cmd_str])
         try:
             subprocess.Popen(f'start cmd /k "cd /d {cwd} && {q_cmd}"', shell=True)
-            return
+            return True
         except OSError:
             pass
     else:
@@ -260,7 +260,7 @@ def launch_terminal_command(cmd: list, cwd: str, needs_env: bool = False) -> Non
             try:
                 t_cmd = [str(part) for part in t]
                 subprocess.Popen(t_cmd, cwd=cwd)
-                return
+                return True
             except FileNotFoundError:
                 continue
 
@@ -271,6 +271,7 @@ def launch_terminal_command(cmd: list, cwd: str, needs_env: bool = False) -> Non
         "Please open a terminal and run:",
         informative=" ".join(cmd_str),
     )
+    return False
 
 
 def run_steamless_manually(dialog) -> None:

@@ -103,8 +103,20 @@ class LuaToolsAPI:
     # --------------------------------------------------------------------------
 
     @classmethod
+    def is_unlocked(cls) -> bool:
+        """Check if LuaTools feature has been unlocked via the secret search keyword."""
+        try:
+            from utils.settings import get_settings
+            s = get_settings()
+            return s.value("luatools_unlocked", False, type=bool)
+        except Exception:
+            return False
+
+    @classmethod
     def list_games(cls) -> Dict[str, Any]:
         """Fetch the full catalogue of games with available fixes (1800+ games)."""
+        if not cls.is_unlocked():
+            return {"success": False, "error": "LuaTools feature is not unlocked.", "games": []}
         url = f"{API_BASE_URL}/api/denuvo/listings"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "ASSella/3.0"})
@@ -123,6 +135,8 @@ class LuaToolsAPI:
         Pass force_refresh=True to bypass cache and fetch fresh data from lua.tools.
         """
         appid_str = str(appid)
+        if not cls.is_unlocked():
+            return {"success": False, "error": "LuaTools feature is not unlocked.", "appid": appid_str, "fixes": []}
         now = time.time()
 
         if not force_refresh:
@@ -241,12 +255,41 @@ class LuaToolsAPI:
         return True
 
     @classmethod
-    def get_auth_status(cls) -> Dict[str, Any]:
-        """Check if a valid session exists and return account display info."""
-        token = cls.get_valid_access_token()
-        if not token:
+    def is_authenticated(cls, allow_cached: bool = True) -> bool:
+        """Check if user has an authenticated lua.tools session.
+
+        Requires that LuaTools is unlocked first. Uses local cached session by default
+        to prevent blocking network requests on UI threads.
+        """
+        if not cls.is_unlocked():
+            return False
+        session = cls.load_session()
+        if not session or not session.get("refresh_token"):
+            return False
+        if allow_cached:
+            return True
+        return cls.get_valid_access_token() is not None
+
+    @classmethod
+    def get_auth_status(cls, allow_cached: bool = True) -> Dict[str, Any]:
+        """Check if a valid session exists and return account display info.
+
+        Requires that LuaTools is unlocked first. Defaults to reading the local
+        cached session without making blocking network calls.
+        """
+        if not cls.is_unlocked():
             return {"authenticated": False}
-        session = cls.load_session() or {}
+
+        session = cls.load_session()
+        if not session or not session.get("refresh_token"):
+            return {"authenticated": False}
+
+        if not allow_cached:
+            token = cls.get_valid_access_token()
+            if not token:
+                return {"authenticated": False}
+            session = cls.load_session() or {}
+
         user = session.get("user", {})
         meta = user.get("user_metadata", {})
         claims = meta.get("custom_claims", {})
@@ -317,6 +360,8 @@ class LuaToolsAPI:
     @classmethod
     def sign_in_with_code(cls, code: str) -> Tuple[bool, str]:
         """Redeem a 6-character code from lua.tools."""
+        if not cls.is_unlocked():
+            return False, "LuaTools feature is not unlocked."
         code = code.strip().upper()
         if len(code) != 6:
             return False, "Login code must be exactly 6 characters."
@@ -402,6 +447,8 @@ class LuaToolsAPI:
     @classmethod
     def start_pkce_login(cls) -> Tuple[bool, str]:
         """Start a local HTTP server on port 53789 and return the authorization URL."""
+        if not cls.is_unlocked():
+            return False, "LuaTools feature is not unlocked."
         with cls._pkce_lock:
             cls.cancel_pkce()
 
@@ -536,6 +583,8 @@ class LuaToolsAPI:
     @classmethod
     def resolve_fix_download(cls, fix_id: str, slot: str = "fix") -> Tuple[Optional[str], Optional[str]]:
         """Resolve signed download URL from lua.tools."""
+        if not cls.is_unlocked():
+            return None, "LuaTools feature is not unlocked."
         token = cls.get_valid_access_token()
         if not token:
             return None, "Not authenticated with lua.tools. Please connect in Settings -> LuaTools."

@@ -13,7 +13,7 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import Qt, QObject, pyqtSignal, pyqtProperty, QPropertyAnimation, QEasingCurve
+from PyQt6.QtCore import Qt, QObject, pyqtSignal, pyqtProperty, QPropertyAnimation, QEasingCurve, QSize
 from PyQt6.QtGui import QColor, QPainter, QBrush, QPen
 from PyQt6.QtWidgets import (
     QWidget,
@@ -59,63 +59,21 @@ class _EnrichmentBridge(QObject):
     enriched = pyqtSignal()
 
 
-def _format_enriched_depot_desc(depot_id: str, fallback_desc: str, enrich_data: Optional[Dict[str, Any]] = None) -> str:
-    """Format depot title with OS, language, DLC badges, and enriched name from Steam PICS / SteamDB."""
-    if not enrich_data:
-        return fallback_desc
-
-    raw_name = enrich_data.get("name") or ""
-    # Strip redundant DLC prefix if present in scraped name
-    cleaned_name = re.sub(r"^DLC\s+\d+\s*-?\s*", "", str(raw_name), flags=re.IGNORECASE).strip()
-
-    # Determine base descriptive text
-    if cleaned_name and not re.match(r"^(?:Depot|App)\s+\d+$", cleaned_name, re.IGNORECASE):
-        base_desc = cleaned_name
-    elif fallback_desc and not re.match(r"^Depot\s+\d+$", fallback_desc, re.IGNORECASE):
-        base_desc = fallback_desc
-    else:
-        base_desc = f"Depot {depot_id}"
-
-    oslist = str(enrich_data.get("oslist") or "").lower()
-    os_tag = ""
-    if oslist == "windows":
-        os_tag = "[Windows]"
-    elif oslist == "linux":
-        os_tag = "[Linux]"
-    elif oslist in ("macos", "macosx"):
-        os_tag = "[macOS]"
-    elif "windows" in oslist and "linux" in oslist:
-        os_tag = "[Windows, Linux]"
-    elif "all" in oslist:
-        os_tag = "[All]"
-
-    from utils.depot_tag_helpers import extract_arch_code
-    arch = extract_arch_code(enrich_data, base_desc)
-    arch_tag = f"[{arch}]" if arch else ""
-
-    lang = str(enrich_data.get("language") or "").strip()
-    lang_tag = f"[{lang.capitalize()}]" if lang and lang.lower() not in ("english", "none", "") else ""
-
-    is_dlc = enrich_data.get("is_dlc")
-    dlc_id = enrich_data.get("dlcappid")
-    dlc_tag = ""
-    if is_dlc:
-        dlc_tag = f"[DLC {dlc_id}]" if dlc_id and str(dlc_id).isdigit() else "[DLC]"
-
-    tags = []
-    base_lower = base_desc.lower()
-    if os_tag and os_tag.lower() not in base_lower:
-        tags.append(os_tag)
-    if arch_tag and arch_tag.lower() not in base_lower:
-        tags.append(arch_tag)
-    if lang_tag and lang_tag.lower() not in base_lower:
-        tags.append(lang_tag)
-    if dlc_tag and dlc_tag.lower() not in base_lower:
-        tags.append(dlc_tag)
-
-    if tags:
-        return f"{' '.join(tags)}  {base_desc}".strip()
-    return base_desc
+def _format_enriched_depot_desc(
+    depot_id: str,
+    fallback_desc: str,
+    enrich_data: Optional[Dict[str, Any]] = None,
+    has_os_icon: bool = False,
+) -> str:
+    """Format depot title with OS, architecture, language, DLC badges, and clean name using format_depot_row_label."""
+    from utils.depot_tag_helpers import format_depot_row_label
+    return format_depot_row_label(
+        depot_id=str(depot_id),
+        depot_data=enrich_data or {},
+        base_desc=fallback_desc,
+        has_os_icon=has_os_icon,
+        show_os_badge=(not has_os_icon),
+    )
 
 
 class MiniSwitchToggle(QWidget):
@@ -269,6 +227,7 @@ def _make_local_indicator(in_local: bool) -> QWidget:
 def _make_table(columns: List[str], accent_color: str) -> QTableWidget:
     """Create a styled table widget matching ASSella design conventions."""
     tbl = QTableWidget()
+    tbl.setIconSize(QSize(18, 18))
     tbl.setColumnCount(len(columns))
     for c_idx, col_name in enumerate(columns):
         item = QTableWidgetItem(col_name)
@@ -862,8 +821,18 @@ def init_depots_tab(dialog) -> None:
                 or (f"[DLC] {lua_dlcs.get(d)}" if d in lua_dlcs else None)
                 or f"Depot {d}"
             )
-            enrich_info = cached_enrichments.get(d) or cached_app_depots.get(d)
-            enriched_desc = _format_enriched_depot_desc(d, desc, enrich_info)
+            enrich_info = cached_enrichments.get(d) or cached_app_depots.get(d) or {}
+
+            from utils.depot_tag_helpers import get_os_icon
+            accent_val = getattr(dialog, "accent_color", None) or ac
+            active_tint = QColor(accent_val) if accent_val and QColor(accent_val).isValid() else None
+            os_icon = get_os_icon(enrich_info.get("oslist"), tint_color=active_tint) if enrich_info else None
+            enriched_desc = _format_enriched_depot_desc(
+                depot_id=d,
+                fallback_desc=desc,
+                enrich_data=enrich_info,
+                has_os_icon=bool(os_icon),
+            )
 
             size_str = ""
             if enrich_info:
@@ -886,6 +855,8 @@ def init_depots_tab(dialog) -> None:
                 "id": d,
                 "desc": enriched_desc,
                 "raw_desc": desc,
+                "enrich_info": enrich_info,
+                "os_icon": os_icon,
                 "has_key": (d in valid_key_depots),
                 "is_shared": is_shared,
                 "size_str": size_str,
@@ -1225,6 +1196,8 @@ def init_depots_tab(dialog) -> None:
                 desc_text = f"{desc_text} [Shared]"
             desc_item = QTableWidgetItem(desc_text)
             desc_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            if item.get("os_icon"):
+                desc_item.setIcon(item["os_icon"])
             tooltip_parts = [desc_text]
             if item.get("size_str"):
                 tooltip_parts.append(f"Size: {item['size_str']}")

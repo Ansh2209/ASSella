@@ -360,7 +360,8 @@ class SingleDepotSelectionDialog(QDialog):
 
         # OS Logo Icon
         from utils.depot_tag_helpers import get_os_icon, format_depot_row_label
-        os_icon = get_os_icon(self.single_depot_data.get("oslist"))
+        tint = QColor(self.accent_color) if hasattr(self, "accent_color") and self.accent_color else None
+        os_icon = get_os_icon(self.single_depot_data.get("oslist"), tint_color=tint)
         if os_icon:
             os_lbl = QLabel()
             os_lbl.setPixmap(os_icon.pixmap(16, 16))
@@ -825,7 +826,8 @@ class SingleDepotSelectionDialog(QDialog):
             self.depots[self.single_depot_id] = self.single_depot_data
             if hasattr(self, "depot_name_lbl"):
                 from utils.depot_tag_helpers import get_os_icon, format_depot_row_label
-                os_icon = get_os_icon(self.single_depot_data.get("oslist"))
+                tint = QColor(self.accent_color) if hasattr(self, "accent_color") and self.accent_color else None
+                os_icon = get_os_icon(self.single_depot_data.get("oslist"), tint_color=tint)
                 raw_desc = self._get_depot_display_desc()
                 compact_desc = format_depot_row_label(
                     self.single_depot_id,

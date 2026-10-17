@@ -525,6 +525,10 @@ class SettingsDialog(QDialog):
             from ui.dialogs.settings_tabs.components_card import on_tools_tab_opened
             on_tools_tab_opened(self)
 
+        elif tab_name == "LuaTools":
+            if hasattr(self, "update_luatools_ui_status"):
+                self.update_luatools_ui_status()
+
     def _create_dialog_buttons(self) -> None:
         """Create standard Ok/Cancel buttons."""
         buttons = create_standard_buttons(self.accept, self.reject)
@@ -663,8 +667,8 @@ class SettingsDialog(QDialog):
         return tabs.add_tool_button(layout, text, tooltip, slot)
 
     @staticmethod
-    def _launch_terminal_command(cmd: list, cwd: str, needs_env: bool = False) -> None:
-        tabs.launch_terminal_command(cmd, cwd, needs_env)
+    def _launch_terminal_command(cmd: list, cwd: str, needs_env: bool = False) -> bool:
+        return tabs.launch_terminal_command(cmd, cwd, needs_env)
 
     @staticmethod
     def _manage_registry(filename: str, success_msg: str) -> None:
