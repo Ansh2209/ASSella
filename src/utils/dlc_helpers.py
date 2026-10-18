@@ -9,6 +9,7 @@ import re
 import shutil
 import logging
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set, Tuple
 
@@ -408,6 +409,214 @@ def is_dlc_only_mode(appid: str) -> bool:
     except Exception as e:
         logger.error(f"Error checking dlc_only_mode setting for {appid}: {e}")
         return False
+
+
+# Mirrors the limits used for the depot selector's smart presets
+# (src/ui/dialogs/depot_selection/selection_policy.py). They are repeated here
+# so this Qt-free module never imports the dialog package.
+STUB_SIZE_LIMIT = 1024
+STUB_BYPASS_AT = 64
+
+
+@dataclass(frozen=True)
+class DlcCandidate:
+    """One DLC depot discovered for a base game."""
+
+    depot_id: str
+    dlc_appid: str
+    name: str
+    size: int
+    oslist: Tuple[str, ...]
+
+    @property
+    def is_stub(self) -> bool:
+        return 0 < self.size <= STUB_SIZE_LIMIT
+
+
+@dataclass(frozen=True)
+class DlcDiscovery:
+    """What is known about a base game's DLCs before the user picks anything."""
+
+    appid: str
+    catalog: Dict[str, str]
+    depots: Tuple[DlcCandidate, ...]
+    sources: Tuple[str, ...]
+
+    @property
+    def dlc_appids(self) -> List[str]:
+        return list(self.catalog)
+
+    @property
+    def has_sized_depots(self) -> bool:
+        """True when at least one DLC depot can be downloaded for real."""
+        if not self.depots:
+            return False
+        # Games that ship dozens of DLCs also ship dozens of tiny stubs; the
+        # size rule is meaningless there, so any DLC depot counts.
+        if len(self.depots) >= STUB_BYPASS_AT:
+            return True
+        return any(not candidate.is_stub for candidate in self.depots)
+
+    @property
+    def is_config_only(self) -> bool:
+        """DLCs are known, but none of them has a downloadable depot."""
+        return bool(self.catalog) and not self.has_sized_depots
+
+
+_DLC_NAME_PREFIX_RE = re.compile(r"^\[DLC\s*\d+\]\s*", re.IGNORECASE)
+
+
+def _clean_dlc_name(value: Any) -> str:
+    """Drop PICS' ``[DLC 12345]`` prefix so the name is fit to show."""
+    return _DLC_NAME_PREFIX_RE.sub("", str(value or "")).strip()
+
+
+def _collect_dlc_depots(
+    appid: str,
+    depots: Optional[Dict[str, Any]],
+    catalog: Dict[str, str],
+    found: Dict[str, DlcCandidate],
+) -> bool:
+    """Merge one depots block into ``found``; True when anything was added."""
+    if not isinstance(depots, dict):
+        return False
+    added = False
+    for depot_id, meta in depots.items():
+        depot_id = str(depot_id).strip()
+        if not depot_id.isdigit():
+            continue
+        meta = meta if isinstance(meta, dict) else {}
+        desc = str(meta.get("desc") or meta.get("name") or "")
+        if not is_dlc_depot(depot_id, desc=desc, base_appid=appid, depot_meta=meta):
+            continue
+        if is_base_game_main_depot(depot_id, desc, appid, meta):
+            continue
+        dlc_appid = str(meta.get("dlcappid") or "").strip()
+        try:
+            size = int(meta.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        oslist = meta.get("oslist") or ()
+        if isinstance(oslist, str):
+            oslist = tuple(part for part in oslist.replace(",", " ").split() if part)
+        else:
+            oslist = tuple(str(part) for part in oslist)
+        name = _clean_dlc_name(meta.get("name") or meta.get("desc") or "")
+        found[depot_id] = DlcCandidate(
+            depot_id=depot_id,
+            dlc_appid=dlc_appid,
+            name=name,
+            size=size,
+            oslist=oslist,
+        )
+        if dlc_appid.isdigit() and dlc_appid != appid:
+            catalog.setdefault(dlc_appid, name)
+        added = True
+    return added
+
+
+def _absorb_app_info(
+    appid: str,
+    info: Any,
+    catalog: Dict[str, str],
+    found: Dict[str, DlcCandidate],
+) -> bool:
+    """Read depots and the DLC id list out of one app-info payload."""
+    if not isinstance(info, dict):
+        return False
+    added = _collect_dlc_depots(appid, info.get("depots"), catalog, found)
+    ids = info.get("listofdlc")
+    if isinstance(ids, str):
+        parts = ids.replace(",", " ").split()
+    elif isinstance(ids, (list, tuple, set)):
+        parts = [str(part) for part in ids]
+    else:
+        parts = []
+    for part in parts:
+        part = str(part).strip()
+        if part.isdigit() and part != appid:
+            catalog.setdefault(part, "")
+    return added
+
+
+def discover_dlc_depots(
+    appid: Any,
+    depots: Optional[Dict[str, Any]] = None,
+    *,
+    app_info: Optional[Dict[str, Any]] = None,
+    allow_store: bool = False,
+    depot_info_fetcher: Optional[Any] = None,
+    store_lookup: Optional[Any] = None,
+) -> DlcDiscovery:
+    """Work out which DLCs a base game has and which of them can be downloaded.
+
+    The cheap sources are consulted first (depots already in memory, then the
+    cached app info); the network is only touched when those turn up nothing.
+    The Steam Store is a last resort and only when ``allow_store`` is set,
+    because it knows more DLCs than PICS does but its list can include
+    soundtracks and other entries that carry no depot at all.
+    """
+    appid = str(appid or "").strip()
+    if not appid or appid in ("0", "N/A", "unknown"):
+        return DlcDiscovery(appid, {}, (), ())
+
+    catalog: Dict[str, str] = {}
+    found: Dict[str, DlcCandidate] = {}
+    sources: List[str] = []
+
+    if depots:
+        if _collect_dlc_depots(appid, depots, catalog, found):
+            sources.append("memory")
+    if app_info and _absorb_app_info(appid, app_info, catalog, found):
+        sources.append("cache")
+
+    if not found:
+        fetcher = depot_info_fetcher
+        if fetcher is None:
+            try:
+                from core.steam_api import get_depot_info_from_api
+
+                fetcher = get_depot_info_from_api
+            except Exception:
+                logger.debug("DLC discovery: no depot fetcher available", exc_info=True)
+                fetcher = None
+        if fetcher is not None:
+            try:
+                info = fetcher(appid)
+            except Exception:
+                logger.debug("DLC discovery: depot lookup failed for %s", appid, exc_info=True)
+                info = None
+            if _absorb_app_info(appid, info, catalog, found):
+                sources.append("pics")
+
+    if allow_store and not found:
+        lookup = store_lookup
+        if lookup is None:
+            lookup = lambda base_appid: get_all_dlcs_for_app(base_appid, {}, allow_network=True)
+        try:
+            names = lookup(appid)
+        except Exception:
+            logger.debug("DLC discovery: store lookup failed for %s", appid, exc_info=True)
+            names = None
+        if isinstance(names, dict):
+            pairs = list(names.items())
+        elif isinstance(names, list):
+            pairs = [
+                (item.get("dlc_appid"), item.get("dlc_name"))
+                for item in names
+                if isinstance(item, dict)
+            ]
+        else:
+            pairs = []
+        if pairs:
+            sources.append("store")
+            for dlc_appid, name in pairs:
+                dlc_appid = str(dlc_appid or "").strip()
+                if dlc_appid.isdigit() and dlc_appid != appid:
+                    catalog.setdefault(dlc_appid, str(name or ""))
+
+    ordered = tuple(found[key] for key in sorted(found, key=lambda item: (found[item].name.lower(), item)))
+    return DlcDiscovery(appid, catalog, ordered, tuple(sources))
 
 
 def get_dlc_only_info(base_appid: str) -> List[Dict[str, str]]:

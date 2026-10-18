@@ -90,6 +90,7 @@ class DlcDepotSelectionDialog(QDialog):
         lock_storage=True,
         dlc_only_mode=True,
         lock_dlc_only=True,
+        dlc_catalog=None,
         **kwargs,
     ):
         super().__init__(parent)
@@ -110,6 +111,29 @@ class DlcDepotSelectionDialog(QDialog):
         self._drag_pos: Optional[QPoint] = None
         self._user_checked_depots: Set[str] = set(self.initial_selected_depots)
         self._store_packages: List[Dict[str, Any]] = []
+        # DLC appid -> name for every DLC the game is known to have, including
+        # ones with no downloadable depot. The caller may pass its own list
+        # (it can be broader than the depots this dialog was opened with).
+        self._dlc_catalog: Dict[str, str] = {}
+        for dlc_appid, dlc_name in dict(dlc_catalog or {}).items():
+            dlc_appid = str(dlc_appid or "").strip()
+            if dlc_appid.isdigit() and dlc_appid != self.app_id:
+                self._dlc_catalog[dlc_appid] = str(dlc_name or "")
+        for meta in self.depots.values():
+            if not isinstance(meta, dict):
+                continue
+            dlc_appid = str(meta.get("dlcappid") or "").strip()
+            if dlc_appid.isdigit() and dlc_appid != self.app_id:
+                name = str(meta.get("name") or meta.get("desc") or "")
+                self._dlc_catalog.setdefault(dlc_appid, name.strip())
+        # DLCs that own no depot at all. Only these can be recorded without a
+        # download; a DLC whose depots the user deselected was a real choice,
+        # not a missing download.
+        self._depotless_dlcs: Set[str] = set(self._dlc_catalog)
+        for meta in self.depots.values():
+            if isinstance(meta, dict):
+                dlc_appid = str(meta.get("dlcappid") or "").strip()
+                self._depotless_dlcs.discard(dlc_appid)
 
         # Platform detection
         self._available_platforms = get_available_platforms(self.depots)
@@ -830,12 +854,55 @@ class DlcDepotSelectionDialog(QDialog):
 
         size_text = format_size(checked_bytes)
         self.summary_lbl.setText(f"Selected: {checked_count} of {total_visible} DLCs ({size_text})")
-        self.download_btn.setEnabled(checked_count > 0)
+        # With nothing ticked the user can still record DLC mode for the DLCs
+        # that have no depot to download at all.
+        save_only = checked_count == 0 and bool(self._depotless_dlcs)
+        self.download_btn.setEnabled(checked_count > 0 or save_only)
+        if save_only:
+            count = len(self._depotless_dlcs)
+            noun = "DLC" if count == 1 else "DLCs"
+            self.download_btn.setText(f"Save DLC Mode ({count} {noun} Without Depot)")
+        else:
+            self.download_btn.setText("Download Selected DLCs")
         self.select_all_btn.setText("Deselect All" if checked_count == total_visible and total_visible > 0 else "Select All")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Public Downstream Interface Matching DepotSelectionDialog
     # ─────────────────────────────────────────────────────────────────────────
+
+    def accept(self):
+        """Confirm the selection, recording DLC mode for this game.
+
+        The standard depot dialog persists its mode when the selector is
+        confirmed rather than when a download succeeds, and this dialog is the
+        other half of that promise: picking DLCs here is the user saying the
+        game runs in DLC-only mode.
+        """
+        try:
+            get_settings().setValue(f"dlc_only_mode/{self.app_id}", True)
+        except Exception:
+            logger.warning("Could not record DLC mode for %s", self.app_id, exc_info=True)
+        super().accept()
+
+    def get_dlc_catalog(self) -> Dict[str, str]:
+        """DLC appid -> name for every DLC known when the dialog opened."""
+        return dict(self._dlc_catalog)
+
+    def get_depotless_dlc_catalog(self) -> Dict[str, str]:
+        """The DLCs that own no depot, so nothing about them can be downloaded."""
+        return {dlc: self._dlc_catalog.get(dlc, "") for dlc in sorted(self._depotless_dlcs)}
+
+    def get_selected_dlc_appids(self) -> List[str]:
+        """DLC appids owning at least one checked depot."""
+        selected: List[str] = []
+        for depot_id in self.get_selected_depots():
+            meta = self.depots.get(depot_id) or {}
+            if not isinstance(meta, dict):
+                continue
+            dlc_appid = str(meta.get("dlcappid") or "").strip()
+            if dlc_appid.isdigit() and dlc_appid != self.app_id and dlc_appid not in selected:
+                selected.append(dlc_appid)
+        return selected
 
     def get_selected_depots(self) -> List[str]:
         """Returns the list of checked DLC depot ID strings."""

@@ -84,14 +84,9 @@ class DepotSelectionDialog(
         if missing is None and len(args) >= 9:
             missing = args[8]
 
-        # Only route to SingleDepotSelectionDialog if there are NO missing depots from Hubcap.
-        # If DLCs/depots are missing, full DepotSelectionDialog MUST be shown so the user sees
-        # the greyed out missing depots and their statuses.
-        if not missing and (is_single or (isinstance(depots, dict) and len(depots) == 1)):
-            from ui.dialogs.single_depot_dialog import SingleDepotSelectionDialog
-            return SingleDepotSelectionDialog(*args, **kwargs)
-
-        # Check DLC-only mode routing
+        # DLC-only routing comes first: a DLC selection must never collapse
+        # into the generic single-depot dialog, because that one knows nothing
+        # about DLC names, OS tabs or the DLC-mode hand-off.
         is_dlc = kwargs.get("dlc_only_mode", False) or kwargs.get("lock_dlc_only", False)
         if not is_dlc and len(args) > 16:
             is_dlc = bool(args[16])
@@ -103,6 +98,13 @@ class DepotSelectionDialog(
                 return DlcDepotSelectionDialog(*args, **kwargs)
             except Exception as _dlc_err:
                 logger.warning(f"[DepotSelectionDialog] DLC selection dialog routing fallback: {_dlc_err}")
+
+        # Only route to SingleDepotSelectionDialog if there are NO missing depots from Hubcap.
+        # If DLCs/depots are missing, full DepotSelectionDialog MUST be shown so the user sees
+        # the greyed out missing depots and their statuses.
+        if not missing and (is_single or (isinstance(depots, dict) and len(depots) == 1)):
+            from ui.dialogs.single_depot_dialog import SingleDepotSelectionDialog
+            return SingleDepotSelectionDialog(*args, **kwargs)
 
         return super().__new__(cls)
 

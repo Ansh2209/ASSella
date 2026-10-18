@@ -225,11 +225,12 @@ class LibraryActionsMixin:
         if not appid or appid in ("0", "N/A", "unknown"):
             return
 
-        from utils.dlc_helpers import has_game_dlcs
-        has_dlc = has_game_dlcs(appid, game_data.get("depots"))
-        if not has_dlc:
-            from ui.dialogs.themed_message_box import ThemedMessageBox
-            name = game_data.get("game_name", "this game")
+        from ui.dialogs.themed_message_box import ThemedMessageBox
+        from utils.dlc_helpers import discover_dlc_depots
+
+        name = game_data.get("game_name", "this game")
+        discovery = discover_dlc_depots(appid, game_data.get("depots"))
+        if not discovery.catalog and not discovery.depots:
             ThemedMessageBox.information(
                 self,
                 "No DLCs Detected",
@@ -237,11 +238,94 @@ class LibraryActionsMixin:
             )
             return
 
+        if not discovery.has_sized_depots:
+            # The DLC list is known but none of it has a depot to download.
+            # Let the user decide instead of silently doing nothing.
+            answer = ThemedMessageBox.warning(
+                self,
+                "No Downloadable DLC Depots",
+                f"{name} lists {len(discovery.catalog)} DLC(s), but none of them "
+                "has a depot with real content to download.\n\n"
+                "You can still turn on DLC mode so they count as owned, without "
+                "downloading anything. Continue?",
+                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.No,
+            )
+            if answer != ThemedMessageBox.StandardButton.Yes:
+                return
+
         game_data_dlc = dict(game_data)
         game_data_dlc["_dlc_only"] = True
         game_data_dlc["_lock_dlc_only"] = True
         game_data_dlc["_lock_storage"] = True
+        game_data_dlc["_dlc_catalog"] = dict(discovery.catalog)
         self._fetch_game_manifest(game_data_dlc, is_verify=False)
+
+    def _save_config_only_dlc_mode(self, appid: str, game_data: dict, depot_dialog) -> bool:
+        """Record DLC mode for a game whose DLCs have no downloadable depot.
+
+        The DLC names are written to the SLSsteam config so the game's DLCs
+        count as owned, and the mode flag is set. Nothing is queued.
+        """
+        from ui.dialogs.themed_message_box import ThemedMessageBox
+
+        known: Dict[str, str] = {}
+        getter = getattr(depot_dialog, "get_dlc_catalog", None)
+        if callable(getter):
+            try:
+                known.update(getter() or {})
+            except Exception:
+                logger.debug("[Library] Could not read the dialog's DLC catalog", exc_info=True)
+        for dlc_appid, dlc_name in (game_data.get("_dlc_catalog") or {}).items():
+            dlc_appid = str(dlc_appid or "").strip()
+            if dlc_appid.isdigit():
+                known.setdefault(dlc_appid, str(dlc_name or ""))
+
+        # Only the depotless DLCs are recorded when nothing was ticked. A DLC
+        # whose depots the user unticked was a deliberate exclusion.
+        get_depotless = getattr(depot_dialog, "get_depotless_dlc_catalog", None)
+        depotless = get_depotless() if callable(get_depotless) else None
+        if isinstance(depotless, dict) and depotless:
+            catalog = {str(k): str(v or known.get(str(k), "")) for k, v in depotless.items()}
+        else:
+            catalog = dict(known)
+
+        name = game_data.get("game_name") or f"App {appid}"
+        if not catalog:
+            ThemedMessageBox.information(
+                self,
+                "Nothing Selected",
+                f"No DLCs were selected for {name}, so nothing was changed.",
+            )
+            return False
+
+        try:
+            from utils.yaml.dlc import add_dlc_data_batch
+            from utils.yaml_config_manager import get_user_config_path
+
+            config_path = get_user_config_path()
+            if not config_path:
+                raise RuntimeError("SLSsteam config path could not be found")
+            add_dlc_data_batch(config_path, appid, catalog)
+        except Exception as exc:
+            logger.warning("[Library] Could not save DLC mode for %s: %s", appid, exc)
+            ThemedMessageBox.warning(
+                self,
+                "Could Not Save DLC Mode",
+                f"The DLC list for {name} could not be written to the SLSsteam config.\n\n{exc}",
+            )
+            return False
+
+        from utils.settings import get_settings
+
+        get_settings().setValue(f"dlc_only_mode/{appid}", True)
+        ThemedMessageBox.information(
+            self,
+            "DLC Mode Saved",
+            f"DLC mode is on for {name}. {len(catalog)} DLC(s) will be treated as owned.\n\n"
+            "No download was queued because none of these DLCs has a downloadable depot.",
+        )
+        return True
 
     # ─────────────────────────────────────────────────────────────────────────
     # 2. Batch Operations (Update / Uninstall / Enqueue)
@@ -2202,6 +2286,7 @@ class LibraryActionsMixin:
             )
             selected_depots = selection.selected_depots
             cached_selected = selection.cached_selected
+            config_only_saved = False
 
             if selection.should_prompt and not selection.auto_skip:
                 parent_widget = self if isinstance(self, QWidget) else getattr(self, "main_window", None)
@@ -2226,6 +2311,7 @@ class LibraryActionsMixin:
                     lock_storage=lock_storage,
                     dlc_only_mode=dlc_only_mode,
                     lock_dlc_only=lock_dlc_only,
+                    dlc_catalog=game_data.get("_dlc_catalog") or {},
                 )
 
                 # Apply recommended build selection if set
@@ -2260,6 +2346,13 @@ class LibraryActionsMixin:
                         if appid:
                             settings.setValue(f"pin_build/{appid}", True)
                             logger.info(f"Pinned build {pinned_bid} for AppID {appid} in library actions")
+
+                    if not selected_depots and is_dlc_only:
+                        # The user confirmed DLC mode with nothing ticked: the
+                        # DLCs exist but have no depot to download.
+                        config_only_saved = self._save_config_only_dlc_mode(
+                            appid, game_data, depot_dialog
+                        )
 
                     if hasattr(depot_dialog, "get_manifest_overrides"):
                         overrides = depot_dialog.get_manifest_overrides()
@@ -2306,7 +2399,10 @@ class LibraryActionsMixin:
                 except Exception as e:
                     logger.warning(f"Failed to cache depot selection: {e}")
             else:
-                logger.info("User cancelled depot selection.")
+                if config_only_saved:
+                    logger.info("DLC mode saved for %s without a download.", appid)
+                else:
+                    logger.info("User cancelled depot selection.")
                 if hasattr(self, "_active_fetches"):
                     self._active_fetches.discard(appid)
                 if dialog and hasattr(dialog, "validate_btn") and dialog.validate_btn:
