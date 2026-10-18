@@ -173,6 +173,7 @@ jobs:
                        test_storage_targets test_depot_metadata \
                        test_executable_probe test_selection_policy \
                        test_library_actions test_dlc_discovery \
+                       test_dlc_mode_ui \
                        test_silent_exception_gate \
                        test_native_dialog_gate \
                        test_themed_dialog_gate \

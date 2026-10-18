@@ -706,6 +706,39 @@ class DlcDepotSelectionDialog(QDialog):
                 size_item.setForeground(QColor(130, 130, 130))
             self.table.setItem(row, 2, size_item)
 
+        # DLCs that exist but have no depot at all. They cannot be ticked or
+        # downloaded; listing them makes the config-only case concrete instead
+        # of silently recording names the user never saw.
+        for dlc_appid in sorted(
+            self._depotless_dlcs,
+            key=lambda d: (self._dlc_catalog.get(d, "").lower(), d),
+        ):
+            dlc_name = self._dlc_catalog.get(dlc_appid) or f"DLC {dlc_appid}"
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+
+            id_item = QTableWidgetItem("—")
+            id_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            id_item.setForeground(QColor(130, 130, 130))
+            id_item.setToolTip(
+                "This DLC ships no depot of its own, so nothing can be "
+                "downloaded for it. DLC mode records it by name."
+            )
+            self.table.setItem(row, 0, id_item)
+
+            name_item = QTableWidgetItem(f"{dlc_name}  (no depot)")
+            name_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            name_item.setForeground(QColor(170, 170, 170))
+            name_item.setToolTip(
+                f"DLC {dlc_appid}\nNo depot: tracked by name in DLC mode only."
+            )
+            self.table.setItem(row, 1, name_item)
+
+            size_item = QTableWidgetItem("—")
+            size_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            size_item.setForeground(QColor(130, 130, 130))
+            self.table.setItem(row, 2, size_item)
+
         self.table.blockSignals(False)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -840,20 +873,25 @@ class DlcDepotSelectionDialog(QDialog):
         self._update_summary()
 
     def _update_summary(self):
-        total_visible = self.table.rowCount()
+        selectable_total = 0
         checked_count = 0
         checked_bytes = 0
 
-        for r in range(total_visible):
+        for r in range(self.table.rowCount()):
             id_item = self.table.item(r, 0)
-            if id_item and id_item.checkState() == Qt.CheckState.Checked:
+            if not id_item or id_item.flags() == Qt.ItemFlag.NoItemFlags:
+                continue
+            selectable_total += 1
+            if id_item.checkState() == Qt.CheckState.Checked:
                 checked_count += 1
                 size_item = self.table.item(r, 2)
                 if size_item and hasattr(size_item, "sort_val"):
                     checked_bytes += int(size_item.sort_val or 0)
 
         size_text = format_size(checked_bytes)
-        self.summary_lbl.setText(f"Selected: {checked_count} of {total_visible} DLCs ({size_text})")
+        self.summary_lbl.setText(
+            f"Selected: {checked_count} of {selectable_total} DLCs ({size_text})"
+        )
         # With nothing ticked the user can still record DLC mode for the DLCs
         # that have no depot to download at all.
         save_only = checked_count == 0 and bool(self._depotless_dlcs)
@@ -864,7 +902,11 @@ class DlcDepotSelectionDialog(QDialog):
             self.download_btn.setText(f"Save DLC Mode ({count} {noun} Without Depot)")
         else:
             self.download_btn.setText("Download Selected DLCs")
-        self.select_all_btn.setText("Deselect All" if checked_count == total_visible and total_visible > 0 else "Select All")
+        self.select_all_btn.setText(
+            "Deselect All"
+            if checked_count == selectable_total and selectable_total > 0
+            else "Select All"
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
     # Public Downstream Interface Matching DepotSelectionDialog

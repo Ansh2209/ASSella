@@ -40,6 +40,20 @@ def format_game_display_name(game_data: dict) -> str:
     return " ".join(parts)
 
 
+DLC_MODE_SUFFIX = " [DLC MODE]"
+
+
+def split_dlc_mode(display_name: str) -> tuple:
+    """Split the DLC-mode marker off a display name.
+
+    The library shows the marker as its own accented chip, so it must not be
+    part of the name the eliding label measures and truncates.
+    """
+    if display_name.endswith(DLC_MODE_SUFFIX):
+        return display_name[: -len(DLC_MODE_SUFFIX)], True
+    return display_name, False
+
+
 def format_size(size_bytes: int) -> str:
     """Format byte size into human readable string."""
     if size_bytes == 0:
@@ -235,13 +249,35 @@ class GameItemWidget(QWidget):
         info_layout.setContentsMargins(0, 8, 0, 8)
         info_layout.setSpacing(6)
 
-        self.name_label = ElidedLabel(display_name)
+        name_only, dlc_mode = split_dlc_mode(display_name)
+        self.name_label = ElidedLabel(name_only)
         font = self.name_label.font()
         font.setPointSize(12)
         font.setBold(True)
         self.name_label.setFont(font)
         self.name_label.setStyleSheet("color: #FFFFFF; font-size: 12pt; font-weight: bold;")
-        info_layout.addWidget(self.name_label)
+
+        name_row = QHBoxLayout()
+        name_row.setContentsMargins(0, 0, 0, 0)
+        name_row.setSpacing(6)
+        name_row.addWidget(self.name_label, 1)
+        self.dlc_mode_badge = None
+        if dlc_mode:
+            self.dlc_mode_badge = QLabel("DLC MODE")
+            self.dlc_mode_badge.setSizePolicy(
+                QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+            )
+            self.dlc_mode_badge.setToolTip(
+                "This game is tracked as DLC-only: main depots are not downloaded."
+            )
+            self.dlc_mode_badge.setStyleSheet(
+                f"color: {self.accent_color};"
+                f" border: 1px solid {self.accent_color};"
+                " border-radius: 4px; padding: 0px 5px;"
+                " font-size: 9px; font-weight: bold;"
+            )
+            name_row.addWidget(self.dlc_mode_badge, 0, Qt.AlignmentFlag.AlignVCenter)
+        info_layout.addLayout(name_row)
 
         # Size
         size_label = QLabel(f"Size: {size_str}")
