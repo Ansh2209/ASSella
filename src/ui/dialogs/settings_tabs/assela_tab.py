@@ -115,7 +115,7 @@ def create_assela_tab(dialog) -> QWidget:
     dialog.title_bar_search_checkbox = create_checkbox_setting(
         "Search Widget in Title Bar",
         "title_bar_search_enabled",
-        True,
+        False,
         dialog,
         "Show a live search bar and quick-results dropdown directly in the top title bar instead of the search button.",
     )

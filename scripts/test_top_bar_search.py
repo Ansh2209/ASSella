@@ -103,12 +103,12 @@ def main():
 
     print("=== title bar search optional toggle test ===")
     window.show()
-    # 1. The live field is the default; the classic title + search button are opt-in.
+    # 1. When toggle is disabled (default): title label and classic search button visible, widget hidden
     settings.remove("title_bar_search_enabled")
     titlebar.refresh_search_mode()
-    check(not titlebar.search_controller.input.isHidden(), "search input is shown when the setting is unset (the default)")
-    check(titlebar.title_label.isHidden(), "ASSella title label is hidden by default")
-    check(titlebar.search_button.isHidden(), "Search button is hidden by default")
+    check(titlebar.search_controller.input.isHidden(), "search input is hidden when the setting is unset (the default)")
+    check(not titlebar.title_label.isHidden(), "ASSella title label is visible by default")
+    check(not titlebar.search_button.isHidden(), "Search button is visible by default")
 
     # 2. When toggle is disabled: title label and classic search button visible, widget hidden
     settings.setValue("title_bar_search_enabled", False)

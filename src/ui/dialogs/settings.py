@@ -129,7 +129,7 @@ class SettingsDialog(QDialog):
 
         # Save original API keys for restore on cancel
         self._original_morrenus_key = self.settings.value("morrenus_api_key", "", type=str)
-        self._original_title_bar_search = self.settings.value("title_bar_search_enabled", True, type=bool)
+        self._original_title_bar_search = self.settings.value("title_bar_search_enabled", False, type=bool)
         self.settings.sync()
         self._original_ignore_online_fixes = self.settings.value("luatools_ignore_online_fixes", False, type=bool)
         self._original_steam_username = self.settings.value("steam_username", "", type=str)
