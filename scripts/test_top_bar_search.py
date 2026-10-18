@@ -55,6 +55,22 @@ def main():
     check(search.panel.x() >= 0 and search.panel.y() > 0, "results panel positions below its field")
     check(search.panel.width() == search.input.width(), "results panel width strictly matches the search bar width")
 
+    print("=== results panel stays inside a bottom-docked title bar ===")
+    titlebar.setGeometry(0, window.height() - 32, window.width(), 32)
+    app.processEvents()
+    field_top = search.input.mapTo(window, search.input.rect().topLeft()).y()
+    search._position_panel()
+    check(
+        search.panel.y() + search.panel.height() <= window.height(),
+        "results panel is not clipped when the title bar sits at the bottom (the default)",
+    )
+    check(
+        search.panel.y() + search.panel.height() <= field_top,
+        "results panel opens upwards above the field when there is no room below",
+    )
+    titlebar.setGeometry(0, 0, 900, 32)
+    app.processEvents()
+
     print("=== API and local library entries share the existing ranking policy ===")
     old_search = morrenus_api.search_games
     morrenus_api.search_games = lambda query: {
@@ -87,22 +103,29 @@ def main():
 
     print("=== title bar search optional toggle test ===")
     window.show()
-    # 1. When toggle is disabled (default): title label and classic search button visible, widget hidden
+    # 1. The live field is the default; the classic title + search button are opt-in.
+    settings.remove("title_bar_search_enabled")
+    titlebar.refresh_search_mode()
+    check(not titlebar.search_controller.input.isHidden(), "search input is shown when the setting is unset (the default)")
+    check(titlebar.title_label.isHidden(), "ASSella title label is hidden by default")
+    check(titlebar.search_button.isHidden(), "Search button is hidden by default")
+
+    # 2. When toggle is disabled: title label and classic search button visible, widget hidden
     settings.setValue("title_bar_search_enabled", False)
     titlebar.refresh_search_mode()
     check(titlebar.search_controller.input.isHidden(), "search input is hidden when title_bar_search_enabled is False")
     check(not titlebar.title_label.isHidden(), "ASSella title label is visible when title_bar_search_enabled is False")
     check(not titlebar.search_button.isHidden(), "Search button is visible when title_bar_search_enabled is False")
 
-    # 2. When toggle is enabled: search widget visible, title label and search button hidden
+    # 3. When toggle is enabled: search widget visible, title label and search button hidden
     settings.setValue("title_bar_search_enabled", True)
     titlebar.refresh_search_mode()
     check(not titlebar.search_controller.input.isHidden(), "search input is visible when title_bar_search_enabled is True")
     check(titlebar.title_label.isHidden(), "ASSella title label is hidden when title_bar_search_enabled is True")
     check(titlebar.search_button.isHidden(), "Search button is hidden when title_bar_search_enabled is True")
 
-    # Reset back to False
-    settings.setValue("title_bar_search_enabled", False)
+    # Leave the developer's setting unset so the next run starts from the default.
+    settings.remove("title_bar_search_enabled")
     titlebar.refresh_search_mode()
 
     main_source = (SRC_DIR / "ui" / "main_window.py").read_text()

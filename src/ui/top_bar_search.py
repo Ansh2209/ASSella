@@ -322,12 +322,23 @@ class TopBarSearch:
         # Width strictly matches the search input field width
         width = self.input.width()
         x = anchor.x()
-        y = anchor.y() + 4
         panel_h = self.panel.sizeHint().height()
-        max_h = max(80, self.main_window.height() - y - 16)
-        if panel_h > max_h:
-            panel_h = max_h
-        self.panel.setGeometry(x, y, width, panel_h)
+        window_h = self.main_window.height()
+
+        below_y = anchor.y() + 4
+        room_below = window_h - below_y - 8
+        # The title bar can be docked at the bottom of the window
+        # (titlebar_position = "bottom", the default), where there is no room
+        # under the field at all. Open the panel upwards in that case instead
+        # of letting the window clip it down to a few pixels.
+        if panel_h > room_below:
+            above_y = anchor.y() - self.input.height() - 4 - panel_h
+            if above_y >= 8:
+                self.panel.setGeometry(x, above_y, width, panel_h)
+                return
+            panel_h = max(0, room_below)
+
+        self.panel.setGeometry(x, below_y, width, panel_h)
 
     def reposition(self):
         target_w = max(340, min(480, self.main_window.width() - 320))

@@ -117,7 +117,7 @@ class BottomTitleBar(QFrame):
     def refresh_search_mode(self) -> None:
         """Toggle between the live top-bar search widget and the classic title + search button."""
         settings = get_settings()
-        use_widget = settings.value("title_bar_search_enabled", False, type=bool)
+        use_widget = settings.value("title_bar_search_enabled", True, type=bool)
 
         if self.search_controller and self.search_controller.input:
             self.search_controller.input.setVisible(use_widget)
