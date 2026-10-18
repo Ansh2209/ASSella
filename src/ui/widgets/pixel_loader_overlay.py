@@ -80,9 +80,61 @@ class PixelGridWidget(QWidget):
             painter.drawRoundedRect(QRectF(x, y, cell_size, cell_size), corner_radius, corner_radius)
 
 
+class SpinnerRingWidget(QWidget):
+    """Sleek circular spinner ring with a subtle track and smooth animated arc."""
+
+    def __init__(self, parent=None, size: int = 22, accent_color: str = "#a1c9fd", thickness: float = 2.5):
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self.accent_color = QColor(accent_color)
+        self.thickness = thickness
+        self.angle = 0.0
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)  # ~60 FPS
+        self._timer.timeout.connect(self._rotate)
+        self._timer.start()
+
+    def set_color(self, hex_color: str):
+        self.accent_color = QColor(hex_color)
+        self.update()
+
+    def _rotate(self):
+        self.angle = (self.angle + 4.5) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect_size = self.width() - self.thickness - 2
+        rect = QRectF(
+            self.thickness / 2.0 + 1,
+            self.thickness / 2.0 + 1,
+            rect_size,
+            rect_size,
+        )
+
+        # 1. Subtle background track ring
+        track_color = QColor(255, 255, 255, 30)
+        track_pen = QPen(track_color, self.thickness)
+        painter.setPen(track_pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(rect)
+
+        # 2. Breathing animated arc
+        cycle = (int(self.angle) // 2) % 180
+        span = 80 + abs(cycle - 90) * 1.8
+
+        arc_pen = QPen(self.accent_color, self.thickness)
+        arc_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(arc_pen)
+        painter.drawArc(rect, int(self.angle * 16), int(span * 16))
+
+
 class PixelLoadingOverlay(QWidget):
     """
-    Floating modern card overlay showing the 3x3 pixel loader, status message,
+    Floating modern card overlay showing the circular spinner ring, status message,
     and live elapsed timer in monospace tabular numbers.
     """
 
@@ -114,9 +166,10 @@ class PixelLoadingOverlay(QWidget):
         card_lay.setContentsMargins(14, 10, 16, 10)
         card_lay.setSpacing(10)
 
-        # 1. Pixel Grid Widget
-        self.grid_widget = PixelGridWidget(self.card, accent_color=self.accent_color)
-        card_lay.addWidget(self.grid_widget)
+        # 1. Circular Spinner Ring Widget
+        self.spinner_widget = SpinnerRingWidget(self.card, size=22, accent_color=self.accent_color)
+        self.grid_widget = self.spinner_widget  # backwards-compatible attribute
+        card_lay.addWidget(self.spinner_widget)
 
         # 2. Status Label (shimmering text)
         self.status_lbl = QLabel(label, self.card)
