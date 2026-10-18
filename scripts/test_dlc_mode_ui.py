@@ -166,6 +166,41 @@ def main() -> int:
     finally:
         grouped.deleteLater()
 
+    # Disabled rows still use the dark table surface on alternating rows.
+    print("=== disabled DLC rows remain legible on alternating surfaces ===")
+    styled = DlcDepotSelectionDialog(
+        probe_appid,
+        "Probe Game",
+        grouped_depots,
+        missing_hubcap_depots={"333"},
+        dlc_catalog=grouped_catalog,
+    )
+    try:
+        styled.show()
+        app.processEvents()
+        disabled = next(
+            r for r in range(styled.table.rowCount())
+            if styled.table.item(r, 0).text() == "502"
+        )
+        disabled_id = styled.table.item(disabled, 0)
+        name_item = styled.table.item(disabled, 1)
+        check(disabled_id.flags() == Qt.ItemFlag.NoItemFlags,
+              "the missing-depot row is disabled")
+        check(name_item.foreground().color().getRgb()[:3] == (130, 130, 130),
+              "the disabled row keeps its muted foreground")
+        name_rect = styled.table.visualItemRect(name_item)
+        table_image = styled.table.viewport().grab().toImage()
+        surface = table_image.pixelColor(name_rect.right() - 6, name_rect.center().y())
+        check(max(surface.red(), surface.green(), surface.blue()) < 245,
+              f"alternating rows stay dark instead of white (got {surface.name()})")
+        alternate_surface = styled.table.palette().color(
+            styled.table.palette().ColorRole.AlternateBase
+        )
+        check(alternate_surface.name() != "#ffffff",
+              f"the alternate palette is not the default white (got {alternate_surface.name()})")
+    finally:
+        styled.deleteLater()
+
     # -------------------------------------------------------------------- card
     print("=== the library card shows an accented chip ===")
     settings.setValue(f"dlc_only_mode/{probe_appid}", True)

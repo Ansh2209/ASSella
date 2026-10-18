@@ -16,7 +16,7 @@ import logging
 import re
 from typing import Dict, List, Optional, Any, Set, Tuple
 from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize
-from PyQt6.QtGui import QColor, QPixmap, QMouseEvent, QPainter, QFont, QPen
+from PyQt6.QtGui import QColor, QPixmap, QMouseEvent, QPainter, QFont, QPen, QPalette
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -409,6 +409,9 @@ class DlcDepotSelectionDialog(QDialog):
                 padding: 6px 10px;
                 border-bottom: 1px solid rgba(255, 255, 255, 0.03);
             }}
+            QTableWidget::item:disabled {{
+                color: rgba(255, 255, 255, 0.48);
+            }}
             QTableWidget::item:hover {{
                 background-color: rgba(255, 255, 255, 0.05);
             }}
@@ -441,6 +444,14 @@ class DlcDepotSelectionDialog(QDialog):
                 border: 1px solid rgba(255, 255, 255, 0.12);
             }}
         """)
+        # A stylesheet background does not replace QPalette's default white
+        # AlternateBase; set it explicitly so odd rows stay dark as well.
+        palette = self.table.palette()
+        palette.setColor(
+            QPalette.ColorRole.AlternateBase,
+            QColor(self.background_color).lighter(115),
+        )
+        self.table.setPalette(palette)
         self.table.cellClicked.connect(self._on_table_cell_clicked)
         container_lay.addWidget(self.table, 1)
 
