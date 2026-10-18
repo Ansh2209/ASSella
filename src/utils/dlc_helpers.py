@@ -1355,7 +1355,8 @@ def get_owned_dlcs_from_steam(base_appid: str, steam_userdata_path: Optional[str
                 continue
             try:
                 content = cfg_file.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
+            except OSError as exc:
+                logger.debug("[DLC] Could not read %s: %s", cfg_file, exc)
                 continue
 
             match = re.search(rf"\"{base_appid_str}\"\s+\"([0-9a-fA-F]+)\"", content)
@@ -1402,6 +1403,9 @@ def enrich_dlc_names_with_byparr_or_store(
         for dlc_id, name in enriched.items()
         if not name or name.strip().lower() in (f"dlc {dlc_id}", f"app {dlc_id}", "")
     ]
+    # Every name is known: do not open a browser or a socket for nothing.
+    if not needs_lookup:
+        return enriched
 
     # 1. Try Byparr SteamDB Scraper if Byparr is available
     try:
@@ -1418,8 +1422,15 @@ def enrich_dlc_names_with_byparr_or_store(
                         d_id = tds[0].get_text(strip=True)
                         d_name = tds[1].get_text(strip=True)
                         if d_id.isdigit() and d_id != base_appid_str and d_name:
-                            # Populate missing or dummy-named DLCs
-                            if d_id not in enriched or not enriched[d_id] or enriched[d_id].strip().lower() in (f"dlc {d_id}", f"app {d_id}", ""):
+                            # Name the DLCs the caller already knows about; never
+                            # add an id. The catalogue is what discovery found, so
+                            # an id that appears here alone would be listed as a
+                            # depotless DLC the user never asked for.
+                            if d_id in enriched and (
+                                not enriched[d_id]
+                                or enriched[d_id].strip().lower()
+                                in (f"dlc {d_id}", f"app {d_id}", "")
+                            ):
                                 enriched[d_id] = d_name
                             if d_id in needs_lookup:
                                 needs_lookup.remove(d_id)
@@ -1441,8 +1452,8 @@ def enrich_dlc_names_with_byparr_or_store(
                     name = d_data.get(str(dlc_id), {}).get("data", {}).get("name")
                     if name:
                         enriched[dlc_id] = name
-            except Exception:
-                pass
+            except (requests.RequestException, ValueError, KeyError) as exc:
+                logger.debug("[DLC] Store lookup failed for %s: %s", dlc_id, exc)
 
     return enriched
 

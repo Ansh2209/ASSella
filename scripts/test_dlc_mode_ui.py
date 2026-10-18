@@ -3,10 +3,11 @@
 
 Two pieces are covered here:
 
-* The selector lists the DLCs that own no depot at all. Ship 1 records those by
-  name when the user saves DLC mode, so they must be visible before the
-  confirmation, not discovered afterwards. They are informational rows: they
-  cannot be ticked and they must not count towards "Selected: X of Y".
+* The selector lists one row per DLC, not one row per depot: a DLC that ships
+  several depots is a single group, and ticking it ticks the whole group.
+* The selector lists the DLCs that own no depot at all, with their AppID and a
+  null size. Ship 1 records those by name when the user saves DLC mode, so they
+  must be visible before the confirmation.
 * The library card shows the mode as an accented chip instead of the plain
   white " [DLC MODE]" text that used to ride along inside the game name.
 
@@ -118,6 +119,52 @@ def main() -> int:
         check(not dialog.download_btn.isEnabled(), "download button disabled when nothing is selected")
     finally:
         dialog.deleteLater()
+
+    # ------------------------------------------------------- grouped rows
+    print("=== one row per DLC, not one row per depot ===")
+    grouped_depots = {
+        "111": {"dlcappid": "501", "name": "Pack A", "desc": "Pack A linux", "size": 5000, "oslist": "linux"},
+        "222": {"dlcappid": "501", "name": "Pack A extra", "desc": "Pack A linux", "size": 7000, "oslist": "linux"},
+        "333": {"dlcappid": "502", "name": "Pack B", "desc": "Pack B linux", "size": 10, "oslist": "linux"},
+    }
+    grouped_catalog = {"501": "Pack A", "502": "Pack B", "777": "Name Only"}
+    grouped = DlcDepotSelectionDialog(
+        probe_appid, "Probe Game", grouped_depots, dlc_catalog=grouped_catalog
+    )
+    try:
+        check(grouped.table.rowCount() == 3,
+              f"four depots collapse into two DLC rows plus one depotless row "
+              f"(got {grouped.table.rowCount()})")
+        pack_a = next(
+            r for r in range(grouped.table.rowCount())
+            if grouped.table.item(r, 0).text() == "501"
+        )
+        check("Pack A" in grouped.table.item(pack_a, 1).text(),
+              "the grouped row is named after the DLC")
+        check("2 depots" in grouped.table.item(pack_a, 1).text(),
+              "the grouped row says how many depots it covers")
+        ids = DlcDepotSelectionDialog._row_depot_ids(grouped.table.item(pack_a, 0))
+        check(ids == ["111", "222"],
+              f"the grouped row keeps every depot id (got {ids})")
+        check(set(grouped.get_selected_depots()) == {"111", "222", "333"},
+              "ticking a group selects the whole group")
+        check(grouped.get_selected_dlc_appids() == ["501", "502"],
+              "grouped rows still map back to their DLC app ids")
+
+        depotless = next(
+            r for r in range(grouped.table.rowCount())
+            if bool(grouped.table.item(r, 0).data(int(Qt.ItemDataRole.UserRole) + 21))
+        )
+        grouped.table.item(depotless, 0).setCheckState(Qt.CheckState.Checked)
+        check(grouped.get_depotless_dlc_catalog() == {"777": "Name Only"},
+              "only the ticked depotless DLC is handed to the caller")
+        grouped.table.item(depotless, 0).setCheckState(Qt.CheckState.Unchecked)
+        check(grouped.get_depotless_dlc_catalog() == {"777": "Name Only"},
+              "with nothing ticked the whole depotless catalogue is offered")
+        check(grouped.get_config_written() is False,
+              "opening the dialog writes no config")
+    finally:
+        grouped.deleteLater()
 
     # -------------------------------------------------------------------- card
     print("=== the library card shows an accented chip ===")

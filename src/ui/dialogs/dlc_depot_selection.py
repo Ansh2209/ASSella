@@ -171,8 +171,9 @@ class DlcHeaderView(QHeaderView):
             if self._count_str:
                 painter.setFont(self.font())
                 painter.setPen(QColor("#A0AEC0"))
+                # Right-aligned so the (x/y) count never sits on the label.
                 text_rect = QRect(bx + box_size + 6, rect.y(), rect.width() - (box_size + 14), rect.height())
-                painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, self._count_str)
+                painter.drawText(text_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._count_str)
 
             painter.restore()
 
@@ -226,6 +227,7 @@ class DlcDepotSelectionDialog(QDialog):
         self._store_packages: List[Dict[str, Any]] = []
         self._active_filter = "all"
         self._injection_only = False
+        self._config_written = False
 
         # Read offline Steam ownership and SLSsteam injection state
         self._steam_owned_dlcs = get_owned_dlcs_from_steam(self.app_id)
@@ -364,7 +366,7 @@ class DlcDepotSelectionDialog(QDialog):
         # 4. Table Widget
         self.table = QTableWidget(self)
         self.table.setColumnCount(3)
-        self.table.setHorizontalHeaderLabels(["Depot ID", "Configuration", "Size"])
+        self.table.setHorizontalHeaderLabels(["DLC ID", "Configuration", "Size"])
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -374,6 +376,11 @@ class DlcDepotSelectionDialog(QDialog):
         # Custom Header View with interactive tri-state checkbox and visible counts
         self.custom_header = DlcHeaderView(self)
         self.table.setHorizontalHeader(self.custom_header)
+        # The tri-state box is painted at the left of column 0; inset the
+        # header label so the two never overlap.
+        self.custom_header.setStyleSheet(
+            "QHeaderView::section:first { padding-left: 34px; }"
+        )
         self.custom_header.sectionClicked.connect(self._on_header_section_clicked)
 
         # Column widths and stretch
@@ -819,7 +826,11 @@ class DlcDepotSelectionDialog(QDialog):
             key=lambda k: int(k) if str(k).isdigit() else 0,
         )
 
-        # 1. Downloadable Depots
+        # 1. Downloadable DLC depots, collapsed to one row per DLC. A DLC
+        #    routinely ships several depots (platform variants, language
+        #    packs), so a depot-per-row list buries the entitlement the user is
+        #    choosing behind depot ids. A depot with no DLC id keeps its own row.
+        groups: Dict[str, Dict[str, Any]] = {}
         for did in sorted_depot_keys:
             did_str = str(did).strip()
             d_data = self.depots.get(did, {})
@@ -833,22 +844,54 @@ class DlcDepotSelectionDialog(QDialog):
                 continue
             if _depot_is_macos(d_data) or _depot_is_android(d_data):
                 continue
+            if not _depot_matches_platform(d_data, self._active_platform):
+                continue
 
-            raw_size = int(d_data.get("size") or 0)
-            is_missing_hubcap = did_str in self.missing_hubcap_depots
             dlc_app = str(d_data.get("dlcappid") or "").strip()
+            if not dlc_app.isdigit() or dlc_app == self.app_id:
+                dlc_app = did_str
 
-            is_steam_owned = (dlc_app in self._steam_owned_dlcs) or (did_str in self._steam_owned_dlcs)
-            is_injected = (dlc_app in self._injected_dlcs) or (did_str in self._injected_dlcs)
+            group = groups.get(dlc_app)
+            if group is None:
+                group = {
+                    "depots": [],
+                    "size": 0,
+                    "first_id": did_str,
+                    "first_data": d_data,
+                    "first_desc": desc,
+                }
+                groups[dlc_app] = group
+            group["depots"].append(did_str)
+            group["size"] += int(d_data.get("size") or 0)
+
+        for dlc_app, group in sorted(
+            groups.items(),
+            key=lambda kv: int(kv[0]) if kv[0].isdigit() else 0,
+        ):
+            depot_ids: List[str] = group["depots"]
+            first_id = group["first_id"]
+            d_data = group["first_data"]
+            desc = group["first_desc"]
+
+            is_steam_owned = (
+                dlc_app in self._steam_owned_dlcs
+                or any(d in self._steam_owned_dlcs for d in depot_ids)
+            )
+            is_injected = (
+                dlc_app in self._injected_dlcs
+                or any(d in self._injected_dlcs for d in depot_ids)
+            )
+            is_missing_hubcap = all(d in self.missing_hubcap_depots for d in depot_ids)
 
             row = self.table.rowCount()
             self.table.insertRow(row)
 
-            # Col 0: Checkbox + Depot ID
-            id_item = NumericTableWidgetItem(did_str, int(did_str) if did_str.isdigit() else 0)
-            id_item.setData(Qt.ItemDataRole.UserRole, did_str)
+            # Col 0: Checkbox + DLC AppID (the depots it stands for are in UserRole + 22)
+            id_item = NumericTableWidgetItem(dlc_app, int(dlc_app) if dlc_app.isdigit() else 0)
+            id_item.setData(Qt.ItemDataRole.UserRole, dlc_app)
             id_item.setData(Qt.ItemDataRole.UserRole + 1, dlc_app)
             id_item.setData(Qt.ItemDataRole.UserRole + 21, False)  # Not depotless
+            id_item.setData(Qt.ItemDataRole.UserRole + 22, list(depot_ids))
 
             if is_injected:
                 status_key = "injected"
@@ -859,7 +902,7 @@ class DlcDepotSelectionDialog(QDialog):
             id_item.setData(Qt.ItemDataRole.UserRole + 20, status_key)
 
             if is_steam_owned:
-                # Owned on Steam: Greyscaled and non-toggleable (like missing from Hubcap)
+                # Owned on Steam: greyscaled and not selectable at all.
                 id_item.setCheckState(Qt.CheckState.Unchecked)
                 id_item.setFlags(Qt.ItemFlag.NoItemFlags)
                 id_item.setForeground(QColor(130, 130, 130))
@@ -870,27 +913,41 @@ class DlcDepotSelectionDialog(QDialog):
                 id_item.setForeground(QColor(130, 130, 130))
                 id_item.setToolTip("Depot missing from Hubcap repository")
             else:
-                is_checked = (did_str in self._user_checked_items)
+                is_checked = any(d in self._user_checked_items for d in depot_ids)
                 id_item.setCheckState(Qt.CheckState.Checked if is_checked else Qt.CheckState.Unchecked)
                 id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable & ~Qt.ItemFlag.ItemIsUserCheckable)
 
             self.table.setItem(row, 0, id_item)
 
-            # Col 1: Enriched Configuration label (no inline badges)
-            clean_name, os_icon = self._build_enriched_config_label(did_str, d_data, desc)
+            # Col 1: DLC name, with the depot count when one DLC ships several.
+            dlc_name = self._dlc_catalog.get(dlc_app) or ""
+            if dlc_name:
+                clean_name = f"[DLC]  {dlc_name}"
+                if len(depot_ids) > 1:
+                    clean_name += f"  ({len(depot_ids)} depots)"
+                os_icon = get_os_icon(d_data.get("oslist"), tint_color=QColor(self.accent_color))
+            else:
+                clean_name, os_icon = self._build_enriched_config_label(first_id, d_data, desc)
             name_item = QTableWidgetItem(clean_name)
             if os_icon:
                 name_item.setIcon(os_icon)
-
             if is_steam_owned or is_missing_hubcap:
                 name_item.setForeground(QColor(130, 130, 130))
-            name_item.setToolTip(desc)
+            if len(depot_ids) > 1:
+                name_item.setToolTip(
+                    "\n".join(
+                        f"{d}: {str(self.depots.get(d, {}).get('desc') or '').strip()}"
+                        for d in depot_ids
+                    )
+                )
+            else:
+                name_item.setToolTip(desc)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 1, name_item)
 
-            # Col 2: Size
-            size_str = format_size(raw_size) if raw_size > 0 else "0 B"
-            size_item = NumericTableWidgetItem(size_str, raw_size)
+            # Col 2: Size (summed over the DLC's depots)
+            raw_size = int(group["size"])
+            size_item = NumericTableWidgetItem(format_size(raw_size) if raw_size > 0 else "0 B", raw_size)
             if is_steam_owned or is_missing_hubcap:
                 size_item.setForeground(QColor(130, 130, 130))
             size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
@@ -954,19 +1011,29 @@ class DlcDepotSelectionDialog(QDialog):
 
         self.table.blockSignals(False)
 
+    @staticmethod
+    def _row_depot_ids(id_item: QTableWidgetItem) -> List[str]:
+        """Depots a row stands for; a grouped row holds the whole DLC."""
+        depot_ids = id_item.data(Qt.ItemDataRole.UserRole + 22)
+        if depot_ids:
+            return [str(d) for d in depot_ids]
+        item_id = str(id_item.data(Qt.ItemDataRole.UserRole) or "")
+        return [item_id] if item_id else []
+
     def _on_table_cell_clicked(self, row: int, col: int):
         id_item = self.table.item(row, 0)
         if not id_item or (id_item.flags() == Qt.ItemFlag.NoItemFlags):
             return
-        item_id = str(id_item.data(Qt.ItemDataRole.UserRole))
+        item_ids = self._row_depot_ids(id_item)
         curr = id_item.checkState()
         new_state = Qt.CheckState.Unchecked if curr == Qt.CheckState.Checked else Qt.CheckState.Checked
         id_item.setCheckState(new_state)
 
-        if new_state == Qt.CheckState.Checked:
-            self._user_checked_items.add(item_id)
-        else:
-            self._user_checked_items.discard(item_id)
+        for item_id in item_ids:
+            if new_state == Qt.CheckState.Checked:
+                self._user_checked_items.add(item_id)
+            else:
+                self._user_checked_items.discard(item_id)
 
         self.edition_button.setText("Custom ▾")
         self._update_summary()
@@ -992,11 +1059,11 @@ class DlcDepotSelectionDialog(QDialog):
                 item = self.table.item(r, 0)
                 if item and (item.flags() != Qt.ItemFlag.NoItemFlags):
                     item.setCheckState(new_state)
-                    item_id = str(item.data(Qt.ItemDataRole.UserRole))
-                    if new_state == Qt.CheckState.Checked:
-                        self._user_checked_items.add(item_id)
-                    else:
-                        self._user_checked_items.discard(item_id)
+                    for item_id in self._row_depot_ids(item):
+                        if new_state == Qt.CheckState.Checked:
+                            self._user_checked_items.add(item_id)
+                        else:
+                            self._user_checked_items.discard(item_id)
         self.table.blockSignals(False)
 
         self.edition_button.setText("Custom ▾")
@@ -1116,17 +1183,17 @@ class DlcDepotSelectionDialog(QDialog):
             item = self.table.item(r, 0)
             if not item or item.flags() == Qt.ItemFlag.NoItemFlags:
                 continue
-            did_str = str(item.data(Qt.ItemDataRole.UserRole))
-            d_data = self.depots.get(did_str, {})
-            desc = str(d_data.get("desc") or "")
-
-            # Exclude base game depots
-            if is_base_game_main_depot(did_str, desc, self.app_id, d_data) or did_str == self.app_id:
+            if bool(item.data(Qt.ItemDataRole.UserRole + 21)):
+                # Entitlements without a depot are never part of an edition.
                 item.setCheckState(Qt.CheckState.Unchecked)
                 continue
 
-            if did_str in target_depots:
-                self._user_checked_items.add(did_str)
+            depot_ids = self._row_depot_ids(item)
+            dlc_app = str(item.data(Qt.ItemDataRole.UserRole + 1) or "")
+
+            if any(d in target_depots for d in depot_ids) or dlc_app in target_depots:
+                for did in depot_ids:
+                    self._user_checked_items.add(did)
                 item.setCheckState(Qt.CheckState.Checked)
             else:
                 item.setCheckState(Qt.CheckState.Unchecked)
@@ -1144,17 +1211,16 @@ class DlcDepotSelectionDialog(QDialog):
             item = self.table.item(r, 0)
             if not item or item.flags() == Qt.ItemFlag.NoItemFlags:
                 continue
-            item_id = str(item.data(Qt.ItemDataRole.UserRole))
-            dlc_app = str(item.data(Qt.ItemDataRole.UserRole + 1) or "")
-            d_data = self.depots.get(item_id, {})
-            desc = str(d_data.get("desc") or "")
-
-            if is_base_game_main_depot(item_id, desc, self.app_id, d_data) or item_id == self.app_id:
+            if bool(item.data(Qt.ItemDataRole.UserRole + 21)):
                 item.setCheckState(Qt.CheckState.Unchecked)
                 continue
 
-            if (item_id in apps) or (dlc_app in apps) or (not apps):
-                self._user_checked_items.add(item_id)
+            depot_ids = self._row_depot_ids(item)
+            dlc_app = str(item.data(Qt.ItemDataRole.UserRole + 1) or "")
+
+            if not apps or dlc_app in apps or any(d in apps for d in depot_ids):
+                for did in depot_ids:
+                    self._user_checked_items.add(did)
                 item.setCheckState(Qt.CheckState.Checked)
             else:
                 item.setCheckState(Qt.CheckState.Unchecked)
@@ -1201,6 +1267,7 @@ class DlcDepotSelectionDialog(QDialog):
             get_settings().setValue(f"dlc_only_mode/{self.app_id}", True)
 
             self._injection_only = True
+            self._config_written = True
             ThemedMessageBox.information(
                 self,
                 "DLC Data Injected",
@@ -1244,6 +1311,7 @@ class DlcDepotSelectionDialog(QDialog):
                 if config_path and config_path.exists():
                     add_dlc_data_batch(config_path, self.app_id, checked_depotless)
                     remove_additional_app(config_path, self.app_id)
+                    self._config_written = True
             except Exception as e:
                 logger.warning("[DlcDepotSelection] Auto-injecting depotless DLCs failed: %s", e)
 
@@ -1304,7 +1372,20 @@ class DlcDepotSelectionDialog(QDialog):
         return dict(self._dlc_catalog)
 
     def get_depotless_dlc_catalog(self) -> Dict[str, str]:
+        """DLCs without a depot, as ``{dlc_appid: name}``.
+
+        When the user ticked some of them, only those ticks are
+        returned: an unticked depotless DLC is a deliberate exclusion,
+        not something to save behind their back.
+        """
+        ticked = self._collect_checked_depotless_dict()
+        if ticked:
+            return ticked
         return {dlc: self._dlc_catalog.get(dlc, "") for dlc in sorted(self._depotless_dlcs)}
+
+    def get_config_written(self) -> bool:
+        """True when this dialog already wrote DlcData for the ticks."""
+        return self._config_written
 
     def get_selected_dlc_appids(self) -> List[str]:
         selected: List[str] = []
@@ -1327,9 +1408,9 @@ class DlcDepotSelectionDialog(QDialog):
                 continue
             is_depotless = bool(item.data(Qt.ItemDataRole.UserRole + 21))
             if not is_depotless:
-                did = str(item.data(Qt.ItemDataRole.UserRole))
-                if did:
-                    result.append(did)
+                for did in self._row_depot_ids(item):
+                    if did and did not in result:
+                        result.append(did)
         return result
 
     def get_selected_storage(self) -> str:

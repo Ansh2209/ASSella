@@ -238,8 +238,8 @@ class LibraryActionsMixin:
             try:
                 overlay.close()
                 overlay.deleteLater()
-            except Exception:
-                pass
+            except (RuntimeError, AttributeError) as exc:
+                logger.debug(f"[SteamTab] Could not dismiss loading overlay: {exc}")
             self._steam_tab_loading_overlay = None
 
     def _handle_steam_tab_game_clicked(self, game_data: dict) -> None:
@@ -259,7 +259,24 @@ class LibraryActionsMixin:
         name = game_data.get("game_name", "this game")
         self._show_steam_loading_overlay(f"Discovering DLCs for {name}...")
 
-        discovery = discover_dlc_depots(appid, game_data.get("depots"), allow_store=True)
+        discovery = discover_dlc_depots(appid, game_data.get("depots"), allow_store=False)
+        if not discovery.catalog and not discovery.depots:
+            # PICS and the cache know nothing: offer the Store listing as a
+            # slower fallback instead of making it the default source.
+            self._dismiss_steam_loading_overlay()
+            widen = ThemedMessageBox.question(
+                self,
+                "No DLC List Found",
+                f"Steam's package data lists no DLCs for {name}.\n\n"
+                "Look the DLC list up on the Steam Store instead? "
+                "That is a slower, wider list.",
+                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.No,
+            )
+            if widen != ThemedMessageBox.StandardButton.Yes:
+                return
+            self._show_steam_loading_overlay(f"Discovering DLCs for {name}...")
+            discovery = discover_dlc_depots(appid, game_data.get("depots"), allow_store=True)
         if not discovery.catalog and not discovery.depots:
             self._dismiss_steam_loading_overlay()
             ThemedMessageBox.information(
@@ -2398,7 +2415,9 @@ class LibraryActionsMixin:
                             settings.setValue(f"pin_build/{appid}", True)
                             logger.info(f"Pinned build {pinned_bid} for AppID {appid} in library actions")
 
-                    if not selected_depots and is_dlc_only:
+                    wrote_config = getattr(depot_dialog, "get_config_written", None)
+                    already_saved = bool(wrote_config()) if callable(wrote_config) else False
+                    if not selected_depots and is_dlc_only and not already_saved:
                         # The user confirmed DLC mode with nothing ticked: the
                         # DLCs exist but have no depot to download.
                         config_only_saved = self._save_config_only_dlc_mode(
