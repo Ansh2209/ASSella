@@ -136,7 +136,7 @@ which covers both plugins and components.
 ## Verifying before you publish
 
 ```bash
-# Nothing in src/ is broken (use the locked 3.13 env - see docs/DEPENDENCIES.md)
+# Nothing in src/ is broken (use the locked 3.13 env - see docs/dependencies.md)
 python3 scripts/smoke_import_check.py
 
 # The card, guards and download path all work, against a local HTTP server
