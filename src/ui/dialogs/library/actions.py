@@ -214,6 +214,34 @@ class LibraryActionsMixin:
         else:
             self._on_item_selected(item)
 
+    def _show_steam_loading_overlay(self, label: str) -> None:
+        """Shows floating 3x3 pixel wavefront loading overlay on the library parent."""
+        self._dismiss_steam_loading_overlay()
+        try:
+            from ui.widgets.pixel_loader_overlay import PixelLoadingOverlay
+            parent = self._dialog_parent()
+            accent = getattr(self, "accent_color", "#a1c9fd")
+            self._steam_tab_loading_overlay = PixelLoadingOverlay(
+                parent=parent,
+                label=label,
+                accent_color=accent,
+            )
+            self._steam_tab_loading_overlay.show_centered()
+            QApplication.processEvents()
+        except Exception as e:
+            logger.debug(f"[SteamTab] Could not show loading overlay: {e}")
+
+    def _dismiss_steam_loading_overlay(self) -> None:
+        """Dismisses and cleans up the floating loading overlay if active."""
+        overlay = getattr(self, "_steam_tab_loading_overlay", None)
+        if overlay:
+            try:
+                overlay.close()
+                overlay.deleteLater()
+            except Exception:
+                pass
+            self._steam_tab_loading_overlay = None
+
     def _handle_steam_tab_game_clicked(self, game_data: dict) -> None:
         """Handle click on an owned/installed Steam game:
 
@@ -229,8 +257,11 @@ class LibraryActionsMixin:
         from utils.dlc_helpers import discover_dlc_depots
 
         name = game_data.get("game_name", "this game")
+        self._show_steam_loading_overlay(f"Discovering DLCs for {name}...")
+
         discovery = discover_dlc_depots(appid, game_data.get("depots"), allow_store=True)
         if not discovery.catalog and not discovery.depots:
+            self._dismiss_steam_loading_overlay()
             ThemedMessageBox.information(
                 self,
                 "No DLCs Detected",
@@ -241,6 +272,7 @@ class LibraryActionsMixin:
         if not discovery.has_sized_depots:
             # The DLC list is known but none of it has a depot to download.
             # Let the user decide instead of silently doing nothing.
+            self._dismiss_steam_loading_overlay()
             answer = ThemedMessageBox.warning(
                 self,
                 "No Downloadable DLC Depots",
@@ -253,6 +285,11 @@ class LibraryActionsMixin:
             )
             if answer != ThemedMessageBox.StandardButton.Yes:
                 return
+            self._show_steam_loading_overlay(f"Fetching manifest for {name}...")
+
+        overlay = getattr(self, "_steam_tab_loading_overlay", None)
+        if overlay:
+            overlay.set_label(f"Fetching manifest for {name}...")
 
         game_data_dlc = dict(game_data)
         game_data_dlc["_dlc_only"] = True
@@ -2016,6 +2053,7 @@ class LibraryActionsMixin:
                     self.settings.setValue(f"fetched_manifest_id/{appid}", latest_id)
                 self._show_depot_selection_dialog(fpath, target_game)
             else:
+                self._dismiss_steam_loading_overlay()
                 if not download_only:
                     ThemedMessageBox.critical(self, "Error", f"Failed to download manifest: {error}")
                 else:
@@ -2055,6 +2093,7 @@ class LibraryActionsMixin:
                 except RuntimeError as e:
                     logger.debug(f"[Library] Could not reset the validate button: {e}")
         else:
+            self._dismiss_steam_loading_overlay()
             if not download_only:
                 ThemedMessageBox.critical(self, "Error", f"Failed: {error}")
             else:
@@ -2300,6 +2339,7 @@ class LibraryActionsMixin:
             config_only_saved = False
 
             if selection.should_prompt and not selection.auto_skip:
+                self._dismiss_steam_loading_overlay()
                 parent_widget = self if isinstance(self, QWidget) else getattr(self, "main_window", None)
                 is_installed = bool(game_info.get("library_path") or game_info.get("install_path") or is_verify or game_data.get("_lock_storage"))
                 lock_storage = bool(is_installed or game_data.get("_lock_storage"))
@@ -2410,6 +2450,7 @@ class LibraryActionsMixin:
                 except Exception as e:
                     logger.warning(f"Failed to cache depot selection: {e}")
             else:
+                self._dismiss_steam_loading_overlay()
                 if config_only_saved:
                     logger.info("DLC mode saved for %s without a download.", appid)
                 else:
@@ -2425,6 +2466,7 @@ class LibraryActionsMixin:
                         dialog._update_validate_button()
                 return
 
+        self._dismiss_steam_loading_overlay()
         self.main_window.job_queue.add_job(filepath, metadata)
         if dialog:
             try:

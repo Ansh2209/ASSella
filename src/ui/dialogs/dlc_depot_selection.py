@@ -2,12 +2,14 @@
 dlc_depot_selection.py - ASSella unified DLC selection dialog for owned Steam games.
 Features:
 - Full-width modern layout matching standard DepotSelectionDialog
-- Offline local Steam AppOwnershipTicket detection ([STEAM OWNED])
-- SLSsteam config.yaml injection state detection ([INJECTED])
-- Interactive web-inspired filter chips (All, Missing, Owned, Injected, Depotless)
-- Checkable depotless DLC entitlements (with null size in italics)
-- Tri-state select-all header checkbox toggling visible rows
+- Offline local Steam AppOwnershipTicket detection: Steam-owned DLCs are greyscaled and non-toggleable
+- SLSsteam config.yaml injection state detection
+- Interactive filter chips (All, Unowned, Steam Owned, Injected, Depotless) with custom colors and clean text (no dots)
+- Checkable depotless DLC entitlements (with null size in italics), not checked by default
+- Rich configuration tags: [OS icon] [ARCH] [DLC] [LANG] [SOUNDTRACK] [ARTBOOK] without duplicate depot IDs
+- Standard edition selection dropdown with base-game depot filter
 - Three equal-width bottom buttons: [ DLC Data Injection ], [ Cancel ], [ Download Selected ]
+- Byparr & Store DLC name enrichment integration
 """
 
 import logging
@@ -44,7 +46,12 @@ from ui.dialogs.depot_selection.rules import (
     get_smart_default_depots,
     format_size,
 )
-from utils.depot_tag_helpers import format_depot_row_label, get_os_icon
+from ui.dialogs.depot_selection import selection_policy
+from utils.depot_tag_helpers import (
+    get_os_icon,
+    extract_arch_code,
+    extract_language_code,
+)
 from utils.image_fetcher import ImageFetcher
 from utils.settings import get_settings
 from utils.dlc_helpers import (
@@ -52,10 +59,12 @@ from utils.dlc_helpers import (
     is_base_game_main_depot,
     get_owned_dlcs_from_steam,
     get_injected_dlcs_from_config,
+    enrich_dlc_names_with_byparr_or_store,
 )
 from utils.edition_helpers import (
     get_available_platforms,
     get_default_platform,
+    resolve_multi_platform_editions,
     fetch_store_packages,
     clean_package_name,
 )
@@ -76,59 +85,6 @@ class NumericTableWidgetItem(QTableWidgetItem):
         return super().__lt__(other)
 
 
-class DlcConfigurationDelegate(QStyledItemDelegate):
-    """
-    Renders DLC Configuration item:
-    - Normal icon and text on the left
-    - Distinct colored pill badges on the right:
-      [STEAM OWNED] (green), [INJECTED] (cyan), [NOT OWNED] (amber), [NO DEPOT] (yellow)
-    """
-
-    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-
-        # Retrieve badges: list of (label, fg_hex, bg_hex, border_hex)
-        badges = index.data(Qt.ItemDataRole.UserRole + 10) or []
-
-        # Draw default item (icon, text, selection background)
-        super().paint(painter, opt, index)
-
-        if badges:
-            painter.save()
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-            badge_font = painter.font()
-            badge_font.setPointSize(7)
-            badge_font.setBold(True)
-            painter.setFont(badge_font)
-
-            right_x = option.rect.right() - 8
-            mid_y = option.rect.center().y()
-
-            for label, fg_hex, bg_hex, border_hex in reversed(badges):
-                metrics = painter.fontMetrics()
-                txt_w = metrics.horizontalAdvance(label)
-                pill_w = txt_w + 10
-                pill_h = 18
-                pill_x = right_x - pill_w
-                pill_y = mid_y - (pill_h // 2)
-                pill_rect = QRectF(pill_x, pill_y, pill_w, pill_h)
-
-                # Pill background
-                painter.setBrush(QColor(bg_hex))
-                painter.setPen(QPen(QColor(border_hex), 1.0))
-                painter.drawRoundedRect(pill_rect, 4.0, 4.0)
-
-                # Pill text
-                painter.setPen(QColor(fg_hex))
-                painter.drawText(pill_rect, Qt.AlignmentFlag.AlignCenter, label)
-
-                right_x = pill_x - 6
-
-            painter.restore()
-
-
 class DlcSizeDelegate(QStyledItemDelegate):
     """Renders size column; for depotless DLCs renders 'null' in italics."""
 
@@ -147,7 +103,7 @@ class DlcSizeDelegate(QStyledItemDelegate):
             font = painter.font()
             font.setItalic(True)
             painter.setFont(font)
-            painter.setPen(QColor(150, 150, 155))
+            painter.setPen(QColor(130, 130, 135))
             text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, widget)
             painter.drawText(text_rect, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, "null")
             painter.restore()
@@ -289,6 +245,9 @@ class DlcDepotSelectionDialog(QDialog):
                 name = str(meta.get("name") or meta.get("desc") or "")
                 self._dlc_catalog.setdefault(dlc_appid, name.strip())
 
+        # Enrich missing DLC names using Byparr or Steam Store API
+        self._dlc_catalog = enrich_dlc_names_with_byparr_or_store(self.app_id, self._dlc_catalog)
+
         # DLCs that own no depot at all (entitlement only)
         self._depotless_dlcs: Set[str] = set(self._dlc_catalog)
         for meta in self.depots.values():
@@ -296,9 +255,10 @@ class DlcDepotSelectionDialog(QDialog):
                 dlc_appid = str(meta.get("dlcappid") or "").strip()
                 self._depotless_dlcs.discard(dlc_appid)
 
-        # Available platforms
+        # Available platforms and multi-platform editions
         self._available_platforms = get_available_platforms(self.depots)
         self._active_platform = get_default_platform(self.depots)
+        self._multi_platform_editions = resolve_multi_platform_editions(self.app_id, self.depots)
 
         settings = get_settings()
         self.accent_color = settings.value("accent_color", "#a1c9fd")
@@ -312,8 +272,8 @@ class DlcDepotSelectionDialog(QDialog):
         self._load_header_image()
 
         # Compute initial selection:
-        # Pre-select Missing/Unowned DLCs and already Injected DLCs
-        # Leave legitimately Steam-owned DLCs unchecked by default
+        # Depotless DLCs are NOT checked by default.
+        # Only downloadable unowned DLC depots are pre-checked by default.
         self._init_default_selections()
         self._repopulate_table()
         self._update_filter_counts()
@@ -334,13 +294,14 @@ class DlcDepotSelectionDialog(QDialog):
     def _init_default_selections(self):
         """
         Determines initial checked state for all DLCs and depots:
-        - [NOT OWNED]: Pre-checked
-        - [INJECTED]: Pre-checked
-        - [STEAM OWNED]: Unchecked
+        - Downloadable Unowned DLCs: Pre-checked
+        - Injected DLCs: Pre-checked
+        - Steam-Owned DLCs: Unchecked & Disabled (greyscaled)
+        - Depotless DLCs: Unchecked by default
         """
         self._user_checked_items.clear()
 
-        # 1. Depots
+        # 1. Downloadable Depots
         for did_str, d_data in self.depots.items():
             did_str = str(did_str).strip()
             if not isinstance(d_data, dict):
@@ -357,16 +318,10 @@ class DlcDepotSelectionDialog(QDialog):
             is_steam_owned = (dlc_app in self._steam_owned_dlcs) or (did_str in self._steam_owned_dlcs)
             is_injected = (dlc_app in self._injected_dlcs) or (did_str in self._injected_dlcs)
 
-            if is_injected or not is_steam_owned:
-                if did_str not in self.missing_hubcap_depots:
-                    self._user_checked_items.add(did_str)
+            if not is_steam_owned and did_str not in self.missing_hubcap_depots:
+                self._user_checked_items.add(did_str)
 
-        # 2. Depotless DLCs
-        for dlc_appid in self._depotless_dlcs:
-            is_steam_owned = dlc_appid in self._steam_owned_dlcs
-            is_injected = dlc_appid in self._injected_dlcs
-            if is_injected or not is_steam_owned:
-                self._user_checked_items.add(dlc_appid)
+        # Depotless DLCs are intentionally NOT checked by default per user request.
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -402,7 +357,7 @@ class DlcDepotSelectionDialog(QDialog):
         header_banner = self._build_header_banner()
         container_lay.addLayout(header_banner)
 
-        # 3. Filter Chips Bar (All, Missing, Steam Owned, Injected, Depotless)
+        # 3. Filter Chips Bar (All, Unowned, Steam Owned, Injected, Depotless)
         chips_bar = self._build_filter_chips_bar()
         container_lay.addLayout(chips_bar)
 
@@ -428,9 +383,7 @@ class DlcDepotSelectionDialog(QDialog):
         self.custom_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.table.setColumnWidth(2, 95)
 
-        # Item Delegates
-        self.config_delegate = DlcConfigurationDelegate(self)
-        self.table.setItemDelegateForColumn(1, self.config_delegate)
+        # Size Item Delegate for null size in italics
         self.size_delegate = DlcSizeDelegate(self)
         self.table.setItemDelegateForColumn(2, self.size_delegate)
 
@@ -475,6 +428,10 @@ class DlcDepotSelectionDialog(QDialog):
             QTableWidget::indicator:checked {{
                 background-color: {self.accent_color};
                 border: 1px solid {self.accent_color};
+            }}
+            QTableWidget::indicator:disabled {{
+                background-color: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.12);
             }}
         """)
         self.table.cellClicked.connect(self._on_table_cell_clicked)
@@ -561,14 +518,16 @@ class DlcDepotSelectionDialog(QDialog):
         self.filter_chips: Dict[str, QPushButton] = {}
 
         chip_definitions = [
-            ("all", "All", None),
-            ("missing", "Missing", "#f09a2f"),
-            ("owned", "Steam Owned", "#25a878"),
-            ("injected", "Injected", "#16a6c7"),
-            ("depotless", "Depotless", "#eab308"),
+            ("all", "All", "#FFFFFF", "rgba(255, 255, 255, 0.12)", "rgba(255, 255, 255, 0.3)"),
+            ("missing", "Unowned", "#f09a2f", "rgba(240, 154, 47, 0.16)", "rgba(240, 154, 47, 0.45)"),
+            ("owned", "Steam Owned", "#25a878", "rgba(37, 168, 120, 0.16)", "rgba(37, 168, 120, 0.45)"),
+            ("injected", "Injected", "#16a6c7", "rgba(22, 166, 199, 0.16)", "rgba(22, 166, 199, 0.45)"),
+            ("depotless", "Depotless", "#eab308", "rgba(234, 179, 8, 0.16)", "rgba(234, 179, 8, 0.45)"),
         ]
 
-        for key, label, dot_color in chip_definitions:
+        self._chip_colors = {}
+        for key, label, fg_hex, bg_hex, border_hex in chip_definitions:
+            self._chip_colors[key] = (fg_hex, bg_hex, border_hex)
             btn = QPushButton(self)
             btn.setCheckable(True)
             btn.setFixedHeight(26)
@@ -585,32 +544,35 @@ class DlcDepotSelectionDialog(QDialog):
         for key, btn in self.filter_chips.items():
             is_active = (key == self._active_filter)
             btn.setChecked(is_active)
+            fg_hex, bg_hex, border_hex = self._chip_colors.get(key, ("#FFFFFF", "rgba(255,255,255,0.1)", "rgba(255,255,255,0.2)"))
+
             if is_active:
                 btn.setStyleSheet(f"""
                     QPushButton {{
-                        background-color: rgba(255, 255, 255, 0.12);
-                        border: 1px solid rgba(255, 255, 255, 0.28);
+                        background-color: {bg_hex};
+                        border: 1px solid {border_hex};
                         border-radius: 13px;
-                        color: #FFFFFF;
+                        color: {fg_hex};
                         font-size: 8pt;
                         font-weight: 600;
-                        padding: 0 10px;
+                        padding: 0 12px;
                     }}
                 """)
             else:
-                btn.setStyleSheet("""
-                    QPushButton {
-                        background-color: rgba(255, 255, 255, 0.04);
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: rgba(255, 255, 255, 0.035);
                         border: 1px solid rgba(255, 255, 255, 0.08);
                         border-radius: 13px;
                         color: rgba(255, 255, 255, 0.65);
                         font-size: 8pt;
-                        padding: 0 10px;
-                    }
-                    QPushButton:hover {
+                        padding: 0 12px;
+                    }}
+                    QPushButton:hover {{
                         background-color: rgba(255, 255, 255, 0.08);
-                        color: #FFFFFF;
-                    }
+                        color: {fg_hex};
+                        border-color: {border_hex};
+                    }}
                 """)
 
     def _update_filter_counts(self):
@@ -636,10 +598,10 @@ class DlcDepotSelectionDialog(QDialog):
 
         labels = {
             "all": f"All ({counts['all']})",
-            "missing": f"● Missing ({counts['missing']})",
-            "owned": f"● Steam Owned ({counts['owned']})",
-            "injected": f"● Injected ({counts['injected']})",
-            "depotless": f"● Depotless ({counts['depotless']})",
+            "missing": f"Unowned ({counts['missing']})",
+            "owned": f"Steam Owned ({counts['owned']})",
+            "injected": f"Injected ({counts['injected']})",
+            "depotless": f"Depotless ({counts['depotless']})",
         }
 
         for key, btn in self.filter_chips.items():
@@ -679,8 +641,8 @@ class DlcDepotSelectionDialog(QDialog):
         bar = QHBoxLayout()
         bar.setSpacing(10)
 
-        # 1. Preset / Edition Dropdown Button (Bottom Left)
-        self.edition_button = QPushButton("Select Missing DLCs ▾", self)
+        # 1. Standard Edition Dropdown Button (Bottom Left)
+        self.edition_button = QPushButton("Complete Edition ▾", self)
         self.edition_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.edition_button.setFixedHeight(32)
         self.edition_button.setStyleSheet(f"""
@@ -800,8 +762,53 @@ class DlcDepotSelectionDialog(QDialog):
         self.img_fetcher.start()
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Table Population & Badging
+    # Table Population & Enrichment
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _build_enriched_config_label(self, did_str: str, d_data: dict, desc: str) -> Tuple[str, Optional[Any]]:
+        """
+        Builds enriched label matching DepotSelectionDialog:
+        [OS icon] [ARCH] [DLC] [LANG] [SOUNDTRACK] [ARTBOOK] Name
+        Does not duplicate the depot ID in the text since it is already in column 0.
+        """
+        tint = QColor(self.accent_color) if hasattr(self, "accent_color") and self.accent_color else None
+        os_icon = get_os_icon(d_data.get("oslist"), tint_color=tint)
+
+        # Base clean description
+        clean_desc = desc
+        for p in ("[Checking]", "[Missing]", "[Recovered]", "[No Key]", "[Missing from Hubcap]"):
+            clean_desc = clean_desc.replace(p, "").strip()
+        clean_desc = re.sub(r"\s*-\s*Depot\s*" + re.escape(did_str), "", clean_desc, flags=re.IGNORECASE)
+        clean_desc = re.sub(r"\[(?:Windows|Linux|macOS|Android|iOS|All)\]\s*", "", clean_desc, flags=re.IGNORECASE)
+        clean_desc = re.sub(r"\[DLC(?:\s+\d+)?\]\s*", "", clean_desc, flags=re.IGNORECASE)
+        clean_desc = re.sub(r"^DLC\s+\d+\s*[-–:]?\s*", "", clean_desc, flags=re.IGNORECASE).strip()
+
+        tags = []
+
+        # 1. Architecture tag
+        arch_code = extract_arch_code(d_data, desc)
+        if arch_code:
+            tags.append(f"[{arch_code}]")
+
+        # 2. [DLC] tag
+        tags.append("[DLC]")
+
+        # 3. Language tag ([EN], [ZH-CN], etc.)
+        lang_code = extract_language_code(d_data, desc)
+        if lang_code:
+            tags.append(f"[{lang_code}]")
+
+        # 4. Media tags
+        desc_lower = clean_desc.lower()
+        if "soundtrack" in desc_lower or " ost" in desc_lower or "[ost]" in desc_lower:
+            tags.append("[SOUNDTRACK]")
+        elif "artbook" in desc_lower or "art book" in desc_lower:
+            tags.append("[ARTBOOK]")
+        elif "wallpaper" in desc_lower:
+            tags.append("[WALLPAPER]")
+
+        final_text = f"{' '.join(tags)}  {clean_desc}" if tags else clean_desc
+        return final_text, os_icon
 
     def _repopulate_table(self):
         self.table.setRowCount(0)
@@ -851,10 +858,17 @@ class DlcDepotSelectionDialog(QDialog):
                 status_key = "missing"
             id_item.setData(Qt.ItemDataRole.UserRole + 20, status_key)
 
-            if is_missing_hubcap:
+            if is_steam_owned:
+                # Owned on Steam: Greyscaled and non-toggleable (like missing from Hubcap)
                 id_item.setCheckState(Qt.CheckState.Unchecked)
                 id_item.setFlags(Qt.ItemFlag.NoItemFlags)
                 id_item.setForeground(QColor(130, 130, 130))
+                id_item.setToolTip("Owned legitimately on Steam (not needed to download)")
+            elif is_missing_hubcap:
+                id_item.setCheckState(Qt.CheckState.Unchecked)
+                id_item.setFlags(Qt.ItemFlag.NoItemFlags)
+                id_item.setForeground(QColor(130, 130, 130))
+                id_item.setToolTip("Depot missing from Hubcap repository")
             else:
                 is_checked = (did_str in self._user_checked_items)
                 id_item.setCheckState(Qt.CheckState.Checked if is_checked else Qt.CheckState.Unchecked)
@@ -862,29 +876,14 @@ class DlcDepotSelectionDialog(QDialog):
 
             self.table.setItem(row, 0, id_item)
 
-            # Col 1: DLC Name with OS icon, tag, and status badge
-            tint = QColor(self.accent_color) if hasattr(self, "accent_color") and self.accent_color else None
-            os_icon = get_os_icon(d_data.get("oslist"), tint_color=tint)
-            clean_name = format_depot_row_label(
-                did_str,
-                d_data,
-                desc,
-                has_os_icon=bool(os_icon),
-                show_os_badge=False,
-            )
+            # Col 1: Enriched Configuration label (no inline badges)
+            clean_name, os_icon = self._build_enriched_config_label(did_str, d_data, desc)
             name_item = QTableWidgetItem(clean_name)
             if os_icon:
                 name_item.setIcon(os_icon)
 
-            badges: List[Tuple[str, str, str, str]] = []
-            if is_injected:
-                badges.append(("INJECTED", "#16a6c7", "rgba(22, 166, 199, 0.16)", "rgba(22, 166, 199, 0.4)"))
-            elif is_steam_owned:
-                badges.append(("STEAM OWNED", "#25a878", "rgba(37, 168, 120, 0.16)", "rgba(37, 168, 120, 0.4)"))
-            else:
-                badges.append(("NOT OWNED", "#f09a2f", "rgba(240, 154, 47, 0.16)", "rgba(240, 154, 47, 0.4)"))
-
-            name_item.setData(Qt.ItemDataRole.UserRole + 10, badges)
+            if is_steam_owned or is_missing_hubcap:
+                name_item.setForeground(QColor(130, 130, 130))
             name_item.setToolTip(desc)
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 1, name_item)
@@ -892,10 +891,12 @@ class DlcDepotSelectionDialog(QDialog):
             # Col 2: Size
             size_str = format_size(raw_size) if raw_size > 0 else "0 B"
             size_item = NumericTableWidgetItem(size_str, raw_size)
+            if is_steam_owned or is_missing_hubcap:
+                size_item.setForeground(QColor(130, 130, 130))
             size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 2, size_item)
 
-        # 2. Depotless DLCs (checkables with DLC AppID in col 0, NO DEPOT badge, and 'null' in italics)
+        # 2. Depotless DLCs
         for dlc_appid in sorted(
             self._depotless_dlcs,
             key=lambda d: (self._dlc_catalog.get(d, "").lower(), d),
@@ -921,25 +922,24 @@ class DlcDepotSelectionDialog(QDialog):
                 status_key = "missing"
             id_item.setData(Qt.ItemDataRole.UserRole + 20, status_key)
 
-            is_checked = (dlc_appid in self._user_checked_items)
-            id_item.setCheckState(Qt.CheckState.Checked if is_checked else Qt.CheckState.Unchecked)
-            id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable & ~Qt.ItemFlag.ItemIsUserCheckable)
+            if is_steam_owned:
+                # Owned on Steam: Greyscaled and non-toggleable
+                id_item.setCheckState(Qt.CheckState.Unchecked)
+                id_item.setFlags(Qt.ItemFlag.NoItemFlags)
+                id_item.setForeground(QColor(130, 130, 130))
+                id_item.setToolTip("Owned legitimately on Steam")
+            else:
+                is_checked = (dlc_appid in self._user_checked_items)
+                id_item.setCheckState(Qt.CheckState.Checked if is_checked else Qt.CheckState.Unchecked)
+                id_item.setFlags(id_item.flags() & ~Qt.ItemFlag.ItemIsEditable & ~Qt.ItemFlag.ItemIsUserCheckable)
+
             self.table.setItem(row, 0, id_item)
 
-            # Col 1: DLC Name with [NO DEPOT] badge and status badge
-            clean_name = f"[DLC {dlc_appid}]  {dlc_name}"
+            # Col 1: Clean DLC Name with [DLC] tag (no duplicate DLC AppID in text)
+            clean_name = f"[DLC]  {dlc_name}"
             name_item = QTableWidgetItem(clean_name)
-
-            badges = []
-            if is_injected:
-                badges.append(("INJECTED", "#16a6c7", "rgba(22, 166, 199, 0.16)", "rgba(22, 166, 199, 0.4)"))
-            elif is_steam_owned:
-                badges.append(("STEAM OWNED", "#25a878", "rgba(37, 168, 120, 0.16)", "rgba(37, 168, 120, 0.4)"))
-            else:
-                badges.append(("NOT OWNED", "#f09a2f", "rgba(240, 154, 47, 0.16)", "rgba(240, 154, 47, 0.4)"))
-            badges.append(("NO DEPOT", "#eab308", "rgba(234, 179, 8, 0.16)", "rgba(234, 179, 8, 0.4)"))
-
-            name_item.setData(Qt.ItemDataRole.UserRole + 10, badges)
+            if is_steam_owned:
+                name_item.setForeground(QColor(130, 130, 130))
             name_item.setToolTip(f"DLC {dlc_appid}: entitlement without separate depot files.")
             name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 1, name_item)
@@ -947,6 +947,8 @@ class DlcDepotSelectionDialog(QDialog):
             # Col 2: Size ('null' in italics rendered by DlcSizeDelegate)
             size_item = NumericTableWidgetItem("null", 0)
             size_item.setData(Qt.ItemDataRole.UserRole + 11, "null")
+            if is_steam_owned:
+                size_item.setForeground(QColor(130, 130, 130))
             size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 2, size_item)
 
@@ -1046,10 +1048,11 @@ class DlcDepotSelectionDialog(QDialog):
         self.inject_btn.setEnabled(total_checked > 0)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Presets & Edition Menu
+    # Standard Edition Selector (Grouped by Platform)
     # ─────────────────────────────────────────────────────────────────────────
 
     def _show_edition_menu(self):
+        """Displays standard platform & edition menu, identical to DepotSelectionDialog."""
         menu = QMenu(self)
         menu.setStyleSheet(f"""
             QMenu {{
@@ -1070,20 +1073,23 @@ class DlcDepotSelectionDialog(QDialog):
             }}
         """)
 
-        # 1. Quick Presets
-        act_missing = menu.addAction("Select Missing DLCs (Default)")
-        act_missing.triggered.connect(self._preset_select_missing)
+        groups = selection_policy.edition_menu(
+            self._available_platforms,
+            self._multi_platform_editions,
+            self.get_selected_depots(),
+        )
+        for group in groups:
+            sub_menu = menu.addMenu(group.label) if group.label else menu
+            if group.label:
+                sub_menu.setStyleSheet(menu.styleSheet())
+            for choice in group.choices:
+                action = sub_menu.addAction(choice.name)
+                action.setCheckable(True)
+                if choice.checked:
+                    action.setChecked(True)
+                action.triggered.connect(lambda checked, target_ed=choice.edition: self._apply_edition_selection(target_ed))
 
-        act_all = menu.addAction("Select All DLCs")
-        act_all.triggered.connect(self._preset_select_all)
-
-        act_injected = menu.addAction("Select Injected DLCs")
-        act_injected.triggered.connect(self._preset_select_injected)
-
-        act_none = menu.addAction("Deselect All")
-        act_none.triggered.connect(self._preset_deselect_all)
-
-        # 2. Store Packages (if available)
+        # Store packages if available
         if self._store_packages:
             menu.addSeparator()
             for pkg in self._store_packages:
@@ -1094,38 +1100,65 @@ class DlcDepotSelectionDialog(QDialog):
         pos = self.edition_button.mapToGlobal(QPoint(0, self.edition_button.height() + 2))
         menu.exec(pos)
 
-    def _preset_select_missing(self):
-        self.edition_button.setText("Select Missing DLCs ▾")
-        self._init_default_selections()
-        self._sync_checks_to_table()
-        self._update_summary()
+    def _apply_edition_selection(self, edition: dict):
+        """Apply the chosen edition to the DLC checkboxes, strictly avoiding base game depots."""
+        multi_platform = bool(self._available_platforms) and len(self._available_platforms) > 1
+        self.edition_button.setText(
+            selection_policy.edition_button_text(edition, multi_platform=multi_platform)
+        )
+        self.edition_button.setToolTip(selection_policy.edition_button_tooltip(edition))
 
-    def _preset_select_all(self):
-        self.edition_button.setText("All DLCs ▾")
+        target_depots = {str(d) for d in edition.get("depot_ids", set())}
         self.table.blockSignals(True)
+        self._user_checked_items.clear()
+
         for r in range(self.table.rowCount()):
             item = self.table.item(r, 0)
-            if item and item.flags() != Qt.ItemFlag.NoItemFlags:
-                item_id = str(item.data(Qt.ItemDataRole.UserRole))
-                self._user_checked_items.add(item_id)
+            if not item or item.flags() == Qt.ItemFlag.NoItemFlags:
+                continue
+            did_str = str(item.data(Qt.ItemDataRole.UserRole))
+            d_data = self.depots.get(did_str, {})
+            desc = str(d_data.get("desc") or "")
+
+            # Exclude base game depots
+            if is_base_game_main_depot(did_str, desc, self.app_id, d_data) or did_str == self.app_id:
+                item.setCheckState(Qt.CheckState.Unchecked)
+                continue
+
+            if did_str in target_depots:
+                self._user_checked_items.add(did_str)
                 item.setCheckState(Qt.CheckState.Checked)
+            else:
+                item.setCheckState(Qt.CheckState.Unchecked)
+
         self.table.blockSignals(False)
         self._update_summary()
 
-    def _preset_select_injected(self):
-        self.edition_button.setText("Injected DLCs ▾")
+    def _apply_store_package(self, pkg: dict, name: str):
+        self.edition_button.setText(f"{name} ▾")
+        apps = {str(a) for a in pkg.get("apps", [])}
         self.table.blockSignals(True)
         self._user_checked_items.clear()
+
         for r in range(self.table.rowCount()):
             item = self.table.item(r, 0)
-            if item and item.flags() != Qt.ItemFlag.NoItemFlags:
-                status = item.data(Qt.ItemDataRole.UserRole + 20)
-                item_id = str(item.data(Qt.ItemDataRole.UserRole))
-                if status == "injected":
-                    self._user_checked_items.add(item_id)
-                    item.setCheckState(Qt.CheckState.Checked)
-                else:
-                    item.setCheckState(Qt.CheckState.Unchecked)
+            if not item or item.flags() == Qt.ItemFlag.NoItemFlags:
+                continue
+            item_id = str(item.data(Qt.ItemDataRole.UserRole))
+            dlc_app = str(item.data(Qt.ItemDataRole.UserRole + 1) or "")
+            d_data = self.depots.get(item_id, {})
+            desc = str(d_data.get("desc") or "")
+
+            if is_base_game_main_depot(item_id, desc, self.app_id, d_data) or item_id == self.app_id:
+                item.setCheckState(Qt.CheckState.Unchecked)
+                continue
+
+            if (item_id in apps) or (dlc_app in apps) or (not apps):
+                self._user_checked_items.add(item_id)
+                item.setCheckState(Qt.CheckState.Checked)
+            else:
+                item.setCheckState(Qt.CheckState.Unchecked)
+
         self.table.blockSignals(False)
         self._update_summary()
 
@@ -1139,36 +1172,6 @@ class DlcDepotSelectionDialog(QDialog):
                 item.setCheckState(Qt.CheckState.Unchecked)
         self.table.blockSignals(False)
         self._update_summary()
-
-    def _apply_store_package(self, pkg: dict, name: str):
-        self.edition_button.setText(f"{name} ▾")
-        apps = {str(a) for a in pkg.get("apps", [])}
-        self.table.blockSignals(True)
-        self._user_checked_items.clear()
-        for r in range(self.table.rowCount()):
-            item = self.table.item(r, 0)
-            if not item or item.flags() == Qt.ItemFlag.NoItemFlags:
-                continue
-            item_id = str(item.data(Qt.ItemDataRole.UserRole))
-            dlc_app = str(item.data(Qt.ItemDataRole.UserRole + 1) or "")
-            if (item_id in apps) or (dlc_app in apps) or (not apps):
-                self._user_checked_items.add(item_id)
-                item.setCheckState(Qt.CheckState.Checked)
-            else:
-                item.setCheckState(Qt.CheckState.Unchecked)
-        self.table.blockSignals(False)
-        self._update_summary()
-
-    def _sync_checks_to_table(self):
-        self.table.blockSignals(True)
-        for r in range(self.table.rowCount()):
-            item = self.table.item(r, 0)
-            if not item or item.flags() == Qt.ItemFlag.NoItemFlags:
-                continue
-            item_id = str(item.data(Qt.ItemDataRole.UserRole))
-            is_chk = item_id in self._user_checked_items
-            item.setCheckState(Qt.CheckState.Checked if is_chk else Qt.CheckState.Unchecked)
-        self.table.blockSignals(False)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Action Button Handlers
@@ -1245,7 +1248,6 @@ class DlcDepotSelectionDialog(QDialog):
                 logger.warning("[DlcDepotSelection] Auto-injecting depotless DLCs failed: %s", e)
 
         if not downloadable_depots:
-            # Only depotless DLCs were checked: notify and finish cleanly
             ThemedMessageBox.information(
                 self,
                 "DLC Mode Saved",
@@ -1267,7 +1269,8 @@ class DlcDepotSelectionDialog(QDialog):
             item_id = str(item.data(Qt.ItemDataRole.UserRole))
             dlc_app = str(item.data(Qt.ItemDataRole.UserRole + 1) or item_id)
             if dlc_app.isdigit() and dlc_app != self.app_id:
-                name = self._dlc_catalog.get(dlc_app) or self.table.item(r, 1).text()
+                raw_name = self._dlc_catalog.get(dlc_app) or self.table.item(r, 1).text()
+                name = re.sub(r"\[(?:DLC|SOUNDTRACK|ARTBOOK|WALLPAPER|EN|BR|AR|DE|FR|JA|KO|RU|ES|ZH-CN|ZH-TW)\]\s*", "", raw_name).strip()
                 result[dlc_app] = name
         return result
 
@@ -1281,7 +1284,8 @@ class DlcDepotSelectionDialog(QDialog):
             is_depotless = bool(item.data(Qt.ItemDataRole.UserRole + 21))
             if is_depotless:
                 item_id = str(item.data(Qt.ItemDataRole.UserRole))
-                name = self._dlc_catalog.get(item_id) or f"DLC {item_id}"
+                raw_name = self._dlc_catalog.get(item_id) or f"DLC {item_id}"
+                name = re.sub(r"\[DLC\]\s*", "", raw_name).strip()
                 result[item_id] = name
         return result
 

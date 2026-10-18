@@ -1383,3 +1383,66 @@ def get_owned_dlcs_from_steam(base_appid: str, steam_userdata_path: Optional[str
 
     return owned_dlcs
 
+
+def enrich_dlc_names_with_byparr_or_store(
+    base_appid: str,
+    catalog: Dict[str, str],
+) -> Dict[str, str]:
+    """
+    Enriches missing DLC names in catalog using Byparr (SteamDB /app/<appid>/dlc/)
+    or Steam Store API fallbacks.
+    """
+    base_appid_str = str(base_appid).strip()
+    if not base_appid_str or not catalog:
+        return catalog
+
+    enriched = dict(catalog)
+    needs_lookup = [
+        dlc_id
+        for dlc_id, name in enriched.items()
+        if not name or name.strip().lower() in (f"dlc {dlc_id}", f"app {dlc_id}", "")
+    ]
+
+    # 1. Try Byparr SteamDB Scraper if Byparr is available
+    try:
+        from core.steamdb_scraper import ByparrManager, SteamDBScraper
+        if ByparrManager.find_byparr_dir():
+            scraper = SteamDBScraper()
+            html = scraper.fetch_rendered_html(f"https://steamdb.info/app/{base_appid_str}/dlc/")
+            if html:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(html, "html.parser")
+                for tr in soup.find_all("tr"):
+                    tds = tr.find_all(["td", "th"])
+                    if len(tds) >= 2:
+                        d_id = tds[0].get_text(strip=True)
+                        d_name = tds[1].get_text(strip=True)
+                        if d_id.isdigit() and d_id != base_appid_str and d_name:
+                            # Populate missing or dummy-named DLCs
+                            if d_id not in enriched or not enriched[d_id] or enriched[d_id].strip().lower() in (f"dlc {d_id}", f"app {d_id}", ""):
+                                enriched[d_id] = d_name
+                            if d_id in needs_lookup:
+                                needs_lookup.remove(d_id)
+    except Exception as e:
+        logger.debug(f"[DLCMode] Byparr DLC name lookup failed for {base_appid_str}: {e}")
+
+    # 2. Store API fallback for any remaining needs_lookup (up to 10 to keep fast)
+    if needs_lookup:
+        import requests
+        for dlc_id in needs_lookup[:10]:
+            try:
+                r = requests.get(
+                    f"https://store.steampowered.com/api/appdetails?appids={dlc_id}",
+                    timeout=3,
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                if r.status_code == 200:
+                    d_data = r.json()
+                    name = d_data.get(str(dlc_id), {}).get("data", {}).get("name")
+                    if name:
+                        enriched[dlc_id] = name
+            except Exception:
+                pass
+
+    return enriched
+
