@@ -269,6 +269,7 @@ class LibraryActionsMixin:
         """
         from ui.dialogs.themed_message_box import ThemedMessageBox
 
+        appid_str = str(appid).strip()
         known: Dict[str, str] = {}
         getter = getattr(depot_dialog, "get_dlc_catalog", None)
         if callable(getter):
@@ -278,7 +279,7 @@ class LibraryActionsMixin:
                 logger.debug("[Library] Could not read the dialog's DLC catalog", exc_info=True)
         for dlc_appid, dlc_name in (game_data.get("_dlc_catalog") or {}).items():
             dlc_appid = str(dlc_appid or "").strip()
-            if dlc_appid.isdigit():
+            if dlc_appid.isdigit() and dlc_appid != appid_str:
                 known.setdefault(dlc_appid, str(dlc_name or ""))
 
         # Only the depotless DLCs are recorded when nothing was ticked. A DLC
@@ -286,9 +287,17 @@ class LibraryActionsMixin:
         get_depotless = getattr(depot_dialog, "get_depotless_dlc_catalog", None)
         depotless = get_depotless() if callable(get_depotless) else None
         if isinstance(depotless, dict) and depotless:
-            catalog = {str(k): str(v or known.get(str(k), "")) for k, v in depotless.items()}
+            catalog = {
+                str(k): str(v or known.get(str(k), ""))
+                for k, v in depotless.items()
+                if str(k).strip() != appid_str
+            }
         else:
-            catalog = dict(known)
+            catalog = {
+                str(k): str(v)
+                for k, v in known.items()
+                if str(k).strip() != appid_str
+            }
 
         name = game_data.get("game_name") or f"App {appid}"
         if not catalog:
@@ -301,12 +310,14 @@ class LibraryActionsMixin:
 
         try:
             from utils.yaml.dlc import add_dlc_data_batch
-            from utils.yaml_config_manager import get_user_config_path
+            from utils.yaml_config_manager import get_user_config_path, remove_additional_app
 
             config_path = get_user_config_path()
             if not config_path:
                 raise RuntimeError("SLSsteam config path could not be found")
             add_dlc_data_batch(config_path, appid, catalog)
+            # Remove base game AppID from AdditionalApps (DLC-only mode invariant)
+            remove_additional_app(config_path, appid)
         except Exception as exc:
             logger.warning("[Library] Could not save DLC mode for %s: %s", appid, exc)
             ThemedMessageBox.warning(
