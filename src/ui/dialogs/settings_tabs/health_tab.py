@@ -85,20 +85,34 @@ class HealthStatusTile(QPushButton):
         """)
 
 
-def create_rec_setting_row(title: str, desc: str, checkbox: QCheckBox, accent_color: str = "") -> QWidget:
+def create_rec_setting_row(title: str, desc: str, checkbox: QCheckBox) -> QWidget:
+    """One recommended setting: a title and description beside its checkbox.
+
+    The colours come from the surface the row is drawn on, so the row stays
+    legible on a light background too. The checkbox is deliberately left
+    unstyled: the application stylesheet already draws it (transparent
+    indicator, no border), and a local override only fights that.
+    """
+    from utils.color_utils import get_raised_surface_tokens
+    from utils.settings import get_settings
+
+    settings = get_settings()
+    surface = settings.value("background_color", "#111318", type=str) if settings else "#111318"
+    tokens = get_raised_surface_tokens(surface)
+
     row = QWidget()
     row.setObjectName("rec_setting_row")
     row.setMinimumHeight(48)
-    row.setStyleSheet("""
-        QWidget#rec_setting_row {
-            background-color: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.07);
+    row.setStyleSheet(f"""
+        QWidget#rec_setting_row {{
+            background-color: {tokens["tint"]};
+            border: 1px solid {tokens["border"]};
             border-radius: 8px;
-        }
-        QWidget#rec_setting_row:hover {
-            background-color: rgba(255, 255, 255, 0.06);
-            border-color: rgba(255, 255, 255, 0.16);
-        }
+        }}
+        QWidget#rec_setting_row:hover {{
+            background-color: {tokens["tint_hover"]};
+            border-color: {tokens["border_hover"]};
+        }}
     """)
     h = QHBoxLayout(row)
     h.setContentsMargins(14, 8, 14, 8)
@@ -108,79 +122,16 @@ def create_rec_setting_row(title: str, desc: str, checkbox: QCheckBox, accent_co
     col.setSpacing(2)
 
     t_lbl = QLabel(title)
-    t_lbl.setStyleSheet("font-size: 9.5pt; font-weight: 600; color: #FFFFFF; border: none; background: transparent;")
+    t_lbl.setStyleSheet(f"font-size: 9.5pt; font-weight: 600; color: {tokens['ink']}; border: none; background: transparent;")
     d_lbl = QLabel(desc)
-    d_lbl.setStyleSheet("font-size: 8.2pt; color: rgba(255, 255, 255, 0.55); border: none; background: transparent;")
+    d_lbl.setStyleSheet(f"font-size: 8.2pt; color: {tokens['ink_muted']}; border: none; background: transparent;")
     d_lbl.setWordWrap(True)
 
     col.addWidget(t_lbl)
     col.addWidget(d_lbl)
     h.addLayout(col, 1)
 
-    from utils.settings import get_settings
-    from utils.paths import Paths
-    s = get_settings()
-    preset = s.value("material_preset", "ocean", type=str) if s else "ocean"
-    acc = accent_color or (s.value("accent_color", "#81C784", type=str) if s else "#81C784")
-
-    custom_unlit = s.value("theme_checkbox_unlit", "", type=str) if s else ""
-    custom_lit = s.value("theme_checkbox_lit", "", type=str) if s else ""
-    has_custom = bool(custom_unlit and custom_lit and os.path.exists(custom_unlit) and os.path.exists(custom_lit))
-
-    unlit_svg = str(Paths.resource("halloween/pumpkin_unlit.svg"))
-    lit_svg = str(Paths.resource("halloween/pumpkin_lit.svg"))
-    is_halloween = (preset == "halloween" or str(acc).lower() in ("#ffb77d", "#ff7518")) and os.path.exists(unlit_svg) and os.path.exists(lit_svg)
-
     checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
-    if has_custom or is_halloween:
-        checkbox.setStyleSheet("""
-            QCheckBox {
-                spacing: 0px;
-                border: none;
-                background: transparent;
-            }
-            QCheckBox::indicator {
-                width: 20px;
-                height: 20px;
-                border: none;
-                outline: none;
-                background: transparent;
-            }
-            QCheckBox::indicator:hover {
-                border: none;
-                outline: none;
-                background: transparent;
-            }
-            QCheckBox::indicator:checked {
-                border: none;
-                outline: none;
-                background: transparent;
-            }
-        """)
-    else:
-        checkbox.setStyleSheet(f"""
-            QCheckBox {{
-                spacing: 0px;
-                border: none;
-                background: transparent;
-            }}
-            QCheckBox::indicator {{
-                width: 20px;
-                height: 20px;
-                border-radius: 5px;
-                border: none;
-                outline: none;
-                background: rgba(255, 255, 255, 0.08);
-            }}
-            QCheckBox::indicator:hover {{
-                background: rgba(255, 255, 255, 0.15);
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {acc};
-                border: none;
-                outline: none;
-            }}
-        """)
     h.addWidget(checkbox, 0, Qt.AlignmentFlag.AlignVCenter)
     return row
 
@@ -417,7 +368,6 @@ def create_health_tab(dialog) -> QWidget:
 
     # Checkboxes
     dialog.twp_chk_smart = None
-    acc_color = getattr(dialog, "accent_color", "")
     dialog.twp_chk_gateway = QCheckBox()
     dialog.twp_chk_gateway.setChecked(dialog.settings.value("isp_bypass_mode", "auto", type=str) == "auto")
     dialog.twp_chk_gateway.toggled.connect(lambda: on_rec_setting_toggled(dialog))
@@ -425,7 +375,6 @@ def create_health_tab(dialog) -> QWidget:
         "Hubcap Gateway (Auto)",
         "Smart fallback routing to bypass ISP throttling and rate limits",
         dialog.twp_chk_gateway,
-        acc_color
     ))
 
     dialog.twp_chk_sls_api = QCheckBox()
@@ -435,7 +384,6 @@ def create_health_tab(dialog) -> QWidget:
         "SLSsteam Native API",
         "Native ACF generation and automated Steam game registration",
         dialog.twp_chk_sls_api,
-        acc_color
     ))
 
     dialog.twp_chk_achievements = QCheckBox()
@@ -445,7 +393,6 @@ def create_health_tab(dialog) -> QWidget:
         "Skip achievement generation",
         "Skip legacy achievement schema generation to accelerate downloads",
         dialog.twp_chk_achievements,
-        acc_color
     ))
 
     dialog.twp_chk_macos = QCheckBox()
@@ -455,7 +402,6 @@ def create_health_tab(dialog) -> QWidget:
         "Hide Platform Clutter",
         "Filter out unnecessary macOS & Android depots from download queues",
         dialog.twp_chk_macos,
-        acc_color
     ))
 
     dialog.health_apply_rec_btn = QPushButton("Apply Recommended Settings")
@@ -817,7 +763,6 @@ def run_assfixer_restore(dialog) -> None:
 
 def _launch_terminal_and_quit_app(dialog, cmd: list) -> bool:
     """Launch terminal command and gracefully quit ASSella."""
-    import os
     from PyQt6.QtCore import QTimer
     from PyQt6.QtWidgets import QApplication
 
