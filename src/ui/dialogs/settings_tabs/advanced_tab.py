@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
+from utils.color_utils import get_raised_surface_tokens
 from utils.helpers import create_checkbox_setting
 from utils.yaml_config_manager import is_slssteam_mode_enabled
 
@@ -47,7 +48,17 @@ def create_advanced_tab(dialog) -> QWidget:
     layout.addWidget(adv_card)
 
     # Workshop Downloader Settings Card
-    ws_card, ws_layout = dialog._create_card_frame("Advanced Workshop Settings")
+    ws_card, ws_layout = dialog._create_card_frame("Workshop settings (deprecated)")
+
+    dialog.enable_workshop_downloader_checkbox = create_checkbox_setting(
+        "Enable workshop downloader",
+        "enable_workshop_downloader",
+        False,
+        dialog,
+        "Enable legacy Steam Workshop downloader. Deprecated feature.",
+        show_description=False,
+    )
+    ws_layout.addWidget(dialog.enable_workshop_downloader_checkbox)
 
     dialog.workshop_auto_tune_checkbox = create_checkbox_setting(
         "Auto adapting limiter (beta)",
@@ -158,6 +169,47 @@ def create_advanced_tab(dialog) -> QWidget:
     ws_grid.addLayout(ws_cell_layout, 1, 1)
 
     ws_layout.addLayout(ws_grid)
+
+    def _apply_ws_disabled_state(enabled: bool):
+        dialog.workshop_auto_tune_checkbox.setEnabled(enabled)
+        dialog.workshop_steam_checkbox.setEnabled(enabled)
+        dialog.workshop_max_dl_slider.setEnabled(enabled)
+        dialog.workshop_max_dl_val_lbl.setEnabled(enabled)
+        dialog.workshop_cell_id_input.setEnabled(enabled)
+        tokens = get_raised_surface_tokens(
+            dialog.settings.value("background_color", "#111318", type=str) or "#111318"
+        )
+        color = tokens["ink"] if enabled else tokens["ink_disabled"]
+        ws_max_dl_label.setStyleSheet(f"color: {color}; font-size: 9.5pt; font-weight: 500; border: none; background: transparent;")
+        ws_cell_id_label.setStyleSheet(f"color: {color}; font-size: 9.5pt; font-weight: 500; border: none; background: transparent;")
+        value_color = tokens["ink_faint"] if enabled else tokens["ink_subtle"]
+        dialog.workshop_max_dl_val_lbl.setStyleSheet(f"color: {value_color}; font-size: 9pt; font-weight: bold; border: none; background: transparent;")
+
+    def _on_workshop_enabled_toggled(checked: bool):
+        if checked:
+            reply = ThemedMessageBox.question(
+                dialog,
+                "Enable Workshop Downloader",
+                "Are you sure you want to enable the Workshop Downloader?\n\nThis feature is deprecated and may not work reliably.",
+                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.No,
+            )
+            if reply != ThemedMessageBox.StandardButton.Yes:
+                dialog.enable_workshop_downloader_checkbox.blockSignals(True)
+                dialog.enable_workshop_downloader_checkbox.setChecked(False)
+                dialog.enable_workshop_downloader_checkbox.blockSignals(False)
+                dialog.settings.setValue("enable_workshop_downloader", False)
+                _apply_ws_disabled_state(False)
+                return
+        dialog.settings.setValue("enable_workshop_downloader", checked)
+        _apply_ws_disabled_state(checked)
+
+    dialog.enable_workshop_downloader_checkbox.toggled.connect(_on_workshop_enabled_toggled)
+
+    # Apply initial disabled/enabled state based on settings
+    ws_init_on = dialog.settings.value("enable_workshop_downloader", False, type=bool)
+    _apply_ws_disabled_state(ws_init_on)
+
     layout.addWidget(ws_card)
 
     # Post-Processing Card

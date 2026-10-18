@@ -510,7 +510,9 @@ class FetchManifestDialog(QDialog):
         workshop_layout.addWidget(ws_card)
         workshop_layout.addStretch()
 
-        self.tab_widget.addTab(self.workshop_tab, "Workshop Downloader")
+        ws_enabled = self.settings.value("enable_workshop_downloader", False, type=bool) if self.settings else False
+        if ws_enabled:
+            self.tab_widget.addTab(self.workshop_tab, "Workshop Downloader")
 
     def _create_api_status_bar(self, parent_layout):
         """Builds the top status bar widget."""

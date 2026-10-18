@@ -180,9 +180,10 @@ class GameDetailsDialogV2(QDialog):
         self._apply_stylesheet()
         self._setup_ui()
 
-        # Check workshop availability and downloaded content in background thread
-        from utils.workshop_helpers import check_game_workshop_available_async
-        check_game_workshop_available_async(self.appid, self.game_data, callback=self.workshop_check_finished.emit)
+        # Check workshop availability and downloaded content in background thread (only if enabled)
+        if self.settings.value("enable_workshop_downloader", False, type=bool):
+            from utils.workshop_helpers import check_game_workshop_available_async
+            check_game_workshop_available_async(self.appid, self.game_data, callback=self.workshop_check_finished.emit)
 
         # Check lua.tools fixes availability asynchronously (only if unlocked & authenticated)
         if self._is_luatools_available():
@@ -703,7 +704,8 @@ class GameDetailsDialogV2(QDialog):
             or self.game_data.get("update_status") in ("vapor", "at0m", "at0-m")
             or self.game_data.get("source") in ("Vapor", "at0-m", "AT0-M")
         )
-        if is_vapor:
+        ws_enabled = self.settings.value("enable_workshop_downloader", False, type=bool)
+        if not ws_enabled or is_vapor:
             dummy = QWidget()
             self.stacked.addWidget(dummy)
             return

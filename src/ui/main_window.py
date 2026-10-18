@@ -1393,9 +1393,12 @@ class MainWindow(QMainWindow):
                     "• Restart Steam to reload game configs and licenses."
                 )
             else:
-                self.steam_conn_value.setText("Online")
+                from core.steam_helpers import get_installed_steam_client_version
+                client_ver = get_installed_steam_client_version()
+                disp_text = client_ver if client_ver else "Online"
+                self.steam_conn_value.setText(disp_text)
                 self.steam_conn_value.setStyleSheet(self._get_status_style("success"))
-                self.steam_conn_value.setToolTip("Steam client is running normally.")
+                self.steam_conn_value.setToolTip(f"Steam client is running (Version: {disp_text}).")
 
         # Health Visor Status (SLS binary + version + config + SLS API)
         if hasattr(self, "health_status_value") and self.health_status_value:

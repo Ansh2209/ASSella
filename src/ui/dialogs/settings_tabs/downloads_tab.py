@@ -79,11 +79,11 @@ def create_downloads_tab(dialog) -> QWidget:
 
     # LanCache Detection Toggle
     dialog.use_lancache_checkbox = create_checkbox_setting(
-        "Enable Lan Cache",
+        "Game File Transfer over Local Network:",
         "use_lancache",
         True,
         dialog,
-        "Use network connected steam game files first",
+        "If this is enabled, Steam allows to transfer game files from other PCs on your local network, reducing your Internet traffic while downloading or updating a game",
     )
     dl_layout.addWidget(dialog.use_lancache_checkbox)
 
@@ -247,12 +247,11 @@ def create_downloads_tab(dialog) -> QWidget:
     gen_layout.addWidget(dl_card)
 
     # Manifest & MRC Provider Card
-    mrc_card, mrc_layout = dialog._create_card_frame("Manifest & MRC Provider")
+    mrc_card, mrc_layout = dialog._create_card_frame("Manifest & MRC Provider (local)")
     mrc_layout.setSpacing(6)
 
     mrc_desc = QLabel(
-        "Select the provider for resolving Steam manifest decryption codes (MRC). "
-        "Use 'Test Server' to benchmark provider responsiveness and health."
+        "Select the default way for ASSella to fetch manifests when updating games! (Default: Auto)"
     )
     mrc_desc.setStyleSheet("color: rgba(255, 255, 255, 0.65); font-size: 8.5pt;")
     mrc_desc.setWordWrap(True)

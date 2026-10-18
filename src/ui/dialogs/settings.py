@@ -99,6 +99,7 @@ class SettingsDialog(QDialog):
         self.titlebar_position_checkbox = None
         self.sonic_mode_checkbox = None
         self.workshop_steam_checkbox = None
+        self.enable_workshop_downloader_checkbox = None
         self.workshop_max_dl_spinbox = None
         self.auto_tune_checkbox = None
         self.workshop_auto_tune_checkbox = None
@@ -163,6 +164,13 @@ class SettingsDialog(QDialog):
         self._original_material_preset = self.settings.value("material_preset", "ocean", type=str)
         self._original_update_interval = self.settings.value("update_check_interval_minutes", 45, type=int)
         self._original_experimental_acf = self.settings.value("experimental_acf_independent", False, type=bool)
+        # These two are written the moment the user flips them, so a Cancel has
+        # to put the stored values back.
+        self._original_enable_workshop_downloader = self.settings.value(
+            "enable_workshop_downloader", False, type=bool
+        )
+        self._original_all_games_online = self.settings.value("all_games_online", None)
+        self._original_all_games_online_beta = self.settings.value("all_games_online_beta", None)
 
         logger.debug("Opening SettingsDialog.")
         self._setup_ui()
@@ -409,6 +417,26 @@ class SettingsDialog(QDialog):
 
             def currentIndex(self):
                 return self._stack.currentIndex()
+
+            def removeTab(self, index):
+                """Drop a page and its navigation entry (QTabWidget parity).
+
+                The settings pages live in a QListWidget + QStackedWidget pair
+                rather than a real QTabWidget, so pages that appear at runtime
+                (the LuaTools page) need this shim to take a tab away again.
+                """
+                if index < 0 or index >= self._stack.count():
+                    return
+                self._nav.takeItem(index)
+                widget = self._stack.widget(index)
+                if widget is not None:
+                    self._stack.removeWidget(widget)
+                    widget.deleteLater()
+                self._tabs = {
+                    label: (i - 1 if i > index else i)
+                    for label, i in self._tabs.items()
+                    if i != index
+                }
 
         self.tab_widget = _TabShim(self._nav_list, self._page_stack)
 
@@ -768,6 +796,16 @@ class SettingsDialog(QDialog):
             self.settings.setValue("simplify_denuvo_status", self._original_simplify_denuvo_status)
         if hasattr(self, "_original_ignore_online_fixes"):
             self.settings.setValue("luatools_ignore_online_fixes", self._original_ignore_online_fixes)
+        if hasattr(self, "_original_enable_workshop_downloader"):
+            self.settings.setValue(
+                "enable_workshop_downloader", self._original_enable_workshop_downloader
+            )
+        for key in ("all_games_online", "all_games_online_beta"):
+            original = getattr(self, f"_original_{key}", None)
+            if original is None:
+                self.settings.remove(key)
+            else:
+                self.settings.setValue(key, original)
         if hasattr(self, "_original_title_bar_search"):
             self.settings.setValue("title_bar_search_enabled", self._original_title_bar_search)
             if self.main_window and hasattr(self.main_window, "bottom_titlebar"):
@@ -904,6 +942,11 @@ class SettingsDialog(QDialog):
                 "auto_apply_goldberg", self.auto_apply_goldberg_checkbox.isChecked()
             )
 
+        if hasattr(self, "enable_workshop_downloader_checkbox") and self.enable_workshop_downloader_checkbox is not None:
+            self.settings.setValue(
+                "enable_workshop_downloader",
+                self.enable_workshop_downloader_checkbox.isChecked(),
+            )
         if self.workshop_steam_checkbox is not None:
             self.settings.setValue(
                 "workshop_steam_enabled",
