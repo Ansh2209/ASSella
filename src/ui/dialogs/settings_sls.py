@@ -323,6 +323,8 @@ def create_sls_tab(dialog) -> QWidget:
     if saved_all_online is None:
         saved_all_online = dialog.settings.value("all_games_online_beta", None)
     if saved_all_online is None:
+        # Only the effective default; leave the stored value unset until the
+        # user actually flips the switch, so opening Settings writes nothing.
         saved_all_online = True
 
     current_all_online = (
@@ -337,7 +339,7 @@ def create_sls_tab(dialog) -> QWidget:
     dialog.all_games_online_checkbox = create_checkbox_setting(
         "All games online",
         "all_games_online",
-        current_all_online,
+        True,
         dialog,
         "Uses 0: 480 in SLSsteam FakeAppIds to map all unowned games to Spacewar (480) for online networking features.",
     )
@@ -366,14 +368,7 @@ def create_sls_tab(dialog) -> QWidget:
         dialog.settings.setValue("sls_config_management", True)
 
 
-    dialog.ignore_slssteam_updater_checkbox = create_checkbox_setting(
-        "Ignore SLSsteam Updater (managed by Headcrab)",
-        "ignore_slssteam_updater",
-        False,
-        dialog,
-        "Disable boot check and update functionality for SLSsteam.",
-    )
-    dialog.ignore_slssteam_updater_checkbox.hide()
+    dialog.ignore_slssteam_updater_checkbox = None
 
     layout.addWidget(int_card)
 

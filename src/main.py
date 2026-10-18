@@ -284,6 +284,15 @@ def main():
                         add_fake_app_id(config_path, "0", game_name="All Unowned Apps", fake_appid="480")
             except Exception as ex:
                 logger.debug(f"Failed to ensure all_games_online FakeAppId: {ex}")
+
+            # A Steam update would replace the files SLSsteam patches, so the
+            # config keeps DisableUpdates set. The writer memoises "already
+            # correct", so this costs nothing once the file agrees.
+            try:
+                from utils.yaml_config_manager import update_yaml_boolean_value
+                update_yaml_boolean_value(config_path, "DisableUpdates", True)
+            except Exception as ex:
+                logger.debug(f"Failed to ensure DisableUpdates in the SLSsteam config: {ex}")
     except OSError as e:
         logger.error(f"Startup I/O error (Config/Backup): {e}")
 

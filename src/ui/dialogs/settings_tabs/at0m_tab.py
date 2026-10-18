@@ -203,44 +203,11 @@ def create_at0m_tab(dialog) -> QWidget:
     sep_top.setStyleSheet("color: rgba(255,255,255,0.08); border: none; background: rgba(255,255,255,0.08); max-height: 1px;")
     cfg_layout.addWidget(sep_top)
 
-    # Option 1: Disable updates (SLSsteam AdditionalApps)
-    proxy_active = False
-    try:
-        from utils.isp_bypass import TorManager
-        proxy_active = TorManager.is_proxy_active()
-    except Exception:
-        pass
-
-    sls_disable_updates = get_yaml_boolean_value(cfg_path, "DisableUpdates", default=(proxy_active or True))
-    saved_disable_updates = dialog.settings.value(
-        "at0m_disable_updates",
-        dialog.settings.value("vapor_disable_updates", sls_disable_updates, type=bool),
-        type=bool,
-    )
-
-    dialog.at0m_disable_updates_checkbox = create_checkbox_setting(
-        "Disable updates (SLSsteam AdditionalApps)",
-        "at0m_disable_updates",
-        saved_disable_updates,
-        dialog,
-        tooltip="Recommended. Prevents Steam from attempting to update unowned AdditionalApps. Automatically enabled when proxy or plugins are active.",
-        show_description=False,
-    )
-    dialog.vapor_disable_updates_checkbox = dialog.at0m_disable_updates_checkbox
-    cfg_layout.addWidget(dialog.at0m_disable_updates_checkbox)
-
-    def _on_disable_updates_toggled(checked: bool):
-        dialog.settings.setValue("at0m_disable_updates", checked)
-        dialog.settings.setValue("vapor_disable_updates", checked)
-        update_yaml_boolean_value(cfg_path, "DisableUpdates", checked)
-
-    dialog.at0m_disable_updates_checkbox.toggled.connect(_on_disable_updates_toggled)
-
-    # Separator
-    sep1 = QFrame()
-    sep1.setFrameShape(QFrame.Shape.HLine)
-    sep1.setStyleSheet("color: rgba(255,255,255,0.08); border: none; background: rgba(255,255,255,0.08); max-height: 1px;")
-    cfg_layout.addWidget(sep1)
+    # DisableUpdates stays enforced for every install (a Steam update would
+    # replace the files SLSsteam patches). src/main.py applies it at startup so
+    # merely opening this page never rewrites the SLSsteam config.
+    dialog.at0m_disable_updates_checkbox = None
+    dialog.vapor_disable_updates_checkbox = None
 
     # Option 2: Default Download Behavior
     act_row = QHBoxLayout()
@@ -627,7 +594,8 @@ def create_at0m_tab(dialog) -> QWidget:
     dialog.btn_spliced_tickets.clicked.connect(_on_spliced_tickets_clicked)
 
     def _update_subwidget_states(enabled: bool):
-        dialog.at0m_disable_updates_checkbox.setEnabled(enabled)
+        if getattr(dialog, "at0m_disable_updates_checkbox", None):
+            dialog.at0m_disable_updates_checkbox.setEnabled(enabled)
         dialog.at0m_download_action_combo.setEnabled(enabled)
         dialog.at0m_start_mode_combo.setEnabled(enabled)
 
