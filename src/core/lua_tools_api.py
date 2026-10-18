@@ -304,6 +304,8 @@ class LuaToolsAPI:
     @classmethod
     def get_valid_access_token(cls) -> Optional[str]:
         """Return a valid access token, auto-refreshing via Supabase if expired."""
+        if not cls.is_unlocked():
+            return None
         session = cls.load_session()
         if not session or not session.get("refresh_token"):
             return None

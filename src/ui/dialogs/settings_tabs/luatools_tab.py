@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from core.lua_tools_api import LuaToolsAPI
+from utils.task_runner import TaskRunner
 
 logger = logging.getLogger(__name__)
 
@@ -244,8 +245,7 @@ def create_luatools_tab(dialog) -> QWidget:
     dialog.luatools_poll_timer.setInterval(800)
 
     # Helper function to refresh UI (uses local cache first to avoid blocking GUI thread)
-    def update_ui_status():
-        status = LuaToolsAPI.get_auth_status(allow_cached=True)
+    def _paint_status(status):
         if status.get("authenticated"):
             name = status.get("display_name", "Connected")
             dialog.luatools_status_dot.setStyleSheet("color: #22c55e; font-size: 14pt;")
@@ -258,6 +258,49 @@ def create_luatools_tab(dialog) -> QWidget:
             dialog.luatools_status_text.setText("Not connected to lua.tools")
             dialog.luatools_disconnect_btn.setVisible(False)
             dialog.luatools_login_container.setVisible(True)
+
+    # Bumped on every refresh so a slow validation cannot overwrite a newer state.
+    status_generation = {"value": 0}
+
+    def update_ui_status(validate: bool = False):
+        """Paint the cached account state, optionally validating it in the background.
+
+        `validate` is passed only when the tab is opened, so opening Settings
+        costs no network call and the one refresh happens when the account
+        status is actually on screen. Both paths return early while LuaTools is
+        locked, so a locked install never touches the lua.tools backend.
+        """
+        if not LuaToolsAPI.is_unlocked():
+            return
+        status_generation["value"] += 1
+        generation = status_generation["value"]
+        _paint_status(LuaToolsAPI.get_auth_status(allow_cached=True))
+        if not validate:
+            return
+
+        dialog.luatools_status_text.setText("Checking account…")
+        runner = getattr(dialog, "luatools_status_runner", None)
+        if runner is None:
+            runner = TaskRunner(dialog)
+            dialog.luatools_status_runner = runner
+
+        def _validated(status):
+            if generation != status_generation["value"]:
+                return
+            _paint_status(status)
+
+        def _validation_failed(error):
+            if generation != status_generation["value"]:
+                return
+            logger.warning(f"[LuaTools] Could not validate the session: {error}")
+            _paint_status(LuaToolsAPI.get_auth_status(allow_cached=True))
+
+        runner.run(
+            LuaToolsAPI.get_auth_status,
+            False,
+            on_finished=_validated,
+            on_error=_validation_failed,
+        )
 
     def start_browser_login():
         ok, auth_url = LuaToolsAPI.start_pkce_login()

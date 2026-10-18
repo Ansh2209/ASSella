@@ -527,7 +527,9 @@ class SettingsDialog(QDialog):
 
         elif tab_name == "LuaTools":
             if hasattr(self, "update_luatools_ui_status"):
-                self.update_luatools_ui_status()
+                # The page is on screen now, so it is the right moment to spend
+                # one network refresh proving the stored token still works.
+                self.update_luatools_ui_status(validate=True)
 
     def _create_dialog_buttons(self) -> None:
         """Create standard Ok/Cancel buttons."""

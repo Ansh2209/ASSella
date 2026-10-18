@@ -757,14 +757,24 @@ class GameDetailsDialogV2(QDialog):
     #  LuaFix Tab Delegations (lua.tools integration)
     # ──────────────────────────────────────────
     def _is_luatools_available(self) -> bool:
-        """LuaFix tab is available only if unlocked via secret AND user is authenticated."""
+        """Whether this window may show the LuaFix tab.
+
+        Answers from a per-window cache: the check reads the session file, and
+        building the details window asks three times.
+        """
         if not self.settings.value("luatools_unlocked", False, type=bool):
             return False
+        cached = getattr(self, "_luatools_available", None)
+        if cached is not None:
+            return cached
         try:
             from core.lua_tools_api import LuaToolsAPI
-            return LuaToolsAPI.is_authenticated(allow_cached=True)
-        except Exception:
-            return False
+            available = LuaToolsAPI.is_authenticated(allow_cached=True)
+        except (OSError, ValueError, ImportError) as e:
+            logger.warning(f"[LuaFix] Could not read the lua.tools session: {e}")
+            available = False
+        self._luatools_available = available
+        return available
 
     def _init_luafix_tab(self):
         init_luafix_tab(self)
