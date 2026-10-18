@@ -267,10 +267,6 @@
     "broad": 1,
     "narrow": 0
   },
-  "ui/dialogs/settings_tabs/at0m_tab.py": {
-    "broad": 1,
-    "narrow": 0
-  },
   "ui/dialogs/settings_tabs/downloads_tab.py": {
     "broad": 0,
     "narrow": 1
