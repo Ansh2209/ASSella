@@ -78,39 +78,44 @@ def main() -> int:
           "a marker in the middle does not count")
 
     # ---------------------------------------------------------------- selector
-    print("=== DLCs without a depot are listed but not selectable ===")
+    print("=== DLCs without a depot are checkable with AppID and null size ===")
     dialog = DlcDepotSelectionDialog(
         probe_appid, "Probe Game", DEPOTS, dlc_catalog=CATALOG
     )
     try:
         rows = dialog.table.rowCount()
-        check(rows == 3, f"two depot rows plus one name-only row (got {rows})")
+        check(rows == 3, f"two depot rows plus one depotless row (got {rows})")
 
-        info_rows = [
+        depotless_rows = [
             r
             for r in range(rows)
-            if dialog.table.item(r, 0).flags() == Qt.ItemFlag.NoItemFlags
+            if bool(dialog.table.item(r, 0).data(int(Qt.ItemDataRole.UserRole) + 21))
         ]
-        check(len(info_rows) == 1, "exactly one informational row")
-        info = info_rows[0]
-        check(dialog.table.item(info, 1).text().endswith("(no depot)"),
-              "the row says it has no depot")
+        check(len(depotless_rows) == 1, "exactly one depotless row")
+        info = depotless_rows[0]
         check("Name Only" in dialog.table.item(info, 1).text(),
               "the catalogue name is shown")
-        check(dialog.table.item(info, 0).text() == "—",
-              "the id column does not pretend to be a depot")
-        check(dialog.summary_lbl.text().startswith("Selected: 2 of 2"),
-              f"informational rows are not counted (got {dialog.summary_lbl.text()!r})")
+        check(dialog.table.item(info, 0).text() == "333",
+              "the id column displays the DLC AppID")
+        check(dialog.table.item(info, 2).text() == "null",
+              "the size column displays null for depotless DLC")
         check(dialog.get_depotless_dlc_catalog() == {"333": "Name Only"},
               "the depotless catalogue is available to the caller")
         check(dialog.get_selected_dlc_appids() == ["111", "222"],
               "checked depots map back to their DLC app ids")
 
-        dialog._toggle_select_all()
+        # Test filter chips exist
+        check("all" in dialog.filter_chips and "depotless" in dialog.filter_chips,
+              "filter chips exist")
+
+        # Test 3-button bottom bar
+        check(dialog.inject_btn is not None and dialog.download_btn is not None and dialog.cancel_btn is not None,
+              "three action buttons exist on the bottom bar")
+
+        # Test deselect preset
+        dialog._preset_deselect_all()
         check(dialog.get_selected_depots() == [], "deselect-all leaves nothing ticked")
-        check(dialog.download_btn.text() == "Save DLC Mode (1 DLC Without Depot)",
-              f"config-only stays reachable (got {dialog.download_btn.text()!r})")
-        check(dialog.download_btn.isEnabled(), "the save button is enabled")
+        check(not dialog.download_btn.isEnabled(), "download button disabled when nothing is selected")
     finally:
         dialog.deleteLater()
 

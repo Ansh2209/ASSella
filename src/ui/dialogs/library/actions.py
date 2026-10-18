@@ -229,7 +229,7 @@ class LibraryActionsMixin:
         from utils.dlc_helpers import discover_dlc_depots
 
         name = game_data.get("game_name", "this game")
-        discovery = discover_dlc_depots(appid, game_data.get("depots"))
+        discovery = discover_dlc_depots(appid, game_data.get("depots"), allow_store=True)
         if not discovery.catalog and not discovery.depots:
             ThemedMessageBox.information(
                 self,

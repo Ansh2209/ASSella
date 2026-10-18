@@ -9,6 +9,7 @@ import re
 import shutil
 import logging
 import sqlite3
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Set, Tuple
@@ -1295,4 +1296,90 @@ def has_game_dlcs(appid: str, depots: Optional[Dict[str, Any]] = None) -> bool:
         logger.debug(f"[DLCMode] saved depot listing for {appid_str} could not be read: {e}")
 
     return False
+
+
+def get_injected_dlcs_from_config(base_appid: str, config_path: Optional[Path] = None) -> Set[str]:
+    """Returns set of DLC AppIDs already present under DlcData -> base_appid in SLSsteam config.yaml."""
+    base_appid_str = str(base_appid).strip()
+    if not base_appid_str:
+        return set()
+    try:
+        from utils.yaml_config_manager import get_user_config_path, get_dlc_data
+        cp = config_path or get_user_config_path()
+        if cp and Path(cp).exists():
+            data = get_dlc_data(Path(cp), base_appid_str)
+            if isinstance(data, dict):
+                return {
+                    str(k).strip()
+                    for k in data.keys()
+                    if str(k).strip().isdigit() and str(k).strip() != base_appid_str
+                }
+    except Exception as e:
+        logger.debug(f"[DLCMode] Error reading injected DLCs for {base_appid_str}: {e}")
+    return set()
+
+
+def get_owned_dlcs_from_steam(base_appid: str, steam_userdata_path: Optional[str] = None) -> Set[str]:
+    """
+    Parses Steam's local AppOwnershipTicket binary blobs stored in localconfig.vdf
+    under UserLocalConfigStore -> apptickets to discover legitimately owned DLCs offline.
+    """
+    base_appid_str = str(base_appid).strip()
+    if not base_appid_str or not base_appid_str.isdigit():
+        return set()
+    base_appid_int = int(base_appid_str)
+    owned_dlcs: Set[str] = set()
+
+    steam_roots = []
+    if steam_userdata_path:
+        steam_roots.append(Path(steam_userdata_path))
+    steam_roots.extend([
+        Path.home() / ".local/share/Steam",
+        Path.home() / ".steam/steam",
+        Path.home() / ".steam/root",
+        Path.home() / ".var/app/com.valvesoftware.Steam/.local/share/Steam",
+    ])
+
+    checked_dirs: Set[Path] = set()
+    for root in steam_roots:
+        userdata = root / "userdata" if (root / "userdata").is_dir() else (root if root.name == "userdata" else None)
+        if not userdata or not userdata.is_dir() or userdata in checked_dirs:
+            continue
+        checked_dirs.add(userdata)
+
+        for user_dir in userdata.iterdir():
+            if not user_dir.is_dir() or not user_dir.name.isdigit():
+                continue
+            cfg_file = user_dir / "config" / "localconfig.vdf"
+            if not cfg_file.is_file():
+                continue
+            try:
+                content = cfg_file.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+
+            match = re.search(rf"\"{base_appid_str}\"\s+\"([0-9a-fA-F]+)\"", content)
+            if not match:
+                continue
+            hex_str = match.group(1)
+            try:
+                raw = bytes.fromhex(hex_str)
+                if len(raw) < 48:
+                    continue
+                ticket_appid = struct.unpack_from("<I", raw, 16)[0]
+                if ticket_appid != base_appid_int:
+                    continue
+                dlc_count = struct.unpack_from("<H", raw, 46)[0]
+                offset = 48
+                for _ in range(dlc_count):
+                    if offset + 6 > len(raw):
+                        break
+                    dlc_id, _dlc_flags = struct.unpack_from("<IH", raw, offset)
+                    if dlc_id > 0:
+                        owned_dlcs.add(str(dlc_id))
+                    offset += 6
+            except Exception as e:
+                logger.debug(f"[DLCMode] Failed parsing ticket for {base_appid_str} in {cfg_file}: {e}")
+
+    return owned_dlcs
 
