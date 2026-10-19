@@ -1086,7 +1086,7 @@ class ModernDepotSelectionDialog(QDialog):
                 from ui.dialogs.depotselection import get_smart_default_depots
                 smart_on = self._settings.value("smart_depot_selection", True, type=bool)
                 if smart_on:
-                    self._available_platforms = get_available_platforms(self.depots)
+                    self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
                     self._default_platform = get_default_platform(self.depots)
                     self._multi_platform_editions = resolve_multi_platform_editions(self.app_id, self.depots)
 
@@ -1363,7 +1363,7 @@ class ModernDepotSelectionDialog(QDialog):
         )
 
         if not hasattr(self, "_available_platforms") or not self._available_platforms:
-            self._available_platforms = get_available_platforms(self.depots)
+            self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
             self._multi_platform_editions = resolve_multi_platform_editions(self.app_id, self.depots)
 
         menu = QMenu(self)

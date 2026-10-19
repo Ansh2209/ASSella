@@ -224,10 +224,10 @@ class DepotTableMixin:
                     get_default_platform,
                     resolve_multi_platform_editions,
                 )
-                self._available_platforms = get_available_platforms(self.depots)
+                self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
                 self._default_platform = get_default_platform(self.depots)
                 self._multi_platform_editions = resolve_multi_platform_editions(
-                    self.app_id, self.depots, include_store=False
+                    self.app_id, self.depots, include_store=False, allow_network=True
                 )
 
                 default_eds = self._multi_platform_editions.get(self._default_platform, [])
@@ -777,9 +777,9 @@ class DepotTableMixin:
                     get_available_platforms,
                     resolve_multi_platform_editions,
                 )
-                self._available_platforms = get_available_platforms(self.depots)
+                self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
                 self._multi_platform_editions = resolve_multi_platform_editions(
-                    self.app_id, self.depots, include_store=False
+                    self.app_id, self.depots, include_store=False, allow_network=True
                 )
 
             from utils.edition_helpers import match_selection_to_edition

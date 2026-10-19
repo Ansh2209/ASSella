@@ -12,6 +12,7 @@ import re
 import urllib.request
 from typing import Any, Dict, List, Optional, Set
 
+from utils import edition_catalog
 from utils.dlc_helpers import is_base_game_main_depot, is_dlc_depot
 from utils.settings import get_settings
 
@@ -28,6 +29,20 @@ def clean_package_name(raw_text: str) -> str:
     clean = re.sub(r"<[^>]+>", "", str(raw_text)).strip()
     clean = re.sub(r"\s*-\s*[\$€£¥\d\.,\s]+$", "", clean).strip()
     return clean
+
+
+def _is_same_game_name(left: str, right: str) -> bool:
+    """True when a package name is just the game's own name.
+
+    Steam spells the same title with trademark signs and punctuation in one
+    place and without them in another ("Darkest Dungeon®" vs "Darkest
+    Dungeon"), so the comparison drops everything but letters and digits.
+    """
+    def squash(value: str) -> str:
+        return "".join(ch for ch in value.casefold() if ch.isalnum())
+
+    a, b = squash(left), squash(right)
+    return bool(a) and bool(b) and (a == b or a in b or b in a)
 
 
 def make_short_edition_name(full_name: str, fallback: str = "Edition", max_len: int = 30) -> str:
@@ -67,13 +82,33 @@ def make_short_edition_name(full_name: str, fallback: str = "Edition", max_len: 
     return f"{clean[:max_len - 3].rstrip()}..."
 
 
-def get_available_platforms(depots: Dict[Any, Any]) -> List[str]:
+def get_available_platforms(
+    depots: Dict[Any, Any],
+    appid: Optional[str] = None,
+    *,
+    allow_network: bool = False,
+    timeout: float = 2.0,
+) -> List[str]:
     """
-    Detect which operating systems have dedicated depots in this title.
+    Detect which operating systems this title ships for.
+
+    The depot list alone cannot answer this: a game can carry a Linux depot
+    while Steam still installs the Windows build, and a DLC-only game may carry
+    nothing but Windows depots. When the app id is known the store's app info
+    (``common.oslist``) is the authority; the depot scan is the offline guess.
+
     Returns ['linux', 'windows'], ['windows'], or ['linux'].
     Respects hidden platform settings from Advanced Depot Selection.
     """
     from ui.dialogs.depotselection import _depot_is_macos, _depot_is_android
+
+    supported = (
+        edition_catalog.get_supported_platforms(
+            appid, allow_network=allow_network, timeout=timeout
+        )
+        if appid
+        else set()
+    )
 
     settings = get_settings()
     hide_linux = settings.value("hide_linux_depots", False, type=bool)
@@ -97,7 +132,23 @@ def get_available_platforms(depots: Dict[Any, Any]) -> List[str]:
             has_windows = True
 
     platforms: List[str] = []
-    # If explicit native Linux exists and not hidden in settings
+    if supported:
+        if "linux" in supported and has_linux and not hide_linux:
+            platforms.append("linux")
+        if "windows" in supported and not hide_windows:
+            platforms.append("windows")
+        if not platforms:
+            # The user hid what Steam would install, or the depots do not
+            # cover the advertised platforms. Offer the advertised platform
+            # instead of a wrong one, so the selector stays usable.
+            if "linux" in supported:
+                platforms.append("linux")
+            elif "windows" in supported:
+                platforms.append("windows")
+        if platforms:
+            return platforms
+
+    # No app info: the depot scan is the best answer available.
     if has_linux and not hide_linux:
         platforms.append("linux")
     # Windows is present or fallback for Proton
@@ -107,9 +158,17 @@ def get_available_platforms(depots: Dict[Any, Any]) -> List[str]:
     return platforms if platforms else ["windows"]
 
 
-def get_default_platform(depots: Dict[Any, Any]) -> str:
+def get_default_platform(
+    depots: Dict[Any, Any],
+    appid: Optional[str] = None,
+    *,
+    allow_network: bool = False,
+    timeout: float = 2.0,
+) -> str:
     """Determine the default target platform respecting OS availability and user settings."""
-    platforms = get_available_platforms(depots)
+    platforms = get_available_platforms(
+        depots, appid, allow_network=allow_network, timeout=timeout
+    )
     if "linux" in platforms:
         return "linux"
     return "windows"
@@ -305,10 +364,15 @@ def resolve_edition_depots(
     })
 
     # B. Additional Store packages with exact depot mapping
+    game_name = edition_catalog.get_app_name(aid_str) if store_pkgs else ""
     for pkg in store_pkgs:
         pkg_id = pkg.get("packageid")
         pkg_name = pkg.get("name", "")
         if not pkg_name:
+            continue
+        # The base game's own sub carries the same depots as Complete under the
+        # game's own name; it is not an edition, so it would only be noise.
+        if game_name and _is_same_game_name(pkg_name, game_name):
             continue
         short_name = make_short_edition_name(pkg_name, fallback=pkg_name)
 
@@ -351,6 +415,39 @@ def resolve_edition_depots(
                 "is_highest": False,
             })
 
+    # B2. Store bundles — the named editions (Premium, Ancestral, ...) that
+    # SteamDB lists. The app page links them, each bundle page lists the apps it
+    # carries, and any app the base game does not list as DLC disqualifies it.
+    if include_store:
+        try:
+            dlc_appids = edition_catalog.get_dlc_appids(aid_str, allow_network=True)
+            for bundle in edition_catalog.bundle_editions(aid_str, dlc_appids):
+                bundle_apps = {str(a).strip() for a in bundle.get("app_ids", []) if str(a).strip()}
+                if aid_str not in bundle_apps:
+                    continue
+                bundle_depots = set(base_depots)
+                for did in complete_depots:
+                    d_data = depots.get(did) or {}
+                    dlc_cand = str((d_data or {}).get("dlcappid") or "").strip()
+                    if dlc_cand and dlc_cand != aid_str and dlc_cand in bundle_apps:
+                        bundle_depots.add(str(did))
+                if not bundle_depots:
+                    continue
+                name = str(bundle.get("name") or "").strip()
+                if not name or any(e["name"] == name for e in editions):
+                    continue
+                bundle_id = str(bundle.get("id") or "").split(":", 1)[-1]
+                editions.append({
+                    "id": f"{target_platform}_bundle_{bundle_id}",
+                    "name": name,
+                    "short_name": make_short_edition_name(name, fallback=name),
+                    "platform": target_platform,
+                    "depot_ids": bundle_depots,
+                    "is_highest": False,
+                })
+        except Exception as exc:
+            logger.debug(f"[EditionHelpers] Bundle editions unavailable for {aid_str}: {exc}")
+
     # C. Lowest: Standard Edition (Base Game Only)
     if dlc_depots:
         editions.append({
@@ -370,6 +467,8 @@ def resolve_multi_platform_editions(
     depots: Dict[Any, Any],
     language: str = "english",
     include_store: bool = True,
+    allow_network: bool = False,
+    timeout: float = 2.0,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Computes editions for all available platforms (e.g. {'linux': [...], 'windows': [...]}).
@@ -377,7 +476,9 @@ def resolve_multi_platform_editions(
     ``include_store=False`` keeps the call offline: only the depot-derived
     Complete/Standard editions are returned.
     """
-    platforms = get_available_platforms(depots)
+    platforms = get_available_platforms(
+        depots, app_id, allow_network=allow_network, timeout=timeout
+    )
     result = {}
     for plat in platforms:
         result[plat] = resolve_edition_depots(

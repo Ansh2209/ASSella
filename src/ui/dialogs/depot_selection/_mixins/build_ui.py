@@ -423,13 +423,13 @@ class BuildUIMixin:
                 get_available_platforms,
                 resolve_multi_platform_editions,
             )
-            self._available_platforms = get_available_platforms(self.depots)
+            self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
             if not getattr(self, "_multi_platform_editions", None):
                 # Offline on purpose: the store editions are resolved when the
                 # edition menu is opened, so building the dialog never waits
                 # on store.steampowered.com.
                 self._multi_platform_editions = resolve_multi_platform_editions(
-                    self.app_id, self.depots, include_store=False
+                    self.app_id, self.depots, include_store=False, allow_network=True
                 )
             self._update_table_headers()
 

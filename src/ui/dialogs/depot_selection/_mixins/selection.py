@@ -233,7 +233,7 @@ class SelectionMixin:
         )
 
         if not hasattr(self, "_available_platforms") or not self._available_platforms:
-            self._available_platforms = get_available_platforms(self.depots)
+            self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
         if not getattr(self, "_editions_with_store", False):
             # The store editions cost a store.steampowered.com round trip, so
             # they are resolved here, when the menu is opened, instead of while
@@ -248,7 +248,7 @@ class SelectionMixin:
                 QApplication.restoreOverrideCursor()
         elif not getattr(self, "_multi_platform_editions", None):
             self._multi_platform_editions = resolve_multi_platform_editions(
-                self.app_id, self.depots, include_store=False
+                self.app_id, self.depots, include_store=False, allow_network=True
             )
 
         menu = QMenu(self)
