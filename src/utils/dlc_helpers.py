@@ -465,6 +465,11 @@ class DlcDiscovery:
         # size rule is meaningless there, so any DLC depot counts.
         if len(self.depots) >= STUB_BYPASS_AT:
             return True
+        if all(candidate.size <= 0 for candidate in self.depots):
+            # PICS reports no size for these depots at all, so presence is the
+            # only fact available; calling them depotless would refuse real
+            # content and offer DLC mode for a game that can download fine.
+            return True
         return any(not candidate.is_stub for candidate in self.depots)
 
     @property

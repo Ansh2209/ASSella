@@ -193,7 +193,8 @@ class BuildUIMixin:
         bar.setSpacing(6)
 
         self.filter_chips = {}
-        self._active_filter = "all"
+        # In DLC mode the owned rows cannot be picked, so open on what is missing.
+        self._active_filter = "missing" if getattr(self, "_dlc_only_mode", False) else "all"
 
         chip_definitions = [
             ("all", "All", "#FFFFFF", "rgba(255, 255, 255, 0.12)", "rgba(255, 255, 255, 0.3)"),
@@ -215,6 +216,7 @@ class BuildUIMixin:
             self.filter_chips[key] = btn
             bar.addWidget(btn)
 
+        self._update_filter_chips_visual()
         bar.addStretch()
         return bar
 

@@ -3,7 +3,7 @@ import math
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QPixmap, QPainter, QBrush, QLinearGradient, QColor, QFontMetrics
+from PyQt6.QtGui import QPixmap, QPainter, QBrush, QLinearGradient, QColor, QFontMetrics, QImage
 from PyQt6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -285,10 +285,11 @@ class GameItemWidget(QWidget):
         info_layout.addWidget(size_label)
 
         # Check if this item belongs to the Steam (Beta) tab
-        is_steam_tab = (
+        self._is_steam_tab = (
             (self.parent_dialog and getattr(self.parent_dialog, "_active_tab", "") == "steam")
             or self.game_data.get("is_steam_tab", False)
         )
+        is_steam_tab = self._is_steam_tab
 
         # Manifest cache status (skip entirely for Steam tab)
         self.manifest_label = QLabel()
@@ -649,6 +650,20 @@ class GameItemWidget(QWidget):
         else:
             self.proton_badge.hide()
 
+    def _dlc_mode_applied(self) -> bool:
+        """True when this game is tracked through DLC-only mode."""
+        if self.game_data.get("is_dlc_only"):
+            return True
+        appid = str(self.game_data.get("appid", "") or "")
+        if not appid:
+            return False
+        try:
+            from utils.dlc_helpers import is_dlc_only_mode
+            return bool(is_dlc_only_mode(appid))
+        except Exception as exc:
+            logger.debug("DLC mode lookup failed for %s: %s", appid, exc)
+            return False
+
     def set_image(self, pixmap: QPixmap) -> None:
         """Sets the image on the label, scaling it nicely with right-fade blend."""
         if not pixmap or pixmap.isNull():
@@ -660,6 +675,13 @@ class GameItemWidget(QWidget):
             Qt.AspectRatioMode.KeepAspectRatioByExpanding,
             Qt.TransformationMode.SmoothTransformation,
         )
+
+        if self._is_steam_tab and not self._dlc_mode_applied():
+            # A Steam game that is not tracked in DLC mode is a catalogue
+            # entry, not managed content: keep its artwork muted.
+            scaled = QPixmap.fromImage(
+                scaled.toImage().convertToFormat(QImage.Format.Format_Grayscale8)
+            )
 
         cropped_faded = QPixmap(target_size)
         cropped_faded.fill(Qt.GlobalColor.transparent)
