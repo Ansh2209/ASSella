@@ -147,12 +147,11 @@ def main() -> int:
     check(dlg.table_widget.columnCount() == 3, "three columns")
     labels = [dlg.table_widget.horizontalHeaderItem(i).text()
               for i in range(dlg.table_widget.columnCount())]
-    # Column 0 is deliberately blank: DepotHeaderView draws the select-all
-    # checkbox there. Column 1 is Configuration, Column 2 carries a live byte total.
-    check(labels[0] == "", f"column 0 left blank for the header checkbox ({labels[0]!r})")
+    # Classic chrome labels the column; DepotHeaderView draws the select-all box.
+    check(labels[0] == "Select", f"column 0 is the Select column ({labels[0]!r})")
     check(labels[1] == "Configuration", f"column 1 is Configuration ({labels[1]!r})")
     check(labels[2].startswith("Size"), f"column 2 is the size column ({labels[2]!r})")
-    check(hasattr(dlg, "filter_chips") and len(dlg.filter_chips) == 5, "5 filter chips created")
+    check(not getattr(dlg, "filter_chips", {}), "a normal install has no DLC filter chips")
     check(isinstance(dlg.header_view, DepotHeaderView), "custom header view installed")
     check(dlg.table_widget.rowCount() == 5, f"all 5 depots listed (got {dlg.table_widget.rowCount()})")
 

@@ -37,18 +37,23 @@ class BuildUIMixin:
         header_layout.setContentsMargins(14, 10, 14, 4)
         header_layout.setSpacing(14)
 
-        # 1. Thumbnail / Capsule Image (184x86)
+        # 1. Thumbnail / Capsule Image (184x86 in DLC mode, classic 120x56 otherwise)
+        dlc_mode = bool(getattr(self, "_dlc_only_mode", False))
         self.header_label = QLabel()
-        self.header_label.setFixedSize(184, 86)
+        self.header_label.setFixedSize(*((184, 86) if dlc_mode else (120, 56)))
         self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.header_label.setStyleSheet("""
-            background-color: rgba(0, 0, 0, 0.4);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 6px;
-            color: rgba(255, 255, 255, 0.5);
-            font-size: 8.5pt;
-        """)
-        self.header_label.setText("Loading banner...")
+        if dlc_mode:
+            self.header_label.setStyleSheet("""
+                background-color: rgba(0, 0, 0, 0.4);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 6px;
+                color: rgba(255, 255, 255, 0.5);
+                font-size: 8.5pt;
+            """)
+            self.header_label.setText("Loading banner...")
+        else:
+            self.header_label.setScaledContents(True)
+            self.header_label.setStyleSheet("background-color: rgba(255, 255, 255, 0.04); border-radius: 6px;")
         header_layout.addWidget(self.header_label)
 
         # 2. Metadata Info Layout
@@ -56,13 +61,24 @@ class BuildUIMixin:
         title_layout.setSpacing(4)
         title_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
-        display_title = (
-            f"<b>{self.game_name}</b> <span style='color: rgba(255, 255, 255, 0.55); font-size: 9.5pt;'>({self.app_id})</span>"
-            if self.app_id and str(self.app_id) not in ("0", "unknown", "None", "") and f"({self.app_id})" not in str(self.game_name)
-            else f"<b>{self.game_name}</b>"
-        )
-        self.title_label = QLabel(display_title)
-        self.title_label.setStyleSheet("font-size: 11pt; color: #FFFFFF;")
+        if dlc_mode:
+            display_title = (
+                f"<b>{self.game_name}</b> <span style='color: rgba(255, 255, 255, 0.55); font-size: 9.5pt;'>({self.app_id})</span>"
+                if self.app_id and str(self.app_id) not in ("0", "unknown", "None", "") and f"({self.app_id})" not in str(self.game_name)
+                else f"<b>{self.game_name}</b>"
+            )
+            self.title_label = QLabel(display_title)
+            self.title_label.setStyleSheet("font-size: 11pt; color: #FFFFFF;")
+        else:
+            plain_title = (
+                str(self.game_name)
+                if not self.app_id
+                or str(self.app_id) in ("0", "unknown", "None", "")
+                or f"({self.app_id})" in str(self.game_name)
+                else f"{self.game_name} ({self.app_id})"
+            )
+            self.title_label = QLabel(plain_title)
+            self.title_label.setStyleSheet("font-size: 13pt; font-weight: bold; color: #FFFFFF;")
         title_layout.addWidget(self.title_label)
 
         # Badges row: Branch, Build ID, Selection summary
@@ -144,9 +160,12 @@ class BuildUIMixin:
         self.builds_btn.clicked.connect(self._on_builds_clicked)
         badges_row.addWidget(self.builds_btn)
 
-        self.summary_lbl = QLabel("Selected: 0 of 0 depots (0 B)")
-        self.summary_lbl.setStyleSheet(f"font-size: 8.5pt; font-weight: 600; color: {self.accent_color};")
-        badges_row.addWidget(self.summary_lbl)
+        if dlc_mode:
+            self.summary_lbl = QLabel("Selected: 0 of 0 depots (0 B)")
+            self.summary_lbl.setStyleSheet(f"font-size: 8.5pt; font-weight: 600; color: {self.accent_color};")
+            badges_row.addWidget(self.summary_lbl)
+        else:
+            self.summary_lbl = None
 
         self.show_hidden_chk = None
         self.smart_select_btn = None
@@ -157,8 +176,9 @@ class BuildUIMixin:
         badges_row.addStretch()
         title_layout.addLayout(badges_row)
 
-        # Storage / Install Path row
-        if self.show_storage:
+        # Storage / Install Path row (the storage picker sits in the bottom bar
+        # for classic installs, and in the header for DLC-only mode).
+        if self.show_storage and dlc_mode:
             storage_row = QHBoxLayout()
             storage_row.setSpacing(8)
             storage_lbl = QLabel("Install Location:")
@@ -176,9 +196,11 @@ class BuildUIMixin:
         header_layout.addLayout(title_layout, 1)
         layout.addLayout(header_layout)
 
-        # Filter Chips Bar (All, Unowned, Steam Owned, Injected, DlcData)
-        chips_bar = self._build_filter_chips_bar()
-        layout.addLayout(chips_bar)
+        # Filter Chips Bar (All, Unowned, Steam Owned, Injected, DlcData) — the
+        # classic selector has no chips.
+        if dlc_mode:
+            chips_bar = self._build_filter_chips_bar()
+            layout.addLayout(chips_bar)
 
         # Resolve missing depots info if needed
         if self.missing_hubcap_depots:
@@ -226,7 +248,11 @@ class BuildUIMixin:
         """Create the 3-column depot table, its header view and the checkbox delegate."""
         self.table_widget = QTableWidget()
         self.table_widget.setColumnCount(3)
-        self.table_widget.setHorizontalHeaderLabels(["", "Configuration", "Size"])
+        self.table_widget.setHorizontalHeaderLabels([
+            "DLC ID" if getattr(self, "_dlc_only_mode", False) else "Select",
+            "Configuration",
+            "Size",
+        ])
         self.table_widget.setIconSize(QSize(76, 16))
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -268,13 +294,16 @@ class BuildUIMixin:
                 color: #FFFFFF !important;
             }}
             QHeaderView::section {{
-                background-color: rgba(255, 255, 255, 0.04);
-                color: rgba(255, 255, 255, 0.7);
+                background-color: #1b1e26;
+                color: rgba(255, 255, 255, 0.78);
                 padding: 6px 10px;
                 border: none;
                 font-size: 8.5pt;
                 font-weight: bold;
                 text-transform: uppercase;
+            }}
+            QHeaderView::section:first {{
+                padding-left: 34px;
             }}
             QTableWidget::indicator {{
                 width: 14px;
@@ -437,6 +466,16 @@ class BuildUIMixin:
 
     def _build_bottom_bar(self, content_widget: QVBoxLayout) -> None:
         """Build the 3 action buttons: Inject DLC Data Only, Close, Download Selected."""
+        dlc_mode = bool(getattr(self, "_dlc_only_mode", False))
+
+        # Classic installs pick a drive above the buttons, the way the selector
+        # always did; DLC-only mode keeps it in the header next to the badges.
+        if self.show_storage and not dlc_mode:
+            classic_storage_row = QHBoxLayout()
+            classic_storage_row.setSpacing(8)
+            self._setup_storage_buttons(classic_storage_row)
+            content_widget.addLayout(classic_storage_row)
+
         bottom_bar = QHBoxLayout()
         bottom_bar.setContentsMargins(0, 6, 0, 0)
         bottom_bar.setSpacing(8)
@@ -444,6 +483,7 @@ class BuildUIMixin:
         # Status / Selection summary on the left
         self.status_summary_label = QLabel()
         self.status_summary_label.setStyleSheet("font-size: 8.5pt; color: rgba(255, 255, 255, 0.6);")
+        self.status_summary_label.setVisible(dlc_mode)
         bottom_bar.addWidget(self.status_summary_label)
 
         bottom_bar.addStretch(1)
@@ -472,6 +512,7 @@ class BuildUIMixin:
         """)
         self.inject_btn.setToolTip("Directly write checked DLC entitlements to SLSsteam config without downloading files")
         self.inject_btn.clicked.connect(self._handle_inject_btn_clicked)
+        self.inject_btn.setVisible(dlc_mode)
 
         self.cancel_btn = QPushButton("Close")
         self.cancel_btn.setObjectName("cancel_button")

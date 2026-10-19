@@ -138,7 +138,8 @@ def main() -> int:
     check(dlc_dlg.filter_chips["missing"].isChecked(), "the Unowned chip is the one marked active")
 
     plain_dlg = DepotSelectionDialog("100", "Probe Game", depots, header_url="")
-    check(plain_dlg._active_filter == "all", "a normal selector still opens on All")
+    check(getattr(plain_dlg, "_active_filter", "all") == "all", "a normal selector opens on All")
+    check(not getattr(plain_dlg, "filter_chips", {}), "a normal selector has no filter chips")
 
     print("\n=== Steam-tab cards are muted without DLC mode ===")
     from ui.dialogs.library.widgets import GameItemWidget

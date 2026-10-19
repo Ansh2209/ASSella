@@ -737,9 +737,11 @@ class DepotTableMixin:
             hdr_state = Qt.CheckState.Unchecked
 
         if hasattr(self, "header_view") and self.header_view:
-            self.header_view.set_check_state_and_count(hdr_state, f"({sel_count}/{total_count})")
+            # The count rides in the header label; paintSection draws the box.
+            self.header_view.set_check_state_and_count(hdr_state, "")
 
-        id_header = ""
+        dlc_mode = bool(getattr(self, "_dlc_only_mode", False))
+        id_header = f"DLC ID ({sel_count}/{total_count})" if dlc_mode else "Select"
         config_header = "Configuration"
         size_header = f"Size ({format_size(total_bytes)})"
 
