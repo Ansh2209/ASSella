@@ -339,13 +339,13 @@ class SettingsDialog(QDialog):
 
         # Left nav sidebar
         self._nav_list = QListWidget()
-        self._nav_list.setFixedWidth(135)
+        self._nav_list.setFixedWidth(148)
         self._nav_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._nav_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._nav_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
         self._nav_font = QFont()
-        self._nav_font.setPointSize(9)
+        self._nav_font.setPointSize(12)
         self._nav_font.setWeight(QFont.Weight.DemiBold)
         self._nav_list.setFont(self._nav_font)
 
@@ -359,9 +359,9 @@ class SettingsDialog(QDialog):
             }}
             QListWidget::item {{
                 color: #EDEDED;
-                padding: 7px 12px;
+                padding: 8px 14px;
                 border: none;
-                font-size: 9.5pt;
+                font-size: 12pt;
                 font-weight: 600;
                 letter-spacing: 0.2px;
                 border-radius: 0px;
@@ -374,7 +374,7 @@ class SettingsDialog(QDialog):
                 background-color: rgba(255, 255, 255, 0.05);
                 color: {ac};
                 border-left: 3.5px solid {ac};
-                padding-left: 10.5px;
+                padding-left: 12px;
                 font-weight: 700;
             }}
         """)
