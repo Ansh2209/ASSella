@@ -1377,10 +1377,11 @@ class GameManager(QObject):
                 "depot_downloader_path": marker_path or "",
                 "accela_marker_path": marker_path or "",
                 "appmanifest_path": appmanifest_path or "",
+                "is_dlc_only": is_dlc_only,
             }
 
             # Detect DLC-only installations by comparing the saved main depot against base game depots
-            if is_accela_install and appid and appid not in ("0", "N/A", "unknown"):
+            if (is_accela_install or is_dlc_only) and appid and appid not in ("0", "N/A", "unknown"):
                 depot_file = Path(get_base_path()) / "depots" / f"{appid}.depot"
                 if depot_file.exists():
                     try:
@@ -1395,11 +1396,15 @@ class GameManager(QObject):
                                 if main_depot_id not in app_info["depots"]:
                                     # It's not in the base game depots -> it's a DLC
                                     game_data["is_dlc_only"] = True
-                                    dlc_info = db.get_app_info(main_depot_id)
-                                    if dlc_info and dlc_info.get("name"):
-                                        game_data["game_name"] = f"{dlc_info['name']} [DLC]"
-                                    else:
-                                        game_data["game_name"] = f"{game_name} [DLC]"
+                                    # A DLC-only Steam game keeps its base-game name:
+                                    # the library card marks the mode with a chip.
+                                    # Legacy ACCELA installs still carry the suffix.
+                                    if is_accela_install:
+                                        dlc_info = db.get_app_info(main_depot_id)
+                                        if dlc_info and dlc_info.get("name"):
+                                            game_data["game_name"] = f"{dlc_info['name']} [DLC]"
+                                        else:
+                                            game_data["game_name"] = f"{game_name} [DLC]"
                     except Exception as e:
                         logger.error(f"Error checking DLC-only status for {appid}: {e}")
 

@@ -15,6 +15,25 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def game_is_dlc_only(game: dict) -> bool:
+    """Whether a library record is a DLC-only install.
+
+    DLC-only mode downloads just a game's DLC depots; the game itself is still
+    played from Steam, so the record belongs on the Steam tab.  The scan records
+    the mode on each game record, with the persisted setting as a fallback for
+    records built before that field existed.
+    """
+    flag = game.get("is_dlc_only")
+    if flag is not None:
+        return bool(flag)
+    aid = str(game.get("appid", "")).strip()
+    if not aid or aid in ("0", "N/A", "unknown"):
+        return False
+    from utils.dlc_helpers import is_dlc_only_mode
+    return bool(is_dlc_only_mode(aid))
+
+
+
 class LibraryFilterSortMixin:
     """Mixin for game list sorting, searching, populating, and badge caching."""
 
@@ -170,11 +189,14 @@ class LibraryFilterSortMixin:
         all_manager_games = self.game_manager.get_all_games() if self.game_manager else []
         steam_games = getattr(self, "_steam_tab_games", [])
 
+
         # Collect all AppIDs managed by ACCELA or AT0-M so they don't appear in Steam tab
         managed_appids = set()
         for g in all_manager_games:
             aid = str(g.get("appid", "")).strip()
             if aid and aid not in ("0", "N/A", "unknown"):
+                if game_is_dlc_only(g):
+                    continue
                 if g.get("is_accela_install") or g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game"):
                     managed_appids.add(aid)
         try:
@@ -196,7 +218,9 @@ class LibraryFilterSortMixin:
         accela_total = sum(
             1
             for g in all_manager_games
-            if g.get("is_accela_install") and not (g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game"))
+            if g.get("is_accela_install")
+            and not game_is_dlc_only(g)
+            and not (g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game"))
         )
         atom_total = sum(
             1
@@ -223,7 +247,9 @@ class LibraryFilterSortMixin:
             games = [
                 g
                 for g in all_manager_games
-                if g.get("is_accela_install") and not (g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game"))
+                if g.get("is_accela_install")
+                and not game_is_dlc_only(g)
+                and not (g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game"))
             ]
         
         # Filter games by search term (case-insensitive)
