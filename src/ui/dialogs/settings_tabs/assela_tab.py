@@ -101,15 +101,6 @@ def create_assela_tab(dialog) -> QWidget:
     if dialog.settings.value("use_experimental_ddm") is None:
         dialog.settings.setValue("use_experimental_ddm", True)
 
-    # 5. Modern Depot Selection Dialog (Experimental)
-    dialog.modern_depot_selection_checkbox = create_checkbox_setting(
-        "Modern Depot Selection Dialog (Experimental)",
-        "use_modern_depot_dialog",
-        False,
-        dialog,
-        "Enable the experimental modern two-column layout for depot selection (games with more than 2 depots).",
-    )
-    assella_lay.addWidget(dialog.modern_depot_selection_checkbox)
 
     # 6. Title Bar Search Widget
     dialog.title_bar_search_checkbox = create_checkbox_setting(

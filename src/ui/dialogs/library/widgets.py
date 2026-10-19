@@ -183,6 +183,7 @@ class GameItemWidget(QWidget):
         self.checkbox = None
         self.applist_2_0_enabled = applist_2_0_enabled
         self.parent_dialog = parent_dialog
+        self.appid = str(game_data.get("appid", "") or "")
         self._init_ui(size_str)
 
     def _init_ui(self, size_str: str) -> None:

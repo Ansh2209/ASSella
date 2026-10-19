@@ -394,20 +394,23 @@ class GameLibraryDialog(
 
         # --- Persistent Floating Options / Actions Button ---
         self.selection_fab = QPushButton("options", self)
+        self.selection_fab.setObjectName("SelectionFab")
         self.selection_fab.setVisible(True)
         self.selection_fab.setCursor(Qt.CursorShape.PointingHandCursor)
         self.selection_fab.setStyleSheet(
             f"""
-            QPushButton {{
+            QPushButton#SelectionFab {{
                 background-color: {self.accent_color};
                 color: #000000;
                 border: none;
-                border-radius: 16px;
-                padding: 6px 18px;
+                border-radius: 18px;
+                min-height: 36px;
+                max-height: 36px;
+                padding: 0px 20px;
                 font-size: 12px;
                 font-weight: bold;
             }}
-            QPushButton:hover {{
+            QPushButton#SelectionFab:hover {{
                 background-color: #FFFFFF;
                 color: #000000;
             }}
@@ -428,9 +431,61 @@ class GameLibraryDialog(
 
         menu_layout = QVBoxLayout(self.fab_menu_container)
         menu_layout.setContentsMargins(0, 0, 0, 0)
-        menu_layout.setSpacing(8)
+        # Action 0: Select All
+        row_select_all = QHBoxLayout()
+        row_select_all.setSpacing(8)
+        lbl_select_all = QLabel("Select All")
+        lbl_select_all.setStyleSheet("background-color: #1a1a20; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 4px; padding: 4px 8px; color: #FFFFFF; font-size: 8.5pt;")
+        self.btn_select_all = QPushButton("✓")
+        self.btn_select_all.setFixedSize(32, 32)
+        self.btn_select_all.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_select_all.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 0.15);
+                color: #FFFFFF;
+                border: none;
+                border-radius: 16px;
+                font-size: 11pt;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #FFFFFF;
+                color: #000000;
+            }
+        """)
+        self.btn_select_all.clicked.connect(self._on_select_all_action_clicked)
+        row_select_all.addWidget(lbl_select_all)
+        row_select_all.addWidget(self.btn_select_all)
+        menu_layout.addLayout(row_select_all)
 
-        # Action 1: Update Selected
+        # Action 1: Move to AT0-M
+        row_move_atom = QHBoxLayout()
+        row_move_atom.setSpacing(8)
+        lbl_move_atom = QLabel("Move to AT0-M")
+        lbl_move_atom.setStyleSheet("background-color: #1a1a20; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 4px; padding: 4px 8px; color: #FFFFFF; font-size: 8.5pt;")
+        self.btn_move_atom = QPushButton("→")
+        self.btn_move_atom.setFixedSize(32, 32)
+        self.btn_move_atom.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_move_atom.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.accent_color};
+                color: #000000;
+                border: none;
+                border-radius: 16px;
+                font-size: 12pt;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #FFFFFF;
+                color: #000000;
+            }}
+        """)
+        self.btn_move_atom.clicked.connect(self._on_move_to_atom_action_clicked)
+        row_move_atom.addWidget(lbl_move_atom)
+        row_move_atom.addWidget(self.btn_move_atom)
+        menu_layout.addLayout(row_move_atom)
+
+        # Action 2: Update Selected
         row_update = QHBoxLayout()
         row_update.setSpacing(8)
         lbl_update = QLabel("Update Selected")
@@ -514,10 +569,9 @@ class GameLibraryDialog(
         row_clear.addWidget(btn_clear)
         menu_layout.addLayout(row_clear)
 
-        # --- Status Footer ---
+        # --- Status Footer (omitted from layout to maximize space for games list) ---
         self.info_label = QLabel("Found 0 installed Steam games")
-        self.info_label.setStyleSheet("color: rgba(255, 255, 255, 0.4); font-size: 8.5pt; padding-top: 4px;")
-        layout.addWidget(self.info_label)
+        self.info_label.setVisible(False)
 
     def _connect_signals(self) -> None:
         """Connect GameManager and local signals."""

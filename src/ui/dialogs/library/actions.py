@@ -94,8 +94,8 @@ class LibraryActionsMixin:
     def _position_selection_fab(self) -> None:
         if hasattr(self, "selection_fab") and self.selection_fab and self.selection_fab.isVisible():
             self.selection_fab.adjustSize()
-            x = self.games_list.x() + self.games_list.width() - self.selection_fab.width() - 25
-            y = self.games_list.y() + self.games_list.height() - self.selection_fab.height() - 25
+            x = self.games_list.x() + self.games_list.width() - self.selection_fab.width() - 16
+            y = self.games_list.y() + self.games_list.height() - self.selection_fab.height() - 12
             self.selection_fab.move(x, y)
             self.selection_fab.raise_()
 
@@ -110,6 +110,18 @@ class LibraryActionsMixin:
     def _show_fab_menu(self) -> None:
         is_visible = self.fab_menu_container.isVisible()
         if not is_visible:
+            count = len(self._selected_appids)
+            if hasattr(self, "btn_move_atom") and self.btn_move_atom:
+                self.btn_move_atom.setEnabled(count > 0)
+            if hasattr(self, "btn_update") and self.btn_update:
+                self.btn_update.setEnabled(count > 0)
+            if hasattr(self, "btn_uninstall") and self.btn_uninstall:
+                self.btn_uninstall.setEnabled(count > 0)
+            if hasattr(self, "btn_clear") and self.btn_clear:
+                self.btn_clear.setEnabled(count > 0)
+            if hasattr(self, "btn_select_all") and self.btn_select_all:
+                self.btn_select_all.setEnabled(True)
+
             self.fab_menu_container.setVisible(True)
             self._position_selection_fab()
 
@@ -134,13 +146,14 @@ class LibraryActionsMixin:
             if hasattr(self, "selection_fab") and self.selection_fab:
                 if self._select_mode and count > 0:
                     self.selection_fab.setText(f"Actions ({count})  ▼")
+                elif self._select_mode:
+                    self.selection_fab.setText("Select  ▼")
                 else:
                     self.selection_fab.setText("options")
 
     def _on_fab_clicked(self) -> None:
         """Handle click on persistent bottom-right FAB button."""
-        count = len(self._selected_appids)
-        if self._select_mode and count > 0:
+        if self._select_mode:
             self._show_fab_menu()
         else:
             self._show_options_menu()
@@ -179,6 +192,11 @@ class LibraryActionsMixin:
         act_select = QAction(select_text, menu)
         act_select.triggered.connect(lambda: self._toggle_select_mode())
         menu.addAction(act_select)
+
+        if self._select_mode:
+            act_select_all = QAction("Select All (✓)", menu)
+            act_select_all.triggered.connect(self._on_select_all_action_clicked)
+            menu.addAction(act_select_all)
 
         act_lua = QAction("Scan for LUA", menu)
         act_lua.setToolTip("Scan for user-provided .lua files in the cached_luas folder")
@@ -219,10 +237,21 @@ class LibraryActionsMixin:
         if hasattr(self, "selection_fab") and self.selection_fab:
             if self._select_mode and count > 0:
                 self.selection_fab.setText(f"Actions ({count})  ▼")
+            elif self._select_mode:
+                self.selection_fab.setText("Select  ▼")
             else:
                 self.selection_fab.setText("options")
             self.selection_fab.setVisible(True)
             self._position_selection_fab()
+
+        if hasattr(self, "btn_move_atom") and self.btn_move_atom:
+            self.btn_move_atom.setEnabled(count > 0)
+        if hasattr(self, "btn_update") and self.btn_update:
+            self.btn_update.setEnabled(count > 0)
+        if hasattr(self, "btn_uninstall") and self.btn_uninstall:
+            self.btn_uninstall.setEnabled(count > 0)
+        if hasattr(self, "btn_clear") and self.btn_clear:
+            self.btn_clear.setEnabled(count > 0)
 
     def _on_clear_selection_clicked(self) -> None:
         """Clear selection and close action menu."""
@@ -543,8 +572,220 @@ class LibraryActionsMixin:
         return True
 
     # ─────────────────────────────────────────────────────────────────────────
-    # 2. Batch Operations (Update / Uninstall / Enqueue)
+    # 2. Batch Operations (Update / Uninstall / Move to AT0-M / Enqueue)
     # ─────────────────────────────────────────────────────────────────────────
+
+    def _on_select_all_action_clicked(self) -> None:
+        """Toggle select all visible games in the current library tab."""
+        from ui.dialogs.library.widgets import GameItemWidget
+
+        visible_appids = set()
+        for i in range(self.games_list.count()):
+            item = self.games_list.item(i)
+            if not item or item.isHidden():
+                continue
+            game_data = item.data(Qt.ItemDataRole.UserRole)
+            if not game_data:
+                continue
+            aid = str(game_data.get("appid", "")).strip()
+            if aid and aid not in ("0", "N/A", "unknown"):
+                visible_appids.add(aid)
+
+        if not visible_appids:
+            return
+
+        # Smart toggle: if all visible are selected, clear selection; else select all
+        if visible_appids.issubset(self._selected_appids):
+            self._selected_appids.difference_update(visible_appids)
+        else:
+            self._selected_appids.update(visible_appids)
+
+        self._update_selection_footer()
+
+        for i in range(self.games_list.count()):
+            item = self.games_list.item(i)
+            widget = self.games_list.itemWidget(item)
+            if isinstance(widget, GameItemWidget):
+                appid = getattr(widget, "appid", None) or str((getattr(widget, "game_data", None) or {}).get("appid", ""))
+                widget.set_selected(appid in self._selected_appids)
+
+    def _on_move_to_atom_action_clicked(self) -> None:
+        """Handle Move Selected to AT0-M action."""
+        self._close_fab_menu()
+        self._batch_move_selected_to_atom()
+
+    def _batch_move_selected_to_atom(self) -> None:
+        """Verify eligibility, confirm, and execute batch move to AT0-M mode."""
+        from utils.plugin_manager import are_plugins_present, is_plugin_check_bypassed
+        from utils.dlc_helpers import is_dlc_only_mode
+        from utils.settings import get_settings
+        from ui.dialogs.library.filter_sort import game_is_dlc_only
+        from ui.dialogs.library.batch_migration_dialog import (
+            BatchAtomMigrationConfirmDialog,
+            BatchAtomMigrationWorker,
+        )
+        from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+
+        if not are_plugins_present() and not is_plugin_check_bypassed():
+            ThemedMessageBox.warning(
+                self._dialog_parent(),
+                "AT0-M Plugins Required",
+                "AT0-M mode requires SLSsteam plugins (download interceptor and spliced-tickets.lua).\n\n"
+                "Please go to Settings -> AT0-M and enable/deploy plugin support before moving games to AT0-M.",
+            )
+            return
+
+        if not self._selected_appids:
+            ThemedMessageBox.information(
+                self._dialog_parent(),
+                "No Games Selected",
+                "Please select one or more games to move to AT0-M mode.",
+            )
+            return
+
+        selected_games = []
+        for i in range(self.games_list.count()):
+            item = self.games_list.item(i)
+            if not item:
+                continue
+            game_data = item.data(Qt.ItemDataRole.UserRole)
+            if not game_data:
+                continue
+            aid = str(game_data.get("appid", "")).strip()
+            if aid in self._selected_appids:
+                selected_games.append(game_data)
+
+        if not selected_games:
+            return
+
+        settings = get_settings()
+        eligible_games = []
+        skipped_games = []
+
+        for g in selected_games:
+            aid = str(g.get("appid", "")).strip()
+            name = g.get("game_name") or f"App {aid}"
+
+            # 1. Already in AT0-M
+            if (
+                g.get("is_atom")
+                or g.get("is_vapor")
+                or g.get("is_plugin_game")
+                or g.get("source") in ("at0-m", "AT0-M")
+                or g.get("update_status") in ("at0m", "vapor")
+            ):
+                skipped_games.append((g, "Already in AT0-M"))
+                continue
+
+            # 2. Pure unmanaged Steam game (not ASSella installed)
+            if not g.get("is_accela_install"):
+                skipped_games.append((g, "Not ASSella Install"))
+                continue
+
+            # 3. Strict Rule: DLC-Only Mode games must NEVER be moved
+            if is_dlc_only_mode(aid) or game_is_dlc_only(g) or g.get("is_dlc_only"):
+                skipped_games.append((g, "DLC-Only Mode"))
+                continue
+
+            # 4. Strict Rule: Pinned Manifest / Pinned Build games must NEVER be moved
+            is_pinned = (
+                settings.value(f"pin_build/{aid}", False, type=bool)
+                or bool(g.get("_pin_build"))
+                or bool((g.get("metadata") or {}).get("pin_build"))
+            )
+            if is_pinned:
+                skipped_games.append((g, "Pinned Build / Manifest"))
+                continue
+
+            # 5. Local install check
+            install_path = g.get("install_path")
+            if not install_path or not os.path.isdir(install_path):
+                folder = g.get("installdir") or g.get("game_name")
+                if folder and g.get("library_path"):
+                    cand = Path(g["library_path"]) / "steamapps" / "common" / folder
+                    if cand.is_dir():
+                        g["install_path"] = str(cand)
+                        install_path = str(cand)
+                if not install_path or not os.path.isdir(install_path):
+                    skipped_games.append((g, "Not Installed Locally"))
+                    continue
+
+            eligible_games.append(g)
+
+        # Show confirmation dialog
+        dlg = BatchAtomMigrationConfirmDialog(
+            eligible_games=eligible_games,
+            skipped_games=skipped_games,
+            accent_color=self.accent_color,
+            parent=self._dialog_parent(),
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted or not eligible_games:
+            return
+
+        # Execute migration with ThemedProgressDialog and BatchAtomMigrationWorker
+        progress_dlg = ThemedProgressDialog(
+            f"Preparing to move {len(eligible_games)} game(s) to AT0-M...",
+            "Cancel",
+            0,
+            len(eligible_games),
+            self._dialog_parent(),
+        )
+        progress_dlg.setWindowModality(Qt.WindowModality.WindowModal)
+
+        # Retain reference to worker on self to avoid garbage collection
+        self._batch_atom_worker = BatchAtomMigrationWorker(eligible_games, parent=self)
+        progress_dlg.canceled.connect(self._batch_atom_worker.cancel)
+
+        def _on_worker_progress(cur, tot, name, msg):
+            progress_dlg.setValue(cur)
+            progress_dlg.setLabelText(f"[{cur}/{tot}] {name}\n{msg}")
+
+        def _on_worker_finished(result):
+            progress_dlg.close()
+            migrated = result.get("migrated", [])
+            failed = result.get("failed", [])
+
+            # Update GameManager in-memory cache
+            if self.game_manager and hasattr(self.game_manager, "games"):
+                migrated_aids = {str(m["appid"]) for m in migrated}
+                for g in self.game_manager.games:
+                    aid = str(g.get("appid", "")).strip()
+                    if aid in migrated_aids:
+                        g["is_vapor"] = True
+                        g["is_atom"] = True
+                        g["is_plugin_game"] = True
+                        g["source"] = "at0-m"
+                        g["update_status"] = "at0m"
+                        g["selected_branch"] = "public"
+                        g["installed_branch"] = "public"
+                if hasattr(self.game_manager, "games_cache") and self.game_manager.games_cache:
+                    self.game_manager.games_cache.save(self.game_manager.games)
+
+            self._clear_selection()
+            self._refresh_game_list()
+
+            if failed:
+                failed_str = "\n".join(f"• {f['name']}: {f.get('reason', 'Failed')}" for f in failed[:8])
+                if len(failed) > 8:
+                    failed_str += f"\n• ...and {len(failed) - 8} more."
+                ThemedMessageBox.warning(
+                    self._dialog_parent(),
+                    "AT0-M Migration Completed with Warnings",
+                    f"Successfully moved {len(migrated)} game(s) to AT0-M mode.\n\n"
+                    f"Skipped/failed games:\n{failed_str}",
+                )
+            else:
+                ThemedMessageBox.information(
+                    self._dialog_parent(),
+                    "AT0-M Migration Complete",
+                    f"Successfully moved all {len(migrated)} game(s) to AT0-M mode!\n\n"
+                    "All markers have been cleaned and SLSsteam configuration has been reloaded.",
+                )
+
+        self._batch_atom_worker.progress.connect(_on_worker_progress)
+        self._batch_atom_worker.finished.connect(_on_worker_finished)
+        progress_dlg.show()
+        self._batch_atom_worker.start()
 
     def _on_update_action_clicked(self) -> None:
         self._close_fab_menu()

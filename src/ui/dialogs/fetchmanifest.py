@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QFrame,
     QSizePolicy,
+    QAbstractItemView,
 )
 from ui.dialogs.themed_file_dialog import ThemedFileDialog
 from ui.dialogs.themed_message_box import ThemedMessageBox
@@ -421,7 +422,7 @@ class FetchManifestDialog(QDialog):
         search_inner_layout.addWidget(self.view_mode_btn)
         games_layout.addWidget(self.search_input)
 
-        # 3. Clean Sub-Status Row (online on left, user and quota on right)
+        # 3. Clean Sub-Status Row (online on left, status_label in center, user and quota on right)
         status_sub_widget = QWidget()
         status_sub_widget.setStyleSheet("background: transparent; border: none;")
         status_sub_layout = QHBoxLayout(status_sub_widget)
@@ -429,8 +430,6 @@ class FetchManifestDialog(QDialog):
         status_sub_layout.setSpacing(6)
 
         self.api_status_dot = QLabel()
-        self.api_status_dot.setFixedSize(8, 8)
-        self.api_status_dot.setStyleSheet("border-radius: 4px; background-color: #7f8c8d;")
         self.api_status_dot.setVisible(False)
 
         self.top_spinner = MaterialSpinner(parent=status_sub_widget, size=12, color=self.accent_color, thickness=2)
@@ -440,8 +439,20 @@ class FetchManifestDialog(QDialog):
         self.api_status_text.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 11px;")
 
         status_sub_layout.addWidget(self.top_spinner)
-        status_sub_layout.addWidget(self.api_status_dot)
         status_sub_layout.addWidget(self.api_status_text)
+
+        status_sub_layout.addStretch(1)
+
+        # Center: Live status indicator (e.g. "Search for a game to begin", "Found X games...")
+        self.footer_spinner = MaterialSpinner(parent=status_sub_widget, size=12, color=self.accent_color, thickness=2)
+        self.footer_spinner.setVisible(False)
+        status_sub_layout.addWidget(self.footer_spinner)
+
+        self.status_label = QLabel("Search for a game to begin")
+        self.status_label.setStyleSheet("color: rgba(255, 255, 255, 0.65); font-size: 11px;")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        status_sub_layout.addWidget(self.status_label)
+
         status_sub_layout.addStretch(1)
 
         self.username_label = QLabel("--")
@@ -469,28 +480,13 @@ class FetchManifestDialog(QDialog):
         self.results_list = QListWidget()
         self.results_list.setIconSize(QSize(230, 108))
         self.results_list.setSpacing(5)
+        self.results_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.results_list.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.results_list.verticalScrollBar().setSingleStep(25)
         self.results_list.itemDoubleClicked.connect(self.on_item_double_clicked)
         self.results_list.itemClicked.connect(self._on_item_clicked)
         self.results_list.currentItemChanged.connect(lambda cur, _prev: self._on_item_clicked(cur) if cur else None)
         games_layout.addWidget(self.results_list)
-
-        # Bottom Status Footer Layout (Horizontal, Centered)
-        status_footer_container = QWidget()
-        status_footer_layout = QHBoxLayout(status_footer_container)
-        status_footer_layout.setContentsMargins(0, 5, 0, 5)
-        status_footer_layout.setSpacing(8)
-        status_footer_layout.addStretch()
-
-        self.footer_spinner = MaterialSpinner(self, size=14, color=self.accent_color, thickness=2)
-        status_footer_layout.addWidget(self.footer_spinner)
-
-        self.status_label = QLabel("Search for a game to begin")
-        status_footer_layout.addWidget(self.status_label)
-
-        status_footer_layout.addStretch()
-        games_layout.addWidget(status_footer_container)
-
-        self.footer_spinner.setVisible(False)
 
         self.tab_widget.addTab(self.games_tab, "Game Manifests")
 
@@ -633,23 +629,17 @@ class FetchManifestDialog(QDialog):
     def _apply_api_status(self, result):
         """UI: Update status bar."""
         self.top_spinner.setVisible(False)
-        self.api_status_dot.setVisible(True)
+        self.api_status_dot.setVisible(False)
         health = result.get("health", {})
         is_healthy = health.get("status") == "healthy"
 
-        # Update Connection Status
+        # Update Connection Status (text-only, green for online, red for offline)
         if is_healthy:
-            self.api_status_dot.setStyleSheet(
-                "border-radius: 4px; background-color: #81C784;"
-            )  # Green
             self.api_status_text.setText("online")
-            self.api_status_text.setStyleSheet("font-weight: 500; color: #81C784; font-size: 11px;")
+            self.api_status_text.setStyleSheet("font-weight: 600; color: #81C784; font-size: 11px;")
         else:
-            self.api_status_dot.setStyleSheet(
-                "border-radius: 4px; background-color: #FF8A80;"
-            )  # Red
             self.api_status_text.setText("offline")
-            self.api_status_text.setStyleSheet("font-weight: 500; color: #FF8A80; font-size: 11px;")
+            self.api_status_text.setStyleSheet("font-weight: 600; color: #FF8A80; font-size: 11px;")
 
         # Update User Stats
         stats = result.get("stats", {})
@@ -666,15 +656,10 @@ class FetchManifestDialog(QDialog):
     def _on_api_status_error(self, error_info):
         """Handle errors during status check silently."""
         self.top_spinner.setVisible(False)
-        self.api_status_dot.setVisible(True)
-        self.api_status_dot.setStyleSheet("border-radius: 4px; background-color: #FF8A80;")
+        self.api_status_dot.setVisible(False)
         self.api_status_text.setText("offline")
-        self.api_status_text.setStyleSheet("font-weight: 500; color: #FF8A80; font-size: 11px;")
+        self.api_status_text.setStyleSheet("font-weight: 600; color: #FF8A80; font-size: 11px;")
         logger.error(f"Status check failed: {error_info}")
-        self.api_status_dot.setStyleSheet(
-            "border-radius: 6px; background-color: #e74c3c;"
-        )
-        self.api_status_text.setText("Offline")
 
     # --------------------------
     # Search Logic
@@ -939,6 +924,10 @@ class FetchManifestDialog(QDialog):
     def _apply_view_mode_to_results(self) -> None:
         if not hasattr(self, "results_list") or not self.results_list:
             return
+        self.results_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.results_list.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.results_list.verticalScrollBar().setSingleStep(25)
+
         mode = getattr(self, "_view_mode", "detailed")
         if mode == "tiles":
             self.results_list.setViewMode(QListWidget.ViewMode.IconMode)

@@ -11,9 +11,11 @@ import json
 import logging
 import os
 import re
+import shutil
 import time
+import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 from utils.helpers import get_base_path
 from utils.sls_bridge import SLSBridge
@@ -560,4 +562,425 @@ def get_atom_game_install_path(appid: Union[str, int]) -> Optional[str]:
     if info:
         return info.get("install_path")
     return None
+
+
+def _atomic_write_acf(acf_path: str, content: str) -> bool:
+    """Back up and atomically replace a Steam ACF."""
+    path = Path(acf_path)
+    if not path.exists():
+        return False
+    try:
+        stamp = int(time.time())
+        backup = path.with_suffix(path.suffix + f".assella-bak-{stamp}")
+        shutil.copy2(path, backup)
+    except Exception as e:
+        logger.warning(f"[PluginGames] Could not back up ACF {acf_path}: {e}")
+        return False
+
+    tmp = path.with_suffix(path.suffix + f".tmp-{os.getpid()}")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+        return True
+    except Exception as e:
+        logger.warning(f"[PluginGames] Atomic ACF write failed for {acf_path}: {e}")
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+
+
+def _ensure_acf_has_installed_depots(acf_path: str, appid: str, depot_ids: list, game_data: dict) -> None:
+    """Make Steam adopt an already-downloaded install by adding InstalledDepots to ACF."""
+    if not acf_path or not os.path.exists(acf_path):
+        return
+    try:
+        with open(acf_path, "r", encoding="utf-8", errors="ignore") as f:
+            content = f.read()
+
+        needs_size = False
+        m_size = re.search(r'"SizeOnDisk"\s*"(\d+)"', content)
+        if m_size and m_size.group(1) == "0":
+            needs_size = True
+
+        install_path = game_data.get("install_path")
+        if not install_path and game_data.get("library_path"):
+            folder_name = game_data.get("installdir") or game_data.get("game_name")
+            if folder_name:
+                cand_install = Path(game_data["library_path"]) / "steamapps" / "common" / folder_name
+                if cand_install.is_dir():
+                    install_path = str(cand_install)
+
+        actual_size = 0
+        if install_path and os.path.isdir(install_path):
+            try:
+                for root, _, files in os.walk(install_path):
+                    for file in files:
+                        try:
+                            actual_size += os.path.getsize(os.path.join(root, file))
+                        except Exception:
+                            pass
+            except Exception as e:
+                logger.warning(f"[PluginGames] Error calculating size: {e}")
+
+        wanted = [str(d).strip() for d in (depot_ids or []) if str(d).strip() and str(d).strip() != str(appid)]
+        has_entries = bool(re.search(r'"InstalledDepots"\s*\{[^}]*"\d+"\s*\n\s*\{', content))
+
+        if not has_entries and wanted:
+            depots_lines = []
+            per_depot = actual_size // max(1, len(wanted))
+            for did_str in wanted:
+                dsize = actual_size if len(wanted) == 1 else per_depot
+                depots_lines.append(
+                    f'\t\t"{did_str}"\n\t\t{{\n\t\t\t"manifest"\t\t"0"\n\t\t\t"size"\t\t"{dsize}"\n\t\t}}'
+                )
+            if depots_lines:
+                new_block = '\t"InstalledDepots"\n\t{\n' + "\n".join(depots_lines) + '\n\t}'
+                if re.search(r'"InstalledDepots"\s*\{\s*\}', content):
+                    content = re.sub(
+                        r'"InstalledDepots"\s*\{\s*\}', new_block.replace("\\", "\\\\"), content, count=1
+                    )
+                else:
+                    content = re.sub(
+                        r'("AppState"\s*\{)', rf'\1\n{new_block}', content, count=1
+                    )
+
+        if (needs_size or not m_size) and actual_size > 0:
+            if m_size:
+                content = re.sub(r'"SizeOnDisk"\s*"\d+"', f'"SizeOnDisk"\t\t"{actual_size}"', content)
+            else:
+                content = re.sub(r'("AppState"\s*\{)', rf'\1\n\t"SizeOnDisk"\t\t"{actual_size}"', content)
+
+        if not _atomic_write_acf(acf_path, content):
+            return
+        logger.info(
+            f"[PluginGames] Updated ACF {acf_path}: {len(wanted)} depot(s) listed"
+        )
+    except Exception as e:
+        logger.warning(f"[PluginGames] Graceful fallback on updating ACF {acf_path}: {e}")
+
+
+def collect_game_depots_and_keys(
+    appid: Union[str, int],
+    game_data: Optional[Dict[str, Any]] = None,
+    allow_hubcap_fetch: bool = True,
+) -> Tuple[List[str], Dict[str, str], Dict[str, str]]:
+    """
+    Collect all known depot IDs, decryption keys, and depot names for a game.
+    Queries DatabaseManager, local .depot files, SQLite DepotKeyManager,
+    cached luas, manifest zips, and falls back to Hubcap API manifest fetch if needed.
+    """
+    from utils.lua_parsing import iter_live_matches
+
+    appid_str = str(appid).strip()
+    depot_ids: List[str] = []
+    decryption_keys: Dict[str, str] = {}
+    depot_names: Dict[str, str] = {}
+
+    game_dict = game_data or {}
+
+    # 1. DatabaseManager lookup
+    try:
+        from managers.db_manager import DatabaseManager
+        db = DatabaseManager()
+        app_info = db.get_app_info(appid_str, bypass_expiration=True)
+        if app_info and app_info.get("depots"):
+            for did, dinfo in app_info["depots"].items():
+                did_str = str(did)
+                if did_str not in depot_ids:
+                    depot_ids.append(did_str)
+                if isinstance(dinfo, dict) and dinfo.get("name"):
+                    depot_names[did_str] = str(dinfo["name"])
+    except Exception as e:
+        logger.debug(f"[PluginGames] DB lookup error for {appid_str}: {e}")
+
+    # 2. Local .depot files
+    depot_file = get_base_path() / "depots" / f"{appid_str}.depot"
+    if depot_file.exists():
+        try:
+            with open(depot_file, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    parts = line.strip().split(":")
+                    if parts and parts[0].strip().isdigit():
+                        did = parts[0].strip()
+                        if did not in depot_ids:
+                            depot_ids.append(did)
+                        if len(parts) > 1 and parts[1].strip() and not parts[1].strip().isdigit():
+                            depot_names[did] = parts[1].strip()
+        except Exception as e:
+            logger.debug(f"[PluginGames] Could not read .depot file for {appid_str}: {e}")
+
+    # 3. Authoritative local SQLite DepotKeyManager
+    try:
+        from managers.depot_key_manager import DepotKeyManager
+        stored_keys = DepotKeyManager.get_instance().get_depot_keys(appid_str)
+        for did, key in stored_keys.items():
+            did_str = str(did).strip()
+            key_str = str(key).strip().lower()
+            if key_str and len(key_str) == 64:
+                decryption_keys[did_str] = key_str
+                if did_str != appid_str and did_str not in depot_ids:
+                    depot_ids.append(did_str)
+    except Exception as e:
+        logger.debug(f"[PluginGames] DepotKeyManager lookup error for {appid_str}: {e}")
+
+    # 4. Extract from cached Lua or manifest zip
+    def _extract_keys_from_lua(lua_text: str):
+        for m in iter_live_matches(lua_text, r'addappid\((\d+),\s*\d+,\s*["\']([a-fA-F0-9]{64})["\']\)'):
+            did, key = m.group(1), m.group(2).lower()
+            decryption_keys[did] = key
+            if did != appid_str and did not in depot_ids:
+                depot_ids.append(did)
+
+    lua_file = get_base_path() / "cached_luas" / f"{appid_str}.lua"
+    if lua_file.exists():
+        try:
+            with open(lua_file, "r", encoding="utf-8", errors="ignore") as lf:
+                _extract_keys_from_lua(lf.read())
+        except Exception as e:
+            logger.debug(f"[PluginGames] Could not read cached Lua for {appid_str}: {e}")
+
+    zip_file = get_base_path() / "hubcap_manifests" / f"accela_fetch_{appid_str}.zip"
+    if zip_file.exists():
+        try:
+            with zipfile.ZipFile(zip_file, "r") as zf:
+                for name in zf.namelist():
+                    if name.endswith(".lua"):
+                        _extract_keys_from_lua(zf.read(name).decode("utf-8", errors="ignore"))
+        except Exception as e:
+            logger.debug(f"[PluginGames] Could not read manifest zip for {appid_str}: {e}")
+
+    # 5. Respect user's saved depot selection if available
+    from utils.dlc_helpers import get_saved_depot_selection
+    saved_selection = get_saved_depot_selection(appid_str)
+    if not saved_selection and game_dict:
+        saved_selection = game_dict.get("selected_depots") or (
+            game_dict.get("metadata", {}).get("selected_depots_list")
+        )
+    if saved_selection:
+        saved_depot_set = {str(d) for d in saved_selection}
+        user_depots = [d for d in depot_ids if str(d) in saved_depot_set]
+        if user_depots:
+            depot_ids = user_depots
+
+    # 6. Filter out appid itself from depot_ids
+    depot_ids = [d for d in depot_ids if str(d) != appid_str]
+
+    # 7. If any depot is missing keys, attempt emergency Hubcap fetch
+    missing_key_depots = [d for d in depot_ids if str(d) not in decryption_keys]
+    if missing_key_depots and allow_hubcap_fetch:
+        try:
+            logger.info(f"[PluginGames] Missing keys for depot(s) {missing_key_depots} of {appid_str}. Fetching from Hubcap...")
+            from core import morrenus_api
+            zip_res, _ = morrenus_api.download_manifest(appid_str, force_update=True)
+            if zip_res and os.path.exists(zip_res):
+                fresh_keys = {}
+                with zipfile.ZipFile(zip_res, "r") as zf:
+                    for name in zf.namelist():
+                        if name.endswith(".lua"):
+                            lua_txt = zf.read(name).decode("utf-8", errors="ignore")
+                            for m in iter_live_matches(lua_txt, r'addappid\((\d+),\s*\d+,\s*["\']([a-fA-F0-9]{64})["\']\)'):
+                                did_f, k_f = m.group(1), m.group(2).lower()
+                                fresh_keys[did_f] = k_f
+                if fresh_keys:
+                    from managers.depot_key_manager import DepotKeyManager
+                    DepotKeyManager.get_instance().save_depot_keys(appid_str, fresh_keys)
+                    for did_f, k_f in fresh_keys.items():
+                        decryption_keys[did_f] = k_f
+                        if did_f != appid_str and did_f not in depot_ids:
+                            depot_ids.append(did_f)
+                    logger.info(f"[PluginGames] Recovered {len(fresh_keys)} fresh key(s) from Hubcap for {appid_str}.")
+        except Exception as e:
+            logger.warning(f"[PluginGames] Hubcap emergency key recovery failed for {appid_str}: {e}")
+
+    return depot_ids, decryption_keys, depot_names
+
+
+def batch_convert_games_to_atom(
+    games: List[Dict[str, Any]],
+    progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
+    cancel_check: Optional[Callable[[], bool]] = None,
+) -> Dict[str, Any]:
+    """
+    Batch convert multiple eligible games from ASSella to AT0-M (Steam Native) mode.
+    - Resolves depots and keys per game.
+    - Excludes unkeyed depots to safeguard against Steam DepotWithoutKey errors.
+    - Skips games with zero decryption keys.
+    - Removes .DepotDownloader / legacy markers from install folders.
+    - Seeds Steam central depotcache.
+    - Prepares InstalledDepots in Steam appmanifest ACF files.
+    - Injects all games, depots, and keys into SLSsteam config.yaml in a single atomic batch.
+    - Emits SLSBridge.notify_reload() once.
+    - Strict: Does NOT send SLSsteam install API commands.
+    """
+    from utils.settings import get_settings
+
+    migrated: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+    staged_records: List[Dict[str, Any]] = []
+
+    total = len(games)
+    lib = load_plugin_library()
+    settings = get_settings()
+
+    for idx, game_data in enumerate(games):
+        if cancel_check and cancel_check():
+            logger.info("[PluginGames] Batch AT0-M conversion canceled by user.")
+            break
+
+        step_num = idx + 1
+        appid_str = str(game_data.get("appid", "")).strip()
+        game_name = game_data.get("game_name") or f"App {appid_str}"
+
+        if progress_callback:
+            progress_callback(step_num, total, game_name, "Collecting depots and decryption keys...")
+
+        # 1. Collect depots, keys, and names
+        depot_ids, decryption_keys, depot_names = collect_game_depots_and_keys(
+            appid_str, game_data=game_data, allow_hubcap_fetch=True
+        )
+
+        # 2. Exclude unkeyed depots
+        valid_keys_and_redists = set(decryption_keys.keys()) | SHARED_REDISTS
+        depot_ids = [d for d in depot_ids if d in valid_keys_and_redists]
+
+        # 3. Guard against games with zero decryption keys
+        if not decryption_keys or not depot_ids:
+            logger.warning(
+                f"[PluginGames] Skipping '{game_name}' ({appid_str}): 0 valid decryption keys or depots available."
+            )
+            failed.append({
+                "appid": appid_str,
+                "name": game_name,
+                "reason": "No valid decryption keys or depots found",
+            })
+            continue
+
+        if progress_callback:
+            progress_callback(step_num, total, game_name, "Cleaning legacy markers & updating metadata...")
+
+        # 4. Remove ASSella markers from install directory
+        install_path = game_data.get("install_path")
+        if not install_path and game_data.get("library_path"):
+            folder_name = game_data.get("installdir") or game_data.get("game_name")
+            if folder_name:
+                cand = Path(game_data["library_path"]) / "steamapps" / "common" / folder_name
+                if cand.is_dir():
+                    install_path = str(cand)
+
+        if install_path and os.path.isdir(install_path):
+            for marker_name in (".assella", ".ASSELLA", ".ACCELA", ".accela", ".DepotDownloader", ".depotdownloader"):
+                m_path = os.path.join(install_path, marker_name)
+                if os.path.exists(m_path):
+                    try:
+                        if os.path.isdir(m_path):
+                            shutil.rmtree(m_path, ignore_errors=True)
+                        else:
+                            os.remove(m_path)
+                    except Exception as e:
+                        logger.debug(f"[PluginGames] Marker cleanup failed for {m_path}: {e}")
+
+        # 5. Update settings
+        settings.setValue(f"exclude_from_update_all/{appid_str}", True)
+        settings.setValue(f"selected_branch/{appid_str}", "public")
+        settings.setValue(f"installed_branch/{appid_str}", "public")
+
+        # 6. Update ACF InstalledDepots
+        acf_path = game_data.get("appmanifest_path")
+        if not acf_path and game_data.get("library_path"):
+            cand_acf = Path(game_data["library_path"]) / "steamapps" / f"appmanifest_{appid_str}.acf"
+            if cand_acf.exists():
+                acf_path = str(cand_acf)
+        if not acf_path:
+            try:
+                from core.steam_helpers import get_steam_libraries
+                for slib in (get_steam_libraries() or []):
+                    cand_acf = Path(slib) / "steamapps" / f"appmanifest_{appid_str}.acf"
+                    if cand_acf.exists():
+                        acf_path = str(cand_acf)
+                        break
+            except Exception:
+                pass
+
+        if acf_path and os.path.exists(acf_path):
+            _ensure_acf_has_installed_depots(acf_path, appid_str, depot_ids, game_data)
+
+        # 7. Seed Steam central depotcache
+        try:
+            from core.native_steam.native_steam_handoff import sync_manifests_to_depotcache
+            dest_lib = game_data.get("library_path") or install_path or ""
+            sync_manifests_to_depotcache(appid_str, dest_lib)
+        except Exception as e:
+            logger.debug(f"[PluginGames] Depotcache sync failed for {appid_str}: {e}")
+
+        # 8. Stage game record for plugin_library
+        installdir = game_data.get("installdir") or game_data.get("game_name") or ""
+        game_record = {
+            "appid": appid_str,
+            "name": game_name,
+            "installdir": installdir,
+            "depots": depot_ids,
+            "keys": decryption_keys,
+            "depot_names": depot_names,
+            "dlc_only": False,
+            "dlc_appids": [],
+            "updated_at": int(time.time()),
+            "source": "plugin_native",
+        }
+        staged_records.append(game_record)
+        migrated.append({
+            "appid": appid_str,
+            "name": game_name,
+            "depots": len(depot_ids),
+            "keys": len(decryption_keys),
+        })
+
+    # Save to plugin_library.json
+    if staged_records:
+        if progress_callback:
+            progress_callback(total, total, "SLSsteam Config", "Applying atomic batch configuration updates...")
+
+        for rec in staged_records:
+            lib[rec["appid"]] = rec
+        save_plugin_library(lib)
+
+        # Atomic batch edit to config.yaml
+        cfg_path = get_user_config_path()
+        if cfg_path.exists():
+            with batch_config_edit(cfg_path) as editor:
+                for rec in staged_records:
+                    aid = rec["appid"]
+                    name = rec["name"]
+                    editor.add_app(aid, comment=name)
+
+                    for did in rec["depots"]:
+                        if did in SHARED_REDISTS:
+                            depot_comment = "Steamworks Shared"
+                        else:
+                            d_name = rec["depot_names"].get(did, "")
+                            depot_comment = f"{name} - {d_name} ({did})" if d_name else f"{name} ({did})"
+                        editor.add_depot(did, comment=depot_comment)
+
+                    for did, key in rec["keys"].items():
+                        if did == aid:
+                            key_comment = f"{name} [AppKey] ({aid})"
+                        elif did in SHARED_REDISTS:
+                            key_comment = "Steamworks Shared"
+                        else:
+                            d_name = rec["depot_names"].get(did, "")
+                            key_comment = f"{name} - {d_name}" if d_name else name
+                        editor.add_key(did, key, comment=key_comment)
+
+            # Reload SLSsteam
+            SLSBridge.notify_reload()
+            logger.info(
+                f"[PluginGames] Batch AT0-M migration successfully applied for {len(staged_records)} game(s)."
+            )
+
+    return {"migrated": migrated, "failed": failed}
+
 
