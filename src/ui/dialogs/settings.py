@@ -443,6 +443,7 @@ class SettingsDialog(QDialog):
 
         # Wire navigation clicks
         self._nav_list.currentRowChanged.connect(self._page_stack.setCurrentIndex)
+        self._nav_list.currentRowChanged.connect(lambda _idx: self._position_floating_buttons())
 
         content_widget = QWidget()
         content_widget.setLayout(content_row)
@@ -561,18 +562,18 @@ class SettingsDialog(QDialog):
                 self.update_luatools_ui_status(validate=True)
 
     def _create_dialog_buttons(self) -> None:
-        """Create modern floating Ok/Cancel buttons with shadow in bottom right."""
-        button_container = QWidget()
-        button_container.setStyleSheet("background: transparent;")
-        btn_layout = QHBoxLayout(button_container)
-        btn_layout.setContentsMargins(16, 8, 20, 16)
-        btn_layout.setSpacing(12)
-        btn_layout.addStretch(1)
+        """Create floating Ok/Cancel buttons with shadow in bottom right."""
+        self.button_container = QWidget(self)
+        self.button_container.setObjectName("FloatingSettingsButtons")
+        self.button_container.setStyleSheet("background: transparent;")
+        btn_layout = QHBoxLayout(self.button_container)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(8)
 
-        self.btn_ok = QPushButton("✓  OK")
+        self.btn_ok = QPushButton("✓  OK", self.button_container)
         self.btn_ok.setObjectName("SettingsOkButton")
         self.btn_ok.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ok.setFixedSize(88, 34)
+        self.btn_ok.setFixedSize(82, 32)
         self.btn_ok.setStyleSheet(f"""
             QPushButton#SettingsOkButton {{
                 background-color: {self.accent_color};
@@ -592,27 +593,27 @@ class SettingsDialog(QDialog):
         """)
         shadow_ok = QGraphicsDropShadowEffect(self.btn_ok)
         shadow_ok.setBlurRadius(16)
-        shadow_ok.setColor(QColor(0, 0, 0, 180))
+        shadow_ok.setColor(QColor(0, 0, 0, 190))
         shadow_ok.setOffset(0, 3)
         self.btn_ok.setGraphicsEffect(shadow_ok)
         self.btn_ok.clicked.connect(self.accept)
 
-        self.btn_cancel = QPushButton("✕  Cancel")
+        self.btn_cancel = QPushButton("✕  Cancel", self.button_container)
         self.btn_cancel.setObjectName("SettingsCancelButton")
         self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_cancel.setFixedSize(96, 34)
+        self.btn_cancel.setFixedSize(88, 32)
         self.btn_cancel.setStyleSheet("""
             QPushButton#SettingsCancelButton {{
-                background-color: rgba(255, 255, 255, 0.08);
+                background-color: rgba(25, 25, 28, 0.90);
                 color: #FFFFFF;
                 font-weight: 500;
                 font-size: 9.5pt;
                 border-radius: 14px;
-                border: 1px solid rgba(255, 255, 255, 0.18);
+                border: 1px solid rgba(255, 255, 255, 0.22);
             }}
             QPushButton#SettingsCancelButton:hover {{
                 background-color: rgba(255, 255, 255, 0.16);
-                border-color: rgba(255, 255, 255, 0.35);
+                border-color: rgba(255, 255, 255, 0.40);
             }}
             QPushButton#SettingsCancelButton:pressed {{
                 background-color: rgba(255, 255, 255, 0.05);
@@ -620,7 +621,7 @@ class SettingsDialog(QDialog):
         """)
         shadow_cancel = QGraphicsDropShadowEffect(self.btn_cancel)
         shadow_cancel.setBlurRadius(16)
-        shadow_cancel.setColor(QColor(0, 0, 0, 180))
+        shadow_cancel.setColor(QColor(0, 0, 0, 190))
         shadow_cancel.setOffset(0, 3)
         self.btn_cancel.setGraphicsEffect(shadow_cancel)
         self.btn_cancel.clicked.connect(self.reject)
@@ -628,7 +629,25 @@ class SettingsDialog(QDialog):
         btn_layout.addWidget(self.btn_ok)
         btn_layout.addWidget(self.btn_cancel)
 
-        self.main_layout.addWidget(button_container)
+        self.button_container.adjustSize()
+        self._position_floating_buttons()
+
+    def _position_floating_buttons(self) -> None:
+        """Position floating buttons over the bottom right corner of the dialog."""
+        if hasattr(self, "button_container") and self.button_container:
+            self.button_container.adjustSize()
+            x = self.width() - self.button_container.width() - 16
+            y = self.height() - self.button_container.height() - 12
+            self.button_container.move(x, y)
+            self.button_container.raise_()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._position_floating_buttons()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._position_floating_buttons()
 
     # ── Signal Handlers & Delegation Slots ────────────────────────────────
     @pyqtSlot(object)
