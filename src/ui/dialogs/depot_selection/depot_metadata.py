@@ -88,7 +88,7 @@ def manifest_size(depot: dict, branch: str = "") -> int:
     return 0
 
 
-def merge_enrichments(depots: Dict, enrichments: Dict) -> None:
+def merge_enrichments(depots: Dict, enrichments: Dict, base_appid: Optional[str] = None) -> None:
     """Merge enrichment records into depot dicts, in place.
 
     A record is matched by depot id, and also by the DLC app id on a depot, so
@@ -98,6 +98,8 @@ def merge_enrichments(depots: Dict, enrichments: Dict) -> None:
     """
     if not enrichments or not depots:
         return
+
+    base_aid_str = str(base_appid).strip() if base_appid else ""
 
     for did, info in enrichments.items():
         if not isinstance(info, dict):
@@ -116,10 +118,18 @@ def merge_enrichments(depots: Dict, enrichments: Dict) -> None:
             if not isinstance(d_data, dict):
                 continue
 
-            dlc_id = info.get("dlcappid") or d_data.get("dlcappid") or did
-            dlc_tag = f"[DLC {dlc_id}]" if dlc_id and str(dlc_id).isdigit() else "[DLC]"
+            is_base = bool(
+                base_aid_str
+                and (
+                    str(target_did) == base_aid_str
+                    or str(info.get("dlcappid") or "") == base_aid_str
+                    or str(d_data.get("dlcappid") or "") == base_aid_str
+                )
+            )
+
+            dlc_tag = "[DLC]"
             if needs_name(d_data) and info.get("name"):
-                if info.get("is_dlc") or d_data.get("dlcappid"):
+                if not is_base and (info.get("is_dlc") or (d_data.get("dlcappid") and str(d_data.get("dlcappid")) != base_aid_str)):
                     d_data["desc"] = f"{dlc_tag} {info['name']}"
                 else:
                     d_data["desc"] = info["name"]
@@ -132,7 +142,7 @@ def merge_enrichments(depots: Dict, enrichments: Dict) -> None:
                 d_data["oslist"] = info["oslist"]
             if info.get("osarch") and not d_data.get("osarch"):
                 d_data["osarch"] = info["osarch"]
-            if info.get("is_dlc") or d_data.get("dlcappid"):
+            if not is_base and (info.get("is_dlc") or (d_data.get("dlcappid") and str(d_data.get("dlcappid")) != base_aid_str)):
                 d_data["is_dlc"] = True
 
 

@@ -1159,6 +1159,7 @@ class ModernDepotSelectionDialog(QDialog):
                 d_data,
                 desc,
                 has_os_icon=True,
+                base_appid=str(self.app_id),
             )
             cfg_item = QTableWidgetItem(clean_desc)
             cfg_item.setFlags(cfg_item.flags() & ~Qt.ItemFlag.ItemIsEditable)

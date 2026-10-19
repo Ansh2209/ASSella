@@ -968,30 +968,33 @@ class ProcessZipTask:
                         for depot_id, lua_data in filtered_depots.items():
                             final_depot_data = {"key": lua_data["key"]}
                             details = api_details.get(str(depot_id))
+                            base_appid = str(game_data.get("appid", "")).strip()
 
-                            base_description = known_depot_descriptions.get(
-                                depot_id, lua_data["desc"]
-                            )
+                            # 1. Start with Lua/Hubcap description as initial candidate
+                            raw_lua_desc = lua_data.get("desc") or ""
 
+                            # 2. Check local SQLite DB enrichment (first priority on disk)
                             e_info = db_enrichments.get(str(depot_id))
                             if not e_info and details and details.get("dlcappid"):
-                                e_info = db_enrichments.get(str(details["dlcappid"]))
+                                dlcapp_cand = str(details["dlcappid"]).strip()
+                                if dlcapp_cand != base_appid:
+                                    e_info = db_enrichments.get(dlcapp_cand)
 
-                            if e_info:
-                                is_generic = (
-                                    not base_description
-                                    or bool(re.match(r"^(?:\[.*?\]\s*)?Depot \d+$", base_description, re.IGNORECASE))
-                                    or bool(re.match(r"^(?:\[.*?\]\s*)?DLC \d+$", base_description, re.IGNORECASE))
-                                )
-                                if is_generic and e_info.get("name"):
-                                    if e_info.get("is_dlc"):
-                                        dlc_prefix = f"[DLC {e_info['dlcappid']}]" if e_info.get("dlcappid") else "[DLC]"
-                                        if dlc_prefix.lower() not in e_info["name"].lower():
-                                            base_description = f"{dlc_prefix} {e_info['name']}"
-                                        else:
-                                            base_description = e_info["name"]
+                            base_description = ""
+                            if e_info and e_info.get("name"):
+                                e_dlc = str(e_info.get("dlcappid") or "").strip()
+                                is_actually_dlc = bool(e_info.get("is_dlc")) and str(depot_id) != base_appid and e_dlc != base_appid
+                                if is_actually_dlc:
+                                    dlc_prefix = f"[DLC {e_dlc}]" if e_dlc else "[DLC]"
+                                    if dlc_prefix.lower() not in e_info["name"].lower():
+                                        base_description = f"{dlc_prefix} {e_info['name']}"
                                     else:
                                         base_description = e_info["name"]
+                                else:
+                                    base_description = e_info["name"]
+
+                            if e_info:
+                                is_actually_dlc = bool(e_info.get("is_dlc")) and str(depot_id) != base_appid and str(e_info.get("dlcappid") or "").strip() != base_appid
                                 if not details and e_info.get("oslist"):
                                     final_depot_data["oslist"] = e_info["oslist"]
                                 if not details and e_info.get("osarch"):
@@ -1000,16 +1003,28 @@ class ProcessZipTask:
                                     final_depot_data["size"] = e_info["size_bytes"]
                                 if e_info.get("size_str"):
                                     final_depot_data["size_str"] = e_info["size_str"]
-                                if e_info.get("is_dlc"):
+                                if is_actually_dlc:
                                     final_depot_data["is_dlc"] = True
 
-                            is_base_generic = (
-                                not base_description
-                                or bool(re.match(r"^(?:\[.*?\]\s*)?Depot \d+$", base_description, re.IGNORECASE))
-                                or bool(re.match(r"^(?:\[.*?\]\s*)?DLC \d+$", base_description, re.IGNORECASE))
-                            )
-                            if is_base_generic and details and details.get("name"):
-                                base_description = details["name"]
+                            # 3. Check live Steam PICS name: if present and valid, it takes priority or fills missing
+                            if details and details.get("name"):
+                                pics_name = str(details["name"]).strip()
+                                is_pics_generic = bool(re.match(r"^(?:\[.*?\]\s*)?Depot \d+$", pics_name, re.IGNORECASE))
+                                if pics_name and not is_pics_generic:
+                                    base_description = pics_name
+
+                            # 4. Fallback to Lua/Hubcap description if still empty or generic
+                            if not base_description or bool(re.match(r"^(?:\[.*?\]\s*)?Depot \d+$", base_description, re.IGNORECASE)):
+                                if raw_lua_desc and not bool(re.match(r"^(?:\[.*?\]\s*)?Depot \d+$", raw_lua_desc, re.IGNORECASE)):
+                                    base_description = raw_lua_desc
+
+                            # 5. Fallback to depots.ini as strictly the LAST offline fallback
+                            if not base_description or bool(re.match(r"^(?:\[.*?\]\s*)?Depot \d+$", base_description, re.IGNORECASE)):
+                                ini_desc = known_depot_descriptions.get(depot_id)
+                                if ini_desc:
+                                    base_description = ini_desc
+                                elif not base_description:
+                                    base_description = f"Depot {depot_id}"
 
                             if details:
                                 tags = []
@@ -1037,14 +1052,20 @@ class ProcessZipTask:
                                     final_depot_data["manifests"] = details["manifests"]
                                 if details.get("manifest_id"):
                                     final_depot_data["manifest_id"] = str(details["manifest_id"])
-                                if details.get("dlcappid"):
-                                    final_depot_data["dlcappid"] = str(details["dlcappid"])
-                                if details.get("is_dlc") or details.get("dlcappid"):
+                                dlcappid_val = str(details.get("dlcappid") or "").strip()
+                                if dlcappid_val:
+                                    final_depot_data["dlcappid"] = dlcappid_val
+                                is_dlc_flag = bool(details.get("is_dlc"))
+                                if (dlcappid_val and dlcappid_val != base_appid) or (is_dlc_flag and str(depot_id) != base_appid and dlcappid_val != base_appid):
                                     final_depot_data["is_dlc"] = True
                                 if details.get("name"):
                                     final_depot_data["name"] = details["name"]
+                                elif base_description:
+                                    final_depot_data["name"] = base_description
                             else:
                                 final_description = base_description
+                                if base_description:
+                                    final_depot_data["name"] = base_description
 
                             if filter_soundtracks:
                                 lower_desc = final_description.lower()
@@ -1089,6 +1110,17 @@ class ProcessZipTask:
                             enriched_depots[depot_id] = final_depot_data
 
                         game_data["depots"] = enriched_depots
+
+                if game_data.get("appid") and game_data.get("depots"):
+                    try:
+                        from utils.edition_helpers import resolve_multi_platform_editions
+                        logger.info(f"[ProcessZipTask] Pre-fetching package info and resolving editions for App {game_data['appid']}...")
+                        game_data["editions"] = resolve_multi_platform_editions(
+                            str(game_data["appid"]),
+                            game_data["depots"]
+                        )
+                    except Exception as _ed_err:
+                        logger.debug(f"[ProcessZipTask] Pre-fetching editions error: {_ed_err}")
 
                 if not game_data.get("game_name"):
                     _fallback_name = f"App_{game_data.get('appid', 'Unknown')}"

@@ -375,6 +375,7 @@ class SingleDepotSelectionDialog(QDialog):
             self.single_depot_data,
             raw_desc,
             has_os_icon=bool(os_icon),
+            base_appid=str(self.app_id),
         )
         self.depot_name_lbl = QLabel(compact_desc)
         self.depot_name_lbl.setStyleSheet("font-size: 9pt; color: rgba(255, 255, 255, 0.85);")
@@ -834,6 +835,7 @@ class SingleDepotSelectionDialog(QDialog):
                     self.single_depot_data,
                     raw_desc,
                     has_os_icon=bool(os_icon),
+                    base_appid=str(self.app_id),
                 )
                 self.depot_name_lbl.setText(compact_desc)
             if hasattr(self, "depot_size_lbl"):

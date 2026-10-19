@@ -82,8 +82,10 @@ class HeaderImageMixin:
             self._show_no_image()
 
     def _apply_header_pixmap(self, pixmap: QPixmap) -> None:
+        target_w = self.header_label.width() if hasattr(self, "header_label") and self.header_label.width() > 0 else 184
+        target_h = self.header_label.height() if hasattr(self, "header_label") and self.header_label.height() > 0 else 86
         scaled = pixmap.scaled(
-            120, 56, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation
+            target_w, target_h, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation
         )
         self.header_label.setPixmap(scaled)
         self.header_label.setStyleSheet("border-radius: 6px;")

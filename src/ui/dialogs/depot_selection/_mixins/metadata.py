@@ -134,7 +134,8 @@ class DepotMetadataMixin:
                         f = cfg_item.font()
                         f.setItalic(True)
                         cfg_item.setFont(f)
-                    sz_item = self.table_widget.item(row, 2)
+                    sz_col = self.table_widget.columnCount() - 1
+                    sz_item = self.table_widget.item(row, sz_col)
                     if sz_item:
                         sz_item.setText(msize_str)
                         sz_item.setForeground(darker_grey)
@@ -333,7 +334,7 @@ class DepotMetadataMixin:
                 id_item = self.table_widget.item(row, 0)
                 if id_item and str(id_item.data(Qt.ItemDataRole.UserRole)) == did_str:
                     config_item = self.table_widget.item(row, 1)
-                    size_item = self.table_widget.item(row, 2)
+                    size_item = self.table_widget.item(row, 3)
 
                     id_item.setData(Qt.ItemDataRole.UserRole + 2, "normal")
                     id_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
@@ -388,7 +389,7 @@ class DepotMetadataMixin:
     def _apply_depot_enrichments(self, enrichments: dict):
         """Merges enriched metadata into self.depots dictionary."""
         try:
-            depot_metadata.merge_enrichments(self.depots, enrichments)
+            depot_metadata.merge_enrichments(self.depots, enrichments, base_appid=str(self.app_id))
         finally:
             if hasattr(self, "linux_button") and self.linux_button:
                 has_linux = self._has_native_linux_depots()
@@ -472,7 +473,7 @@ class DepotMetadataMixin:
 
             if info:
                 config_item = self.table_widget.item(row, 1)
-                size_item = self.table_widget.item(row, 2)
+                size_item = self.table_widget.item(row, 3)
 
                 if role == "missing":
                     curr_config = config_item.text().strip() if config_item else ""
@@ -497,6 +498,7 @@ class DepotMetadataMixin:
                                 name,
                                 has_os_icon=True,
                                 show_os_badge=False,
+                                base_appid=str(self.app_id),
                             )
                             if config_item:
                                 config_item.setText(new_text)

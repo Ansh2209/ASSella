@@ -64,6 +64,7 @@ def _format_enriched_depot_desc(
     fallback_desc: str,
     enrich_data: Optional[Dict[str, Any]] = None,
     has_os_icon: bool = False,
+    base_appid: Optional[str] = None,
 ) -> str:
     """Format depot title with OS, architecture, language, DLC badges, and clean name using format_depot_row_label."""
     from utils.depot_tag_helpers import format_depot_row_label
@@ -73,6 +74,7 @@ def _format_enriched_depot_desc(
         base_desc=fallback_desc,
         has_os_icon=has_os_icon,
         show_os_badge=(not has_os_icon),
+        base_appid=base_appid,
     )
 
 
@@ -832,6 +834,7 @@ def init_depots_tab(dialog) -> None:
                 fallback_desc=desc,
                 enrich_data=enrich_info,
                 has_os_icon=bool(os_icon),
+                base_appid=appid_str,
             )
 
             size_str = ""

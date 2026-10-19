@@ -246,6 +246,7 @@ class LibraryActionsMixin:
         """Handle click on an owned/installed Steam game:
 
         Checks if the game has DLCs (fastest path possible via local SQLite/manifests).
+        Runs discovery in a background thread to prevent UI freezing.
         If DLCs exist, launches Depot Selection with DLC-only mode ON and locked,
         and storage locked to its existing installation path.
         """
@@ -253,31 +254,103 @@ class LibraryActionsMixin:
         if not appid or appid in ("0", "N/A", "unknown"):
             return
 
-        from ui.dialogs.themed_message_box import ThemedMessageBox
-        from utils.dlc_helpers import discover_dlc_depots
-
         name = game_data.get("game_name", "this game")
         self._show_steam_loading_overlay(f"Discovering DLCs for {name}...")
 
-        discovery = discover_dlc_depots(appid, game_data.get("depots"), allow_store=False)
-        if not discovery.catalog and not discovery.depots:
-            # PICS and the cache know nothing: offer the Store listing as a
-            # slower fallback instead of making it the default source.
-            self._dismiss_steam_loading_overlay()
-            widen = ThemedMessageBox.question(
-                self,
-                "No DLC List Found",
-                f"Steam's package data lists no DLCs for {name}.\n\n"
-                "Look the DLC list up on the Steam Store instead? "
-                "That is a slower, wider list.",
-                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
-                ThemedMessageBox.StandardButton.No,
-            )
-            if widen != ThemedMessageBox.StandardButton.Yes:
+        def _bg_discover(allow_store: bool = False):
+            try:
+                from utils.dlc_helpers import discover_dlc_depots, enrich_dlc_names_with_byparr_or_store
+                disc = discover_dlc_depots(appid, game_data.get("depots"), allow_store=allow_store)
+                if disc and disc.catalog:
+                    try:
+                        enriched_catalog = enrich_dlc_names_with_byparr_or_store(appid, disc.catalog)
+                        disc = disc.__class__(
+                            appid=disc.appid,
+                            catalog=enriched_catalog,
+                            depots=disc.depots,
+                            sources=disc.sources,
+                        )
+                    except Exception as e_enr:
+                        logger.debug(f"[DLCDiscovery] Catalog name enrichment error: {e_enr}")
+            except Exception as exc:
+                logger.warning(f"[DLCDiscovery] Background DLC discovery error: {exc}", exc_info=True)
+                disc = None
+
+            def _on_done():
+                self._on_dlc_discovery_finished(appid, name, game_data, disc, allow_store)
+
+            if hasattr(self, "_run_on_main_thread"):
+                from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+                QMetaObject.invokeMethod(
+                    self,
+                    "_run_on_main_thread",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(object, _on_done),
+                )
+            else:
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, _on_done)
+
+        self.executor.submit(_bg_discover, False)
+
+    def _on_dlc_discovery_finished(
+        self, appid: str, name: str, game_data: dict, discovery: Any, allow_store: bool
+    ) -> None:
+        from ui.dialogs.themed_message_box import ThemedMessageBox
+
+        if not discovery or (not discovery.catalog and not discovery.depots):
+            if not allow_store:
+                self._dismiss_steam_loading_overlay()
+                widen = ThemedMessageBox.question(
+                    self,
+                    "No DLC List Found",
+                    f"Steam's package data lists no DLCs for {name}.\n\n"
+                    "Look the DLC list up on the Steam Store instead? "
+                    "That is a slower, wider list.",
+                    ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                    ThemedMessageBox.StandardButton.No,
+                )
+                if widen != ThemedMessageBox.StandardButton.Yes:
+                    return
+                self._show_steam_loading_overlay(f"Discovering DLCs for {name} (Store lookup)...")
+
+                def _bg_store_discover():
+                    try:
+                        from utils.dlc_helpers import discover_dlc_depots, enrich_dlc_names_with_byparr_or_store
+                        disc = discover_dlc_depots(appid, game_data.get("depots"), allow_store=True)
+                        if disc and disc.catalog:
+                            try:
+                                enriched_catalog = enrich_dlc_names_with_byparr_or_store(appid, disc.catalog)
+                                disc = disc.__class__(
+                                    appid=disc.appid,
+                                    catalog=enriched_catalog,
+                                    depots=disc.depots,
+                                    sources=disc.sources,
+                                )
+                            except Exception as e_enr:
+                                logger.debug(f"[DLCDiscovery] Catalog name enrichment error: {e_enr}")
+                    except Exception as exc:
+                        logger.warning(f"[DLCDiscovery] Store DLC discovery error: {exc}", exc_info=True)
+                        disc = None
+
+                    def _on_store_done():
+                        self._on_dlc_discovery_finished(appid, name, game_data, disc, True)
+
+                    if hasattr(self, "_run_on_main_thread"):
+                        from PyQt6.QtCore import QMetaObject, Qt, Q_ARG
+                        QMetaObject.invokeMethod(
+                            self,
+                            "_run_on_main_thread",
+                            Qt.ConnectionType.QueuedConnection,
+                            Q_ARG(object, _on_store_done),
+                        )
+                    else:
+                        from PyQt6.QtCore import QTimer
+                        QTimer.singleShot(0, _on_store_done)
+
+                self.executor.submit(_bg_store_discover)
                 return
-            self._show_steam_loading_overlay(f"Discovering DLCs for {name}...")
-            discovery = discover_dlc_depots(appid, game_data.get("depots"), allow_store=True)
-        if not discovery.catalog and not discovery.depots:
+
             self._dismiss_steam_loading_overlay()
             ThemedMessageBox.information(
                 self,
@@ -287,8 +360,6 @@ class LibraryActionsMixin:
             return
 
         if not discovery.has_sized_depots:
-            # The DLC list is known but none of it has a depot to download.
-            # Let the user decide instead of silently doing nothing.
             self._dismiss_steam_loading_overlay()
             answer = ThemedMessageBox.warning(
                 self,
@@ -307,6 +378,8 @@ class LibraryActionsMixin:
         overlay = getattr(self, "_steam_tab_loading_overlay", None)
         if overlay:
             overlay.set_label(f"Fetching manifest for {name}...")
+        else:
+            self._show_steam_loading_overlay(f"Fetching manifest for {name}...")
 
         game_data_dlc = dict(game_data)
         game_data_dlc["_dlc_only"] = True
@@ -720,6 +793,7 @@ class LibraryActionsMixin:
                                 current_build_id=str(game_data.get("buildid") or "").strip() if isinstance(game_data, dict) else "",
                                 library_path=game_data.get("library_path") or game_data.get("install_path"),
                                 lock_storage=True,
+                                editions=parsed_data.get("editions") or game_data.get("editions"),
                             )
                             if depot_dialog.exec():
                                 result_holder[0] = depot_dialog.get_selected_depots()
@@ -1400,6 +1474,7 @@ class LibraryActionsMixin:
                     library_path=game_data.get("library_path") or game_data.get("install_path"),
                     show_storage=True,
                     lock_storage=True,
+                    editions=parsed_data.get("editions") or game_data.get("editions"),
                 )
                 if depot_dialog.exec():
                     chosen = depot_dialog.get_selected_depots()
@@ -2023,8 +2098,13 @@ class LibraryActionsMixin:
         download_only = game_data.get("_download_only", False)
         is_verify = bool(game_data.get("_is_verify"))
         has_dialog_spinner = bool(dialog and hasattr(dialog, "validate_btn") and dialog.validate_btn)
+        has_steam_overlay = bool(getattr(self, "_steam_tab_loading_overlay", None)) or bool(game_data.get("_dlc_only"))
 
-        if not download_only and not is_verify and not has_dialog_spinner:
+        if has_steam_overlay:
+            if getattr(self, "_steam_tab_loading_overlay", None):
+                self._steam_tab_loading_overlay.set_label(f"Downloading manifest for {name}...")
+            self._download_progress_dialog = None
+        elif not download_only and not is_verify and not has_dialog_spinner:
             from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
             self._download_progress_dialog = ThemedProgressDialog(
                 f"Downloading {name}...", "Cancel", 0, 0, self
@@ -2205,10 +2285,15 @@ class LibraryActionsMixin:
         """Submit the job to the main window queue."""
         has_dialog_spinner = bool(dialog and hasattr(dialog, "validate_btn") and dialog.validate_btn)
         is_verify = bool(game_data.get("_is_verify"))
+        has_steam_overlay = bool(getattr(self, "_steam_tab_loading_overlay", None)) or bool(game_data.get("_dlc_only"))
 
         if game_data.get("_smart_update"):
             logger.info(f"[Smart Update] _submit_job: using pre-assembled game_data, skipping zip parse for AppID {game_data.get('appid')}")
-            if not has_dialog_spinner and not is_verify:
+            if has_steam_overlay:
+                if getattr(self, "_steam_tab_loading_overlay", None):
+                    self._steam_tab_loading_overlay.set_label("Applying manifest...")
+                parse_progress = None
+            elif not has_dialog_spinner and not is_verify:
                 from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
                 parse_progress = ThemedProgressDialog("Applying manifest...", None, 0, 0, self)
                 parse_progress.show()
@@ -2217,7 +2302,11 @@ class LibraryActionsMixin:
             self.zip_parse_complete.emit(game_data, filepath, game_data, dialog, parse_progress)
             return
 
-        if not has_dialog_spinner and not is_verify:
+        if has_steam_overlay:
+            if getattr(self, "_steam_tab_loading_overlay", None):
+                self._steam_tab_loading_overlay.set_label("Reading manifest...")
+            parse_progress = None
+        elif not has_dialog_spinner and not is_verify:
             from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
             parse_progress = ThemedProgressDialog("Reading manifest...", None, 0, 0, self)
             parse_progress.show()
@@ -2249,6 +2338,14 @@ class LibraryActionsMixin:
                 parse_progress.close()
             except Exception as e:
                 logger.debug(f"[Library] Could not close the parse progress dialog: {e}")
+
+        if not parsed_data:
+            self._dismiss_steam_loading_overlay()
+            logger.warning(f"Failed to parse manifest for {appid}")
+            if dialog and hasattr(dialog, "validate_btn") and dialog.validate_btn:
+                dialog.validate_btn.set_loading(False)
+                dialog.validate_btn.setEnabled(True)
+            return
 
         is_verify = bool(game_data.get("_is_verify") or game_data.get("update_status") != "update_available")
         target_branch = game_data.get("branch") or (parsed_data.get("branch") if isinstance(parsed_data, dict) else "public") or "public"
@@ -2380,6 +2477,7 @@ class LibraryActionsMixin:
                     dlc_only_mode=dlc_only_mode,
                     lock_dlc_only=lock_dlc_only,
                     dlc_catalog=game_data.get("_dlc_catalog") or {},
+                    editions=parsed_data.get("editions") or game_data.get("editions"),
                 )
 
                 # Apply recommended build selection if set

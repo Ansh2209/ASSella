@@ -45,18 +45,22 @@ def is_dlc_depot(
     if base_appid_str and depot_id_str == base_appid_str:
         return False
 
+    meta = depot_meta or {}
+    meta_dlc = str(meta.get("dlcappid") or "").strip()
+    if base_appid_str and meta_dlc == base_appid_str:
+        return False
+
     dlc_set = {str(d).strip() for d in (dlc_appids or []) if str(d).strip().isdigit()}
     if depot_id_str in dlc_set:
         return True
 
-    meta = depot_meta or {}
-    meta_dlc = str(meta.get("dlcappid") or "").strip()
-    if meta_dlc and meta_dlc.isdigit() and meta_dlc != base_appid_str:
+    if meta_dlc and meta_dlc.isdigit():
         if not dlc_set or meta_dlc in dlc_set:
             return True
 
     if meta.get("is_dlc"):
-        return True
+        if not (base_appid_str and depot_id_str == base_appid_str) and not bool(_BASE_DEPOT_RE.match(desc.strip())):
+            return True
 
     full_text = f"{desc} {meta.get('desc', '')} {meta.get('name', '')}".lower()
     if "[dlc" in full_text or bool(re.search(r"\bdlc\s+\d+", full_text)):
@@ -80,6 +84,11 @@ def is_base_game_main_depot(
     base_appid_str = str(base_appid).strip() if base_appid else ""
 
     if base_appid_str and depot_id_str == base_appid_str:
+        return True
+
+    meta = depot_meta or {}
+    meta_dlc = str(meta.get("dlcappid") or "").strip()
+    if base_appid_str and meta_dlc == base_appid_str:
         return True
 
     # If it is clearly identified as a DLC depot, it cannot be a base game main depot
@@ -181,8 +190,8 @@ def build_app_to_depots_map(
                     target_apps.add(dlc_id)
                 elif d_meta.get("is_dlc"):
                     desc = d_meta.get("name") or d_meta.get("desc") or ""
-                    m = re.search(r"\[DLC\s*(\d+)\]", desc)
-                    if m and m.group(1) != appid_str:
+                    m = re.search(r"\[DLC(?:\s*(\d+))?\]", desc)
+                    if m and m.group(1) and m.group(1) != appid_str:
                         mapping.setdefault(m.group(1), set()).add(did_str)
                         target_apps.add(m.group(1))
                     else:
@@ -464,11 +473,11 @@ class DlcDiscovery:
         return bool(self.catalog) and not self.has_sized_depots
 
 
-_DLC_NAME_PREFIX_RE = re.compile(r"^\[DLC\s*\d+\]\s*", re.IGNORECASE)
+_DLC_NAME_PREFIX_RE = re.compile(r"^\[DLC(?:\s*\d+)?\]\s*", re.IGNORECASE)
 
 
 def _clean_dlc_name(value: Any) -> str:
-    """Drop PICS' ``[DLC 12345]`` prefix so the name is fit to show."""
+    """Drop a ``[DLC]`` or ``[DLC 12345]`` prefix so the name is fit to show."""
     return _DLC_NAME_PREFIX_RE.sub("", str(value or "")).strip()
 
 
@@ -1437,23 +1446,44 @@ def enrich_dlc_names_with_byparr_or_store(
     except Exception as e:
         logger.debug(f"[DLCMode] Byparr DLC name lookup failed for {base_appid_str}: {e}")
 
-    # 2. Store API fallback for any remaining needs_lookup (up to 10 to keep fast)
+    # 2. Local database app_info lookup
+    if needs_lookup:
+        try:
+            from managers.db_manager import DatabaseManager
+            db = DatabaseManager()
+            for dlc_id in list(needs_lookup):
+                app_info = db.get_app_info(str(dlc_id))
+                if app_info and app_info.get("name"):
+                    clean_n = _clean_dlc_name(app_info["name"])
+                    enriched[dlc_id] = clean_n or app_info["name"]
+                    needs_lookup.remove(dlc_id)
+        except Exception as e_db:
+            logger.debug(f"[DLCMode] DB app_info lookup failed: {e_db}")
+
+    # 3. Store API batch fallback for any remaining needs_lookup
     if needs_lookup:
         import requests
-        for dlc_id in needs_lookup[:10]:
+        chunk_size = 25
+        for i in range(0, min(len(needs_lookup), 50), chunk_size):
+            chunk = needs_lookup[i:i + chunk_size]
             try:
+                ids_str = ",".join(chunk)
                 r = requests.get(
-                    f"https://store.steampowered.com/api/appdetails?appids={dlc_id}",
-                    timeout=3,
-                    headers={"User-Agent": "Mozilla/5.0"}
+                    f"https://store.steampowered.com/api/appdetails?appids={ids_str}",
+                    timeout=4,
+                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
                 )
                 if r.status_code == 200:
                     d_data = r.json()
-                    name = d_data.get(str(dlc_id), {}).get("data", {}).get("name")
-                    if name:
-                        enriched[dlc_id] = name
-            except (requests.RequestException, ValueError, KeyError) as exc:
-                logger.debug("[DLC] Store lookup failed for %s: %s", dlc_id, exc)
+                    for dlc_id in chunk:
+                        item_data = d_data.get(str(dlc_id), {})
+                        if item_data.get("success"):
+                            name = item_data.get("data", {}).get("name")
+                            if name:
+                                clean_n = _clean_dlc_name(name)
+                                enriched[dlc_id] = clean_n or name
+            except Exception as exc:
+                logger.debug(f"[DLC] Store batch lookup failed for {chunk}: {exc}")
 
     return enriched
 

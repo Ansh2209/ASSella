@@ -4,7 +4,7 @@ auto-selection rules."""
 
 import logging
 
-from PyQt6.QtCore import Qt, QPoint
+from PyQt6.QtCore import Qt, QPoint, QItemSelectionModel
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -51,7 +51,8 @@ class SelectionMixin:
             cfg_text = cfg_item.text() if cfg_item else ""
             size = int(data.get("size") or 0)
             if not size:
-                size_item = self.table_widget.item(i, 2)
+                sz_col = self.table_widget.columnCount() - 1
+                size_item = self.table_widget.item(i, sz_col)
                 size = getattr(size_item, "sort_value", 0) or 0
             facts.append(selection_policy.DepotRowFacts(depot_id, desc, cfg_text, size, data))
 
@@ -69,11 +70,17 @@ class SelectionMixin:
             role = id_item.data(Qt.ItemDataRole.UserRole + 2)
             if role in ("missing", "expander"):
                 continue
+            if id_item.data(Qt.ItemDataRole.UserRole + 25):
+                # Owned legitimately on Steam: remains checked & disabled
+                continue
             depot_id = str(id_item.data(Qt.ItemDataRole.UserRole))
-            if depot_id in wanted:
-                id_item.setCheckState(Qt.CheckState.Checked)
+            is_wanted = (depot_id in wanted)
+            if is_wanted:
+                if id_item.flags() & Qt.ItemFlag.ItemIsEnabled:
+                    id_item.setCheckState(Qt.CheckState.Checked)
             else:
-                id_item.setCheckState(Qt.CheckState.Unchecked)
+                if id_item.flags() & Qt.ItemFlag.ItemIsEnabled:
+                    id_item.setCheckState(Qt.CheckState.Unchecked)
         self.table_widget.blockSignals(False)
         self.anchor_row = -1
         self._update_table_headers()
@@ -87,13 +94,23 @@ class SelectionMixin:
         if role == "missing":
             return
 
+        is_owned = bool(id_item.data(Qt.ItemDataRole.UserRole + 25))
+        if id_item.flags() == Qt.ItemFlag.NoItemFlags or is_owned:
+            sm = self.table_widget.selectionModel()
+            if sm:
+                for c in range(self.table_widget.columnCount()):
+                    idx = self.table_widget.model().index(row, c)
+                    sm.select(idx, QItemSelectionModel.SelectionFlag.Deselect)
+            return
+
         if role == "expander":
             self._hidden_depots_expanded = not getattr(self, "_hidden_depots_expanded", False)
             arrow = "▴" if self._hidden_depots_expanded else "▾"
             action_text = "[Click to collapse]" if self._hidden_depots_expanded else "[Click to expand]"
 
             id_item.setText(arrow)
-            size_item = self.table_widget.item(row, 2)
+            sz_col = self.table_widget.columnCount() - 1
+            size_item = self.table_widget.item(row, sz_col)
             if size_item:
                 size_item.setText(action_text)
 
@@ -106,6 +123,9 @@ class SelectionMixin:
             return
 
         modifiers = QApplication.keyboardModifiers()
+        self._user_interacted = True
+        self._has_saved_selection = True
+
         current_state = id_item.checkState()
         new_state = (
             Qt.CheckState.Unchecked
@@ -113,10 +133,7 @@ class SelectionMixin:
             else Qt.CheckState.Checked
         )
 
-        # Toggle the checkbox in the first column
         id_item.setCheckState(new_state)
-        self._user_interacted = True
-        self._has_saved_selection = True
 
         if modifiers == Qt.KeyboardModifier.ShiftModifier:
             if self.anchor_row == -1:
@@ -133,28 +150,48 @@ class SelectionMixin:
                     r_item = self.table_widget.item(r, 0)
                     if r_item is not None:
                         r_role = r_item.data(Qt.ItemDataRole.UserRole + 2)
-                        if r_role in ("normal", "hidden_depot"):
+                        r_owned = bool(r_item.data(Qt.ItemDataRole.UserRole + 25))
+                        if r_role in ("normal", "hidden_depot") and (r_item.flags() & Qt.ItemFlag.ItemIsEnabled) and not r_owned:
                             r_item.setCheckState(target_state)
                 self.table_widget.blockSignals(False)
         else:
             self.anchor_row = row
 
+        if hasattr(self, "edition_button"):
+            self.edition_button.setText("Custom ▾")
+
         self._update_table_headers()
 
-    def _selectable_rows(self):
-        """The rows select-all may tick: real, visible depots as ``(row, item)``.
+    def _on_table_selection_changed(self):
+        """Immediately deselect any disabled or Steam-owned items so no highlight box appears."""
+        sm = self.table_widget.selectionModel()
+        if not sm:
+            return
+        to_deselect = []
+        for idx in sm.selectedIndexes():
+            item = self.table_widget.item(idx.row(), 0)
+            if item and (item.flags() == Qt.ItemFlag.NoItemFlags or item.data(Qt.ItemDataRole.UserRole + 25)):
+                to_deselect.append(idx)
+        if to_deselect:
+            self.table_widget.blockSignals(True)
+            for idx in to_deselect:
+                sm.select(idx, QItemSelectionModel.SelectionFlag.Deselect)
+            self.table_widget.blockSignals(False)
 
-        The question "can this row carry a tick?" is the policy module's, so the
-        header handler's tally and the ticking here always agree.
-        """
+    def _selectable_rows(self):
+        """The rows select-all may tick: real, visible depots as (row, item)."""
         for i in range(self.table_widget.rowCount()):
+            if self.table_widget.isRowHidden(i):
+                continue
             id_item = self.table_widget.item(i, 0)
             if id_item is None:
                 continue
-            if not selection_policy.counts_toward_select_all(
-                id_item.data(Qt.ItemDataRole.UserRole + 2),
-                self.table_widget.isRowHidden(i),
-            ):
+            role = id_item.data(Qt.ItemDataRole.UserRole + 2)
+            if role in ("missing", "expander"):
+                continue
+            if id_item.data(Qt.ItemDataRole.UserRole + 25):
+                continue
+            if not (id_item.flags() & Qt.ItemFlag.ItemIsEnabled):
                 continue
             yield i, id_item
 
@@ -163,9 +200,12 @@ class SelectionMixin:
         self._has_saved_selection = True
         state = Qt.CheckState.Checked if check else Qt.CheckState.Unchecked
         self.table_widget.blockSignals(True)
-        for _i, id_item in self._selectable_rows():
+        for i, id_item in self._selectable_rows():
             id_item.setCheckState(state)
         self.table_widget.blockSignals(False)
+
+        if hasattr(self, "edition_button"):
+            self.edition_button.setText("Custom ▾")
 
         self.anchor_row = -1
         self._update_table_headers()
@@ -194,7 +234,22 @@ class SelectionMixin:
 
         if not hasattr(self, "_available_platforms") or not self._available_platforms:
             self._available_platforms = get_available_platforms(self.depots)
-            self._multi_platform_editions = resolve_multi_platform_editions(self.app_id, self.depots)
+        if not getattr(self, "_editions_with_store", False):
+            # The store editions cost a store.steampowered.com round trip, so
+            # they are resolved here, when the menu is opened, instead of while
+            # the dialog is being built.
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                self._multi_platform_editions = resolve_multi_platform_editions(
+                    self.app_id, self.depots, include_store=True
+                )
+                self._editions_with_store = True
+            finally:
+                QApplication.restoreOverrideCursor()
+        elif not getattr(self, "_multi_platform_editions", None):
+            self._multi_platform_editions = resolve_multi_platform_editions(
+                self.app_id, self.depots, include_store=False
+            )
 
         menu = QMenu(self)
         menu.setStyleSheet("""

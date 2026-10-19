@@ -1424,6 +1424,7 @@ class FetchManifestDialog(QDialog):
                     branch=branch,
                     branches=branches_dict,
                     current_build_id=current_bid,
+                    editions=parsed_data.get("editions"),
                 )
                 depot_dialog.raise_()
                 depot_dialog.activateWindow()
@@ -1533,6 +1534,11 @@ class FetchManifestDialog(QDialog):
                         logger.info(f"Persisted depot selection for AppID {appid} in fetchmanifest: {selected_depots}")
                     except Exception as e:
                         logger.warning(f"Failed to cache depot selection in fetchmanifest: {e}")
+            elif getattr(depot_dialog, "get_config_written", lambda: False)():
+                logger.info(f"DLC configuration written for AppID {appid}; no depot downloads queued.")
+                self.status_label.setText("DLC entitlements configured.")
+                self.accept()
+                return
             else:
                 logger.info("User cancelled depot selection.")
                 self.status_label.setText("Download cancelled.")

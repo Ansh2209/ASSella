@@ -84,25 +84,16 @@ class DepotSelectionDialog(
         if missing is None and len(args) >= 9:
             missing = args[8]
 
-        # DLC-only routing comes first: a DLC selection must never collapse
-        # into the generic single-depot dialog, because that one knows nothing
-        # about DLC names, OS tabs or the DLC-mode hand-off.
         is_dlc = kwargs.get("dlc_only_mode", False) or kwargs.get("lock_dlc_only", False)
         if not is_dlc and len(args) > 16:
             is_dlc = bool(args[16])
         if not is_dlc and len(args) > 17:
             is_dlc = bool(args[17])
-        if is_dlc:
-            try:
-                from ui.dialogs.dlc_depot_selection import DlcDepotSelectionDialog
-                return DlcDepotSelectionDialog(*args, **kwargs)
-            except Exception as _dlc_err:
-                logger.warning(f"[DepotSelectionDialog] DLC selection dialog routing fallback: {_dlc_err}")
 
-        # Only route to SingleDepotSelectionDialog if there are NO missing depots from Hubcap.
+        # Only route to SingleDepotSelectionDialog if not DLC-only and there are NO missing depots from Hubcap.
         # If DLCs/depots are missing, full DepotSelectionDialog MUST be shown so the user sees
         # the greyed out missing depots and their statuses.
-        if not missing and (is_single or (isinstance(depots, dict) and len(depots) == 1)):
+        if not is_dlc and not missing and (is_single or (isinstance(depots, dict) and len(depots) == 1)):
             from ui.dialogs.single_depot_dialog import SingleDepotSelectionDialog
             return SingleDepotSelectionDialog(*args, **kwargs)
 
@@ -139,8 +130,11 @@ class DepotSelectionDialog(
             lock_storage=lock_storage or kwargs.get("lock_storage", False),
             dlc_only_mode=dlc_only_mode or kwargs.get("dlc_only_mode", False),
             lock_dlc_only=lock_dlc_only or kwargs.get("lock_dlc_only", False),
+            dlc_catalog=kwargs.get("dlc_catalog") or {},
+            editions=kwargs.get("editions"),
         )
-        self.resize(680, 540)
+        self.resize(840, 580)
+        self.setMinimumSize(800, 560)
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.Dialog)
         self.setWindowModality(Qt.WindowModality.WindowModal)
         self.setStyleSheet("""
@@ -196,6 +190,9 @@ class DepotSelectionDialog(
         lock_storage: bool = False,
         dlc_only_mode: bool = False,
         lock_dlc_only: bool = False,
+        dlc_catalog: dict = None,
+        editions: dict = None,
+        **kwargs,
     ) -> None:
         """Store every constructor argument and wire up signals and timers.
 
@@ -267,6 +264,21 @@ class DepotSelectionDialog(
             for k, v in (missing_depots_info or {}).items()
         }
         self.selected_storage_path = None
+
+        try:
+            from utils.dlc_helpers import get_owned_dlcs_from_steam, get_injected_dlcs_from_config
+            self._steam_owned_dlcs = get_owned_dlcs_from_steam(self.app_id)
+            self._injected_dlcs = get_injected_dlcs_from_config(self.app_id)
+        except Exception as _dlc_init_err:
+            logger.debug(f"[DepotSelectionDialog] Could not load owned/injected DLCs: {_dlc_init_err}")
+            self._steam_owned_dlcs = set()
+            self._injected_dlcs = set()
+
+        self._injection_only = False
+        self._config_written = False
+        self.dlc_catalog = dlc_catalog or kwargs.get("dlc_catalog") or {}
+        if editions or kwargs.get("editions"):
+            self._multi_platform_editions = editions or kwargs.get("editions")
 
     def _load_settings(self) -> None:
         """Read the depot-visibility filters and accent colour from settings.
@@ -347,6 +359,8 @@ class DepotSelectionDialog(
         self._user_interacted = False
 
     def get_selected_depots(self):
+        if getattr(self, "_injection_only", False):
+            return []
         selected = []
         for i in range(self.table_widget.rowCount()):
             id_item = self.table_widget.item(i, 0)
@@ -355,9 +369,94 @@ class DepotSelectionDialog(
             role = id_item.data(Qt.ItemDataRole.UserRole + 2)
             if role in ("missing", "expander"):
                 continue
+            # Strictly exclude depotless DlcData items and Steam-owned depots from download queue
+            is_depotless = bool(id_item.data(Qt.ItemDataRole.UserRole + 21))
+            is_owned = bool(id_item.data(Qt.ItemDataRole.UserRole + 25))
+            if is_depotless or is_owned:
+                continue
             if id_item.checkState() == Qt.CheckState.Checked:
-                selected.append(str(id_item.data(Qt.ItemDataRole.UserRole)))
+                depot_id = str(id_item.data(Qt.ItemDataRole.UserRole) or "").strip()
+                if depot_id and depot_id not in selected:
+                    selected.append(depot_id)
         return selected
+
+    def get_selected_dlc_data(self) -> Dict[str, str]:
+        """Returns {dlc_app_id: dlc_name} for checked DLC rows in Col 0 that are not owned legitimately."""
+        checked = {}
+        import re
+        for r in range(self.table_widget.rowCount()):
+            id_item = self.table_widget.item(r, 0)
+            if not id_item:
+                continue
+            if id_item.checkState() != Qt.CheckState.Checked:
+                continue
+            if id_item.data(Qt.ItemDataRole.UserRole + 25):
+                # Owned legitimately on Steam
+                continue
+
+            is_depotless = bool(id_item.data(Qt.ItemDataRole.UserRole + 21))
+            dlc_id = str(id_item.data(Qt.ItemDataRole.UserRole + 1) or "").strip()
+            raw_id = str(id_item.data(Qt.ItemDataRole.UserRole) or "").strip()
+
+            target_dlc = ""
+            if is_depotless:
+                target_dlc = raw_id
+            elif dlc_id and dlc_id in self.dlc_catalog:
+                target_dlc = dlc_id
+            elif raw_id and raw_id in self.dlc_catalog:
+                target_dlc = raw_id
+
+            if target_dlc and target_dlc != str(self.app_id):
+                config_item = self.table_widget.item(r, 1)
+                raw_name = self.dlc_catalog.get(target_dlc) or (config_item.text() if config_item else "") or f"DLC {target_dlc}"
+                clean_name = re.sub(r"^\[(?:DLC|SOUNDTRACK|ARTBOOK|WALLPAPER|EN|BR|AR|DE|FR|JA|KO|RU|ES|ZH-CN|ZH-TW)\]\s*", "", raw_name).strip()
+                checked[target_dlc] = clean_name or f"DLC {target_dlc}"
+        return checked
+
+    def get_config_written(self) -> bool:
+        """Returns whether DLC configuration was written to SLSsteam config."""
+        return getattr(self, "_config_written", False)
+
+    def _handle_inject_btn_clicked(self):
+        """Injects all currently checked DLCs into DlcData in SLSsteam config.yaml."""
+        checked_dlcs = self.get_selected_dlc_data()
+        if not checked_dlcs:
+            ThemedMessageBox.warning(
+                self,
+                "No DLCs Selected",
+                "Please select at least one DLC to inject into SLSsteam config.",
+            )
+            return
+
+        try:
+            from utils.yaml.dlc import add_dlc_data_batch
+            from utils.yaml_config_manager import get_user_config_path, remove_additional_app
+
+            config_path = get_user_config_path()
+            if not config_path or not config_path.exists():
+                raise RuntimeError("SLSsteam config.yaml could not be found.")
+
+            add_dlc_data_batch(config_path, self.app_id, checked_dlcs)
+            if getattr(self, "_dlc_only_mode", False):
+                remove_additional_app(config_path, self.app_id)
+                get_settings().setValue(f"dlc_only_mode/{self.app_id}", True)
+
+            self._injection_only = True
+            self._config_written = True
+            ThemedMessageBox.information(
+                self,
+                "DLC Data Injected",
+                f"✓ Successfully injected {len(checked_dlcs)} DLC(s) into DlcData for '{self.game_name}'.\n\n"
+                f"SLSsteam will now explicitly report these DLCs as owned.",
+            )
+            super().accept()
+        except Exception as exc:
+            logger.warning(f"[DepotSelectionDialog] Could not inject DLC data: {exc}", exc_info=True)
+            ThemedMessageBox.warning(
+                self,
+                "Injection Failed",
+                f"Failed writing DLC data to SLSsteam config.yaml:\n\n{exc}",
+            )
 
     def get_selected_files(self):
         """Returns the list of custom checked relative file paths."""
@@ -368,11 +467,45 @@ class DepotSelectionDialog(
         return self._dlc_only_mode
 
     def accept(self):
+        selected_depots = self.get_selected_depots()
+        checked_dlcs = self.get_selected_dlc_data()
+
+        if not selected_depots and not checked_dlcs:
+            ThemedMessageBox.warning(self, "No Depots Selected", "Please select at least one depot or DLC to proceed.")
+            return
+
+        # Auto-inject any checked DLC entitlements into SLSsteam config
+        if checked_dlcs:
+            try:
+                from utils.yaml.dlc import add_dlc_data_batch
+                from utils.yaml_config_manager import get_user_config_path, remove_additional_app
+
+                config_path = get_user_config_path()
+                if config_path and config_path.exists():
+                    add_dlc_data_batch(config_path, self.app_id, checked_dlcs)
+                    if getattr(self, "_dlc_only_mode", False) and not selected_depots:
+                        remove_additional_app(config_path, self.app_id)
+                        get_settings().setValue(f"dlc_only_mode/{self.app_id}", True)
+                    self._config_written = True
+            except Exception as e:
+                logger.warning(f"[DepotSelectionDialog] Auto-injecting checked DLC data failed: {e}")
+
+        # If only depotless DLCs were selected (no files to download)
+        if not selected_depots:
+            ThemedMessageBox.information(
+                self,
+                "DLC Mode Saved",
+                f"DLC mode is enabled for '{self.game_name}'.\n\n"
+                f"✓ Injected {len(checked_dlcs)} DLC(s) into SLSsteam config.\n"
+                f"No downloads were queued because no downloadable depot files were selected.",
+            )
+            super().accept()
+            return
+
         # 0. On-demand manifest generation for any selected recovered depots that lack files on disk
-        selected_for_check = self.get_selected_depots()
         if hasattr(self, "_recovered_depots_map") and self._recovered_depots_map:
             needs_gen = [
-                did for did in selected_for_check
+                did for did in selected_depots
                 if did in self._recovered_depots_map and not self._is_manifest_on_disk(did, self._recovered_depots_map[did])
             ]
             if needs_gen:
@@ -407,12 +540,6 @@ class DepotSelectionDialog(
                     else:
                         logger.warning(f"[DepotSelection] Failed to generate manifest for recovered depot {r_did}: {g_err}")
                 progress.close()
-
-        # 1. Validate depot selection
-        selected_depots = self.get_selected_depots()
-        if not selected_depots:
-            ThemedMessageBox.warning(self, "No Depots Selected", "Please select at least one depot to proceed.")
-            return
 
         # 1b. Missing executable pre-flight guard
         if not self._verify_executable_selection(selected_depots):

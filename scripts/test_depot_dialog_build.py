@@ -148,10 +148,11 @@ def main() -> int:
     labels = [dlg.table_widget.horizontalHeaderItem(i).text()
               for i in range(dlg.table_widget.columnCount())]
     # Column 0 is deliberately blank: DepotHeaderView draws the select-all
-    # checkbox there. Column 2 carries a live byte total.
+    # checkbox there. Column 1 is Configuration, Column 2 carries a live byte total.
     check(labels[0] == "", f"column 0 left blank for the header checkbox ({labels[0]!r})")
     check(labels[1] == "Configuration", f"column 1 is Configuration ({labels[1]!r})")
     check(labels[2].startswith("Size"), f"column 2 is the size column ({labels[2]!r})")
+    check(hasattr(dlg, "filter_chips") and len(dlg.filter_chips) == 5, "5 filter chips created")
     check(isinstance(dlg.header_view, DepotHeaderView), "custom header view installed")
     check(dlg.table_widget.rowCount() == 5, f"all 5 depots listed (got {dlg.table_widget.rowCount()})")
 
@@ -165,8 +166,8 @@ def main() -> int:
     check(dlg.builds_btn is not None, "Build button created")
     check("25799969" in dlg.builds_btn.text(), "current build id on the Build button")
 
-    check(bool(find_buttons(dlg, "OK")), "OK button present")
-    check(bool(find_buttons(dlg, "Cancel")), "Cancel button present")
+    check(bool(find_buttons(dlg, "Download") or find_buttons(dlg, "OK")), "Download button present")
+    check(bool(find_buttons(dlg, "Close") or find_buttons(dlg, "Cancel")), "Close button present")
 
     check(dlg.title_bar is not None, "titlebar created")
     check(dlg.anchor_row == -1, "anchor_row initialised")
@@ -239,7 +240,7 @@ def main() -> int:
     # of the class guards on show_storage/hasattr accordingly.
     check(not hasattr(dlg3, "_storage_buttons"), "no storage buttons built when storage is hidden")
     check(dlg3.get_selected_storage() is None, "no storage path selected when storage is hidden")
-    check(bool(find_buttons(dlg3, "OK")), "OK button still present")
+    check(bool(find_buttons(dlg3, "Download") or find_buttons(dlg3, "OK")), "Download button still present")
     dlg3.close()
 
     # ------------------------------------------------ storage shown

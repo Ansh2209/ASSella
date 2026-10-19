@@ -5,6 +5,7 @@ and the bottom OK / Cancel bar."""
 import os
 
 from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QPalette, QColor
 
 from PyQt6.QtWidgets import (
     QHBoxLayout,
@@ -30,38 +31,45 @@ class BuildUIMixin:
     """Static widget construction for the header, table, action row and bottom bar."""
 
     def _build_header_section(self, layout: QVBoxLayout) -> None:
-        """Build the thumbnail, game title, branch selector and Build button."""
-        # Header Layout
+        """Build the thumbnail banner, game title, branch/build badges, install path, and filter pills bar."""
+        # Top Header Banner
         header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(15, 10, 15, 10)
-        header_layout.setSpacing(15)
+        header_layout.setContentsMargins(14, 10, 14, 4)
+        header_layout.setSpacing(14)
 
-        # Thumbnail Label
+        # 1. Thumbnail / Capsule Image (184x86)
         self.header_label = QLabel()
-        self.header_label.setFixedSize(120, 56)
-        self.header_label.setScaledContents(True)
-        self.header_label.setStyleSheet("background-color: rgba(255, 255, 255, 0.04); border-radius: 6px;")
+        self.header_label.setFixedSize(184, 86)
+        self.header_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.header_label.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 8.5pt;
+        """)
+        self.header_label.setText("Loading banner...")
         header_layout.addWidget(self.header_label)
 
-        # Title / Info Layout
+        # 2. Metadata Info Layout
         title_layout = QVBoxLayout()
-        title_layout.setSpacing(2)
+        title_layout.setSpacing(4)
+        title_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         display_title = (
-            f"{self.game_name} ({self.app_id})"
+            f"<b>{self.game_name}</b> <span style='color: rgba(255, 255, 255, 0.55); font-size: 9.5pt;'>({self.app_id})</span>"
             if self.app_id and str(self.app_id) not in ("0", "unknown", "None", "") and f"({self.app_id})" not in str(self.game_name)
-            else self.game_name
+            else f"<b>{self.game_name}</b>"
         )
         self.title_label = QLabel(display_title)
-        self.title_label.setStyleSheet("font-size: 13pt; font-weight: bold; color: #FFFFFF;")
+        self.title_label.setStyleSheet("font-size: 11pt; color: #FFFFFF;")
         title_layout.addWidget(self.title_label)
 
-        # --- Branch & Builds Row ---
-        controls_row = QHBoxLayout()
-        controls_row.setSpacing(8)
-        controls_row.setContentsMargins(0, 4, 0, 0)
+        # Badges row: Branch, Build ID, Selection summary
+        badges_row = QHBoxLayout()
+        badges_row.setSpacing(8)
 
-        # Check saved branch if not explicitly given
+        # Branch resolution
         if not self.branch or self.branch == "public":
             try:
                 from utils.settings import get_settings
@@ -81,19 +89,19 @@ class BuildUIMixin:
 
         if has_other_branches:
             branch_lbl = QLabel("Branch:")
-            branch_lbl.setStyleSheet("font-size: 8.5pt; color: rgba(255, 255, 255, 0.7);")
-            controls_row.addWidget(branch_lbl)
+            branch_lbl.setStyleSheet("font-size: 8.5pt; color: rgba(255, 255, 255, 0.6);")
+            badges_row.addWidget(branch_lbl)
 
             self.branch_combo = QComboBox()
-            self.branch_combo.setFixedHeight(28)
-            self.branch_combo.setMinimumWidth(120)
+            self.branch_combo.setFixedHeight(26)
+            self.branch_combo.setMinimumWidth(110)
             self.branch_combo.setStyleSheet(f"""
                 QComboBox {{
                     background-color: rgba(255, 255, 255, 0.06);
                     border: 1px solid rgba(255, 255, 255, 0.16);
-                    border-radius: 6px;
+                    border-radius: 4px;
                     color: #FFFFFF;
-                    padding: 2px 12px;
+                    padding: 1px 10px;
                     font-size: 8.5pt;
                     font-weight: 600;
                 }}
@@ -103,7 +111,7 @@ class BuildUIMixin:
                 }}
                 QComboBox::drop-down {{
                     border: none;
-                    width: 18px;
+                    width: 16px;
                 }}
                 QComboBox QAbstractItemView {{
                     background-color: #1a1c23;
@@ -117,24 +125,28 @@ class BuildUIMixin:
             self.branch_combo.currentTextChanged.connect(self._on_branch_changed)
             if self.branch in branch_list:
                 self.branch_combo.setCurrentText(self.branch)
-            controls_row.addWidget(self.branch_combo)
+            badges_row.addWidget(self.branch_combo)
         else:
             self.branch_combo = None
             branch_lbl = QLabel(f"Branch: <b style='color: #FFFFFF;'>{self.branch or 'public'}</b>")
-            branch_lbl.setStyleSheet("font-size: 8.5pt; color: rgba(255, 255, 255, 0.7);")
-            controls_row.addWidget(branch_lbl)
+            branch_lbl.setStyleSheet("font-size: 8.5pt; color: rgba(255, 255, 255, 0.6);")
+            badges_row.addWidget(branch_lbl)
 
-        controls_row.addSpacing(6)
+        badges_row.addSpacing(4)
 
         display_bid = self.current_build_id or "Latest"
         self.builds_btn = QPushButton(f"Build: {display_bid}")
-        self.builds_btn.setFixedHeight(28)
-        self.builds_btn.setMinimumWidth(140)
+        self.builds_btn.setFixedHeight(24)
+        self.builds_btn.setMinimumWidth(100)
         self.builds_btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
         self.builds_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._update_build_btn_style()
         self.builds_btn.clicked.connect(self._on_builds_clicked)
-        controls_row.addWidget(self.builds_btn)
+        badges_row.addWidget(self.builds_btn)
+
+        self.summary_lbl = QLabel("Selected: 0 of 0 depots (0 B)")
+        self.summary_lbl.setStyleSheet(f"font-size: 8.5pt; font-weight: 600; color: {self.accent_color};")
+        badges_row.addWidget(self.summary_lbl)
 
         self.show_hidden_chk = None
         self.smart_select_btn = None
@@ -142,35 +154,78 @@ class BuildUIMixin:
         if self.branch and self.branch != "public":
             self._on_branch_changed(self.branch)
 
-        controls_row.addStretch()
-        title_layout.addLayout(controls_row)
+        badges_row.addStretch()
+        title_layout.addLayout(badges_row)
 
-        header_layout.addLayout(title_layout)
-        header_layout.addStretch()
+        # Storage / Install Path row
+        if self.show_storage:
+            storage_row = QHBoxLayout()
+            storage_row.setSpacing(8)
+            storage_lbl = QLabel("Install Location:")
+            storage_lbl.setStyleSheet("font-size: 8.5pt; font-weight: 600; color: rgba(255, 255, 255, 0.7);")
+            storage_row.addWidget(storage_lbl)
+            self._setup_storage_buttons(storage_row)
+            title_layout.addLayout(storage_row)
+        else:
+            display_path = self.preferred_library_path or "Detected from Steam library"
+            self.path_lbl = QLabel(f"Install Path: <span style='color: rgba(255, 255, 255, 0.8); font-family: monospace;'>{display_path}</span>")
+            self.path_lbl.setToolTip(self.preferred_library_path or "Steam default directory")
+            self.path_lbl.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 8pt;")
+            title_layout.addWidget(self.path_lbl)
 
+        header_layout.addLayout(title_layout, 1)
         layout.addLayout(header_layout)
 
-        # Resolve missing depots info if needed (table will show them at bottom in greyscale)
+        # Filter Chips Bar (All, Unowned, Steam Owned, Injected, DlcData)
+        chips_bar = self._build_filter_chips_bar()
+        layout.addLayout(chips_bar)
+
+        # Resolve missing depots info if needed
         if self.missing_hubcap_depots:
             self._resolve_missing_depots_info()
             self._check_missing_contents_async()
 
-        layout.addSpacing(5)
-
         self._fetch_header_image(self.app_id)
+
+    def _build_filter_chips_bar(self) -> QHBoxLayout:
+        bar = QHBoxLayout()
+        bar.setContentsMargins(14, 2, 14, 6)
+        bar.setSpacing(6)
+
+        self.filter_chips = {}
+        self._active_filter = "all"
+
+        chip_definitions = [
+            ("all", "All", "#FFFFFF", "rgba(255, 255, 255, 0.12)", "rgba(255, 255, 255, 0.3)"),
+            ("missing", "Unowned", "#f09a2f", "rgba(240, 154, 47, 0.16)", "rgba(240, 154, 47, 0.45)"),
+            ("owned", "Steam Owned", "#25a878", "rgba(37, 168, 120, 0.16)", "rgba(37, 168, 120, 0.45)"),
+            ("injected", "Injected", "#16a6c7", "rgba(22, 166, 199, 0.16)", "rgba(22, 166, 199, 0.45)"),
+            ("dlcdata", "DlcData", "#eab308", "rgba(234, 179, 8, 0.16)", "rgba(234, 179, 8, 0.45)"),
+        ]
+
+        self._chip_colors = {}
+        for key, label, fg_hex, bg_hex, border_hex in chip_definitions:
+            self._chip_colors[key] = (fg_hex, bg_hex, border_hex)
+            btn = QPushButton(self)
+            btn.setCheckable(True)
+            btn.setFixedHeight(26)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setProperty("filter_key", key)
+            btn.clicked.connect(lambda checked, k=key: self._on_filter_chip_clicked(k))
+            self.filter_chips[key] = btn
+            bar.addWidget(btn)
+
+        bar.addStretch()
+        return bar
 
     def _build_depot_table(
         self, content_widget: QVBoxLayout, accent_r: int, accent_g: int, accent_b: int,
     ) -> None:
-        """Create the depot table, its header view and the checkbox delegate."""
+        """Create the 3-column depot table, its header view and the checkbox delegate."""
         self.table_widget = QTableWidget()
         self.table_widget.setColumnCount(3)
-        self.table_widget.setHorizontalHeaderLabels(["Select", "Configuration", "Size"])
+        self.table_widget.setHorizontalHeaderLabels(["", "Configuration", "Size"])
         self.table_widget.setIconSize(QSize(76, 16))
-        # The default header installed here is replaced below by DepotHeaderView
-        # (which sets its own alignment, clickability and select-all handler),
-        # so nothing may be configured on it - a second connection here was dead
-        # code that made it look like select-all was wired twice.
         self.table_widget.verticalHeader().setVisible(False)
         self.table_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -180,7 +235,7 @@ class BuildUIMixin:
         self.table_widget.setStyleSheet(f"""
             QTableWidget {{
                 background-color: rgba(255, 255, 255, 0.02);
-                border: 1px solid rgba(255, 255, 255, 0.047);
+                border: 1px solid rgba(255, 255, 255, 0.06);
                 border-radius: 8px;
                 gridline-color: transparent;
                 outline: 0;
@@ -190,59 +245,71 @@ class BuildUIMixin:
             }}
             QTableWidget::item {{
                 padding: 6px 10px;
-                border-bottom: 1px solid rgba(255, 255, 255, 0.02);
-                border: none;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            }}
+            QTableWidget::item:disabled {{
+                color: rgba(255, 255, 255, 0.35) !important;
+                background-color: transparent !important;
+            }}
+            QTableWidget::item:disabled:hover {{
+                background-color: transparent !important;
+            }}
+            QTableWidget::item:disabled:selected {{
+                background-color: transparent !important;
+                color: rgba(255, 255, 255, 0.35) !important;
             }}
             QTableWidget::item:hover {{
                 background-color: rgba({accent_r}, {accent_g}, {accent_b}, 0.06);
-                border: none;
             }}
             QTableWidget::item:selected {{
                 background-color: rgba({accent_r}, {accent_g}, {accent_b}, 0.16) !important;
-                border: none !important;
                 color: #FFFFFF !important;
             }}
             QHeaderView::section {{
                 background-color: rgba(255, 255, 255, 0.04);
-                color: #FFFFFF;
+                color: rgba(255, 255, 255, 0.7);
                 padding: 6px 10px;
                 border: none;
                 font-size: 8.5pt;
                 font-weight: bold;
                 text-transform: uppercase;
             }}
-            {"" if (self._settings and self._settings.value("material_preset", "ocean", type=str) == "halloween" or str(self.accent_color).lower() in ("#ffb77d", "#ff7518") or (self._settings and self._settings.value("theme_checkbox_unlit", "", type=str) and os.path.exists(self._settings.value("theme_checkbox_unlit", "", type=str)))) else f"""
-            QTableWidget::indicator, QTableView::indicator {{
+            QTableWidget::indicator {{
                 width: 14px;
                 height: 14px;
                 background: transparent;
-                border: 1.5px solid rgba({accent_r}, {accent_g}, {accent_b}, 0.47);
-                border-radius: 4px;
+                border: 1px solid rgba(255, 255, 255, 0.35);
+                border-radius: 3px;
             }}
-            QTableWidget::indicator:unchecked, QTableView::indicator:unchecked {{
-                background-color: transparent;
-                border: 1.5px solid rgba({accent_r}, {accent_g}, {accent_b}, 0.47);
+            QTableWidget::indicator:checked {{
+                background-color: {self.accent_color};
+                border: 1px solid {self.accent_color};
             }}
-            QTableWidget::indicator:unchecked:hover, QTableView::indicator:unchecked:hover {{
-                border: 1.5px solid rgba({accent_r}, {accent_g}, {accent_b}, 1.0);
-                background-color: rgba({accent_r}, {accent_g}, {accent_b}, 0.078);
+            QTableWidget::indicator:disabled {{
+                background-color: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.12);
             }}
-            QTableWidget::indicator:checked, QTableView::indicator:checked,
-            QTableWidget::indicator:checked:hover, QTableView::indicator:checked:hover,
-            QTableWidget::indicator:checked:selected, QTableView::indicator:checked:selected {{
-                background-color: {self.accent_color} !important;
-                border: 1.5px solid {self.accent_color} !important;
+            QTableWidget::indicator:checked:disabled {{
+                background-color: rgba(255, 255, 255, 0.20) !important;
+                border: 1px solid rgba(255, 255, 255, 0.20) !important;
             }}
-            """}
         """)
+
+        palette = self.table_widget.palette()
+        palette.setColor(
+            QPalette.ColorRole.AlternateBase,
+            QColor("#111318").lighter(115),
+        )
+        self.table_widget.setPalette(palette)
 
         self.header_view = DepotHeaderView(self)
         self.table_widget.setHorizontalHeader(self.header_view)
         self.header_view.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.header_view.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
-        self.table_widget.setColumnWidth(0, 130)
+        self.table_widget.setColumnWidth(0, 115)
         self.header_view.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.header_view.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.table_widget.setColumnWidth(2, 95)
         self.header_view.sectionClicked.connect(self._on_header_section_clicked)
 
         self.table_widget.setItemDelegateForColumn(0, DepotCheckboxDelegate(self))
@@ -251,8 +318,9 @@ class BuildUIMixin:
         self._populate_table()
 
         content_widget.addWidget(self.table_widget)
- 
+
         self.table_widget.cellClicked.connect(self.on_depot_cell_clicked)
+        self.table_widget.itemSelectionChanged.connect(self._on_table_selection_changed)
 
     def _add_depot_rows(self, content_widget: QVBoxLayout) -> None:
         """Add the platform edition selector and Browse Files row.
@@ -356,60 +424,100 @@ class BuildUIMixin:
                 resolve_multi_platform_editions,
             )
             self._available_platforms = get_available_platforms(self.depots)
-            self._multi_platform_editions = resolve_multi_platform_editions(self.app_id, self.depots)
+            if not getattr(self, "_multi_platform_editions", None):
+                # Offline on purpose: the store editions are resolved when the
+                # edition menu is opened, so building the dialog never waits
+                # on store.steampowered.com.
+                self._multi_platform_editions = resolve_multi_platform_editions(
+                    self.app_id, self.depots, include_store=False
+                )
             self._update_table_headers()
 
     def _build_bottom_bar(self, content_widget: QVBoxLayout) -> None:
-        """Build the storage picker plus OK and Cancel."""
-        # Bottom row: Storage Selection (Left, Expanding) + OK / Cancel (Right)
+        """Build the 3 action buttons: Inject DLC Data Only, Close, Download Selected."""
         bottom_bar = QHBoxLayout()
-        bottom_bar.setContentsMargins(0, 4, 0, 0)
-        bottom_bar.setSpacing(6)
+        bottom_bar.setContentsMargins(0, 6, 0, 0)
+        bottom_bar.setSpacing(8)
 
-        if self.show_storage:
-            self._setup_storage_buttons(bottom_bar)
-        else:
-            bottom_bar.addStretch(1)
+        # Status / Selection summary on the left
+        self.status_summary_label = QLabel()
+        self.status_summary_label.setStyleSheet("font-size: 8.5pt; color: rgba(255, 255, 255, 0.6);")
+        bottom_bar.addWidget(self.status_summary_label)
 
-        ok_btn = QPushButton("OK")
-        ok_btn.setObjectName("ok_button")
-        ok_btn.setFixedHeight(28)
-        ok_btn.setMinimumWidth(80)
-        ok_btn.clicked.connect(self.accept)
-        ok_btn.setStyleSheet(f"""
+        bottom_bar.addStretch(1)
+
+        # [ Inject DLC Data Only ]  [ Close ]  [ Download Selected ]
+        btn_min_w = 150
+
+        self.inject_btn = QPushButton("Inject DLC Data Only")
+        self.inject_btn.setFixedHeight(30)
+        self.inject_btn.setMinimumWidth(btn_min_w)
+        self.inject_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.inject_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(22, 166, 199, 0.16);
+                border: 1px solid #16a6c7;
+                border-radius: 5px;
+                color: #ffffff;
+                font-size: 8.5pt;
+                font-weight: 600;
+                padding: 0 14px;
+            }
+            QPushButton:hover {
+                background-color: rgba(22, 166, 199, 0.28);
+                border-color: #38bdf8;
+            }
+        """)
+        self.inject_btn.setToolTip("Directly write checked DLC entitlements to SLSsteam config without downloading files")
+        self.inject_btn.clicked.connect(self._handle_inject_btn_clicked)
+
+        self.cancel_btn = QPushButton("Close")
+        self.cancel_btn.setObjectName("cancel_button")
+        self.cancel_btn.setFixedHeight(30)
+        self.cancel_btn.setMinimumWidth(85)
+        self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.cancel_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 0.06);
+                color: rgba(255, 255, 255, 0.8);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 5px;
+                padding: 0 14px;
+                font-size: 8.5pt;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.12);
+                color: #FFFFFF;
+            }
+        """)
+        self.cancel_btn.clicked.connect(self.reject)
+
+        from utils.color_utils import get_best_foreground_color
+        text_hex = get_best_foreground_color(self.accent_color, dark_color="#111318", light_color="#FFFFFF")
+
+        self.download_btn = QPushButton("Download Selected")
+        self.download_btn.setObjectName("ok_button")
+        self.download_btn.setFixedHeight(30)
+        self.download_btn.setMinimumWidth(btn_min_w)
+        self.download_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.download_btn.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.accent_color};
-                color: #111318;
+                color: {text_hex};
                 border: none;
-                border-radius: 4px;
+                border-radius: 5px;
                 font-weight: bold;
-                padding: 4px 14px;
+                font-size: 8.5pt;
+                padding: 0 14px;
             }}
             QPushButton:hover {{
                 background-color: #FFFFFF;
+                color: #111318;
             }}
         """)
+        self.download_btn.clicked.connect(self.accept)
 
-        cancel_btn = QPushButton("Cancel")
-        cancel_btn.setObjectName("cancel_button")
-        cancel_btn.setFixedHeight(28)
-        cancel_btn.setMinimumWidth(80)
-        cancel_btn.clicked.connect(self.reject)
-        cancel_btn.setStyleSheet("""
-            QPushButton {{
-                background-color: rgba(255, 255, 255, 0.05);
-                color: rgba(255, 255, 255, 0.8);
-                border: 1px solid rgba(255, 255, 255, 0.15);
-                border-radius: 4px;
-                padding: 4px 14px;
-            }}
-            QPushButton:hover {{
-                background-color: rgba(255, 255, 255, 0.1);
-                color: #FFFFFF;
-            }}
-        """)
-
-        bottom_bar.addWidget(ok_btn)
-        bottom_bar.addWidget(cancel_btn)
-
+        bottom_bar.addWidget(self.inject_btn)
+        bottom_bar.addWidget(self.cancel_btn)
+        bottom_bar.addWidget(self.download_btn)
         content_widget.addLayout(bottom_bar)

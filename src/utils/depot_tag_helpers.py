@@ -11,6 +11,7 @@ from typing import Optional, Dict
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QPixmap, QColor, QPainter
 from utils.paths import Paths
+from utils.dlc_helpers import is_base_game_main_depot
 
 # Map known language names to standard short tags
 STEAM_LANG_TO_CODE: Dict[str, str] = {
@@ -257,6 +258,7 @@ def format_depot_row_label(
     base_desc: str,
     has_os_icon: bool = False,
     show_os_badge: bool = True,
+    base_appid: Optional[str] = None,
 ) -> str:
     """
     Builds clean, structured depot description string with tags:
@@ -266,13 +268,31 @@ def format_depot_row_label(
     if not isinstance(depot_data, dict):
         depot_data = {}
 
+    depot_id_str = str(depot_id).strip()
+    base_appid_str = str(base_appid).strip() if base_appid else ""
+
+    # Check base game exclusion: base game main depots must never be marked as DLC
+    is_base = False
+    if base_appid_str:
+        if depot_id_str == base_appid_str:
+            is_base = True
+        elif str(depot_data.get("dlcappid") or "").strip() == base_appid_str:
+            is_base = True
+        elif is_base_game_main_depot(
+            depot_id_str, base_desc, base_appid_str, depot_data
+        ):
+            is_base = True
+
     dlc_appid = depot_data.get("dlcappid")
-    is_dlc = (
-        depot_data.get("is_dlc", False)
-        or bool(dlc_appid)
-        or "[dlc" in base_desc.lower()
-        or bool(re.search(r"\bDLC\s+\d+", base_desc, re.IGNORECASE))
-    )
+    if is_base:
+        is_dlc = False
+    else:
+        is_dlc = (
+            depot_data.get("is_dlc", False)
+            or (bool(dlc_appid) and str(dlc_appid).strip() != base_appid_str)
+            or "[dlc" in base_desc.lower()
+            or bool(re.search(r"\bDLC\s+\d+", base_desc, re.IGNORECASE))
+        )
 
     raw_name = str(depot_data.get("name") or "").strip()
     if (not base_desc or re.fullmatch(r"Depot \d+", base_desc.strip(), re.IGNORECASE)) and raw_name and not re.fullmatch(r"Depot \d+", raw_name, re.IGNORECASE):
@@ -310,8 +330,7 @@ def format_depot_row_label(
 
     # 3. [DLC] badge
     if is_dlc:
-        dlc_tag = f"[DLC {dlc_appid}]" if dlc_appid and str(dlc_appid).isdigit() else "[DLC]"
-        tags.append(dlc_tag)
+        tags.append("[DLC]")
 
     # 4. [LANG] badge ([FR], [EN], etc.)
     lang_code = extract_language_code(depot_data, clean_desc)
@@ -320,6 +339,17 @@ def format_depot_row_label(
             r"\[" + re.escape(lang_code) + r"\]\s*", "", clean_desc, flags=re.IGNORECASE
         )
         tags.append(f"[{lang_code}]")
+
+    # 5. Media tags
+    desc_lower = clean_desc.lower()
+    if "soundtrack" in desc_lower or " ost" in desc_lower or "[ost]" in desc_lower:
+        tags.append("[SOUNDTRACK]")
+    elif "artbook" in desc_lower or "art book" in desc_lower:
+        tags.append("[ARTBOOK]")
+    elif "wallpaper" in desc_lower:
+        tags.append("[WALLPAPER]")
+
+    clean_desc = re.sub(r"\s*-\s*Depot\s*" + re.escape(depot_id_str), "", clean_desc, flags=re.IGNORECASE).strip()
 
     tag_str = " ".join(tags)
     clean_desc = clean_desc.strip()

@@ -87,7 +87,7 @@ def main() -> int:
     print("=== merging enrichment records into depot dicts ===")
     depots = {"123": {"desc": "Depot 123", "dlcappid": "777"}}
     dm.merge_enrichments(depots, {"777": {"name": "Extra Mission", "is_dlc": True, "size_bytes": 2048}})
-    check(depots["123"]["desc"] == "[DLC 777] Extra Mission",
+    check(depots["123"]["desc"] == "[DLC] Extra Mission",
           "an enrichment keyed by the DLC app id reaches the depot that carries it")
     check(depots["123"]["name"] == "Extra Mission", "the plain name is kept alongside the tag")
     check(depots["123"]["size"] == 2048, "a missing size is filled in")

@@ -156,17 +156,75 @@ def fetch_store_packages(app_id: str, timeout: float = 2.5) -> List[Dict[str, An
     return results
 
 
+# In-memory cache for package contents: {packageid_str: {"appids": set(), "depotids": set()}}
+_PACKAGE_CONTENTS_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def fetch_package_contents_batch(package_ids: List[int], timeout: float = 6.0) -> Dict[str, Dict[str, Any]]:
+    """Query Steam PICS for package details (appids and depotids) for a list of package IDs."""
+    if not package_ids:
+        return {}
+
+    missing_pids = [int(p) for p in package_ids if str(p) not in _PACKAGE_CONTENTS_CACHE]
+    if missing_pids:
+        try:
+            from core.steam_api import get_steam_worker
+            worker = get_steam_worker()
+            res = worker.execute("get_product_info", packages=missing_pids, timeout=timeout)
+            if res and isinstance(res, dict):
+                pkgs_data = res.get("packages", {})
+                for pid_key, pdata in pkgs_data.items():
+                    if not isinstance(pdata, dict):
+                        continue
+                    pid_str = str(pid_key)
+                    # Extract appids
+                    raw_apps = pdata.get("appids", {})
+                    appids_set = set()
+                    if isinstance(raw_apps, dict):
+                        appids_set = {str(a) for a in raw_apps.values() if str(a).isdigit()}
+                    elif isinstance(raw_apps, (list, tuple)):
+                        appids_set = {str(a) for a in raw_apps if str(a).isdigit()}
+
+                    # Extract depotids
+                    raw_depots = pdata.get("depotids", {})
+                    depotids_set = set()
+                    if isinstance(raw_depots, dict):
+                        depotids_set = {str(d) for d in raw_depots.values() if str(d).isdigit()}
+                    elif isinstance(raw_depots, (list, tuple)):
+                        depotids_set = {str(d) for d in raw_depots if str(d).isdigit()}
+
+                    _PACKAGE_CONTENTS_CACHE[pid_str] = {
+                        "appids": appids_set,
+                        "depotids": depotids_set,
+                    }
+        except Exception as e:
+            logger.debug(f"[EditionHelpers] Failed to query PICS for package contents {missing_pids}: {e}")
+
+    result = {}
+    for p in package_ids:
+        p_str = str(p)
+        if p_str in _PACKAGE_CONTENTS_CACHE:
+            result[p_str] = _PACKAGE_CONTENTS_CACHE[p_str]
+    return result
+
+
 def resolve_edition_depots(
     app_id: str,
     depots: Dict[Any, Any],
     target_platform: str = "linux",
     language: str = "english",
+    include_store: bool = True,
 ) -> List[Dict[str, Any]]:
     """
     Computes available editions and their depot mappings for a specific OS platform.
-    Always includes 'Complete' (highest, using official Steam package name if available,
-    with all valid DLCs for target platform), followed by any store packages,
+    Always includes 'Complete' (highest, with all valid DLCs for target platform),
+    followed by store packages with resolved package appid/depotid mappings,
     and finally 'Standard' (base only).
+
+    ``include_store=False`` skips the Steam Store request and the PICS package
+    lookup, so the result only carries the depot-derived Complete/Standard
+    editions. Dialog construction uses that, then resolves the store editions
+    when the user actually opens the edition menu.
     """
     from ui.dialogs.depotselection import (
         get_smart_default_depots,
@@ -194,18 +252,24 @@ def resolve_edition_depots(
     base_depots: Set[str] = set()
     dlc_depots: Set[str] = set()
 
-    for did in smart_candidates:
-        d_data = depots.get(did) or depots.get(int(did) if did.isdigit() else 0) or {}
+    for did, d_data in depots.items():
+        if not isinstance(d_data, dict):
+            continue
+        if _depot_is_macos(d_data) or _depot_is_android(d_data):
+            continue
+        if not _depot_matches_platform(d_data, target_platform):
+            continue
+        did_str = str(did).strip()
         desc = str(d_data.get("desc") or d_data.get("name") or "")
 
-        is_dlc = is_dlc_depot(did, desc=desc, base_appid=aid_str, depot_meta=d_data)
-        if is_base_game_main_depot(did, desc, aid_str):
+        is_dlc = is_dlc_depot(did_str, desc=desc, base_appid=aid_str, depot_meta=d_data)
+        if is_base_game_main_depot(did_str, desc, aid_str):
             is_dlc = False
 
         if is_dlc:
-            dlc_depots.add(str(did))
-        else:
-            base_depots.add(str(did))
+            dlc_depots.add(did_str)
+        elif did_str in smart_candidates or not smart_candidates:
+            base_depots.add(did_str)
 
     if not base_depots and dlc_depots:
         base_depots = set(dlc_depots)
@@ -215,56 +279,71 @@ def resolve_edition_depots(
     editions: List[Dict[str, Any]] = []
 
     # Fetch store packages from Steam store API
-    store_pkgs = fetch_store_packages(aid_str, timeout=1.5)
+    store_pkgs = fetch_store_packages(aid_str, timeout=1.5) if include_store else []
+    pkg_contents = {}
+    if store_pkgs:
+        pids = [int(p["packageid"]) for p in store_pkgs if p.get("packageid") and str(p.get("packageid")).isdigit()]
+        if pids:
+            try:
+                pkg_contents = fetch_package_contents_batch(pids, timeout=4.0)
+            except Exception as _e:
+                logger.debug(f"[EditionHelpers] Package contents batch query failed: {_e}")
 
-    # Determine highest complete edition name
+    # Complete Edition Name
     complete_edition_name = "Complete Edition"
     if dlc_depots:
         complete_edition_name = "Complete Edition (All DLCs)"
 
-    best_pkg = None
-    if store_pkgs:
-        # Prioritize packages with edition or bundle keywords
-        keywords = ("complete", "deluxe", "ultimate", "gold", "goty", "game of the year", "collector", "edition", "bundle")
-        matching_pkgs = [p for p in store_pkgs if any(kw in p.get("name", "").lower() for kw in keywords)]
-        if matching_pkgs:
-            matching_pkgs.sort(key=lambda p: p.get("price", 0), reverse=True)
-            best_pkg = matching_pkgs[0]
-        elif len(store_pkgs) > 1:
-            sorted_pkgs = sorted(store_pkgs, key=lambda p: p.get("price", 0), reverse=True)
-            best_pkg = sorted_pkgs[0]
-
-    if best_pkg and best_pkg.get("name"):
-        complete_edition_name = best_pkg["name"]
-
-    # A. Highest: Complete Edition
+    # A. Highest: Complete Edition (contains all depots for platform)
     editions.append({
         "id": f"{target_platform}_complete",
         "name": complete_edition_name,
-        "short_name": complete_edition_name,
+        "short_name": "Complete",
         "platform": target_platform,
         "depot_ids": complete_depots,
         "is_highest": True,
     })
 
-    # B. Additional Store packages
+    # B. Additional Store packages with exact depot mapping
     for pkg in store_pkgs:
+        pkg_id = pkg.get("packageid")
         pkg_name = pkg.get("name", "")
-        if not pkg_name or pkg_name == complete_edition_name:
+        if not pkg_name:
             continue
-        short_name = pkg_name
+        short_name = make_short_edition_name(pkg_name, fallback=pkg_name)
 
-        pkg_lower = pkg_name.lower()
-        if "standard" in pkg_lower or "base" in pkg_lower:
-            continue
-        elif "deluxe" in pkg_lower or "complete" in pkg_lower or "ultimate" in pkg_lower or "gold" in pkg_lower:
-            pkg_depots = complete_depots
+        pinfo = pkg_contents.get(str(pkg_id)) or {}
+        pkg_apps = pinfo.get("appids", set())
+        pkg_depots_direct = pinfo.get("depotids", set())
+
+        # If package details were resolved from PICS:
+        if pkg_apps or pkg_depots_direct:
+            matching_depots = set()
+            # If base appid is inside package, include base depots
+            if aid_str in pkg_apps:
+                matching_depots |= base_depots
+
+            for did in complete_depots:
+                d_data = depots.get(did) or depots.get(int(did) if did.isdigit() else 0) or {}
+                dlc_cand = str(d_data.get("dlcappid") or "").strip()
+                if did in pkg_depots_direct or did in pkg_apps:
+                    matching_depots.add(str(did))
+                elif dlc_cand and dlc_cand in pkg_apps:
+                    matching_depots.add(str(did))
+
+            pkg_depots = matching_depots if matching_depots else complete_depots
         else:
-            pkg_depots = complete_depots
+            # Fallback heuristic if offline
+            pkg_lower = pkg_name.lower()
+            if "standard" in pkg_lower or "base" in pkg_lower:
+                pkg_depots = base_depots
+            else:
+                pkg_depots = complete_depots
 
+        # Only add if not identical to complete edition with the same name
         if not any(e["name"] == pkg_name for e in editions):
             editions.append({
-                "id": f"{target_platform}_pkg_{pkg.get('packageid')}",
+                "id": f"{target_platform}_pkg_{pkg_id}",
                 "name": pkg_name,
                 "short_name": short_name,
                 "platform": target_platform,
@@ -272,7 +351,7 @@ def resolve_edition_depots(
                 "is_highest": False,
             })
 
-    # C. Lowest: Standard Edition
+    # C. Lowest: Standard Edition (Base Game Only)
     if dlc_depots:
         editions.append({
             "id": f"{target_platform}_standard",
@@ -290,14 +369,24 @@ def resolve_multi_platform_editions(
     app_id: str,
     depots: Dict[Any, Any],
     language: str = "english",
+    include_store: bool = True,
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Computes editions for all available platforms (e.g. {'linux': [...], 'windows': [...]}).
+
+    ``include_store=False`` keeps the call offline: only the depot-derived
+    Complete/Standard editions are returned.
     """
     platforms = get_available_platforms(depots)
     result = {}
     for plat in platforms:
-        result[plat] = resolve_edition_depots(app_id, depots, target_platform=plat, language=language)
+        result[plat] = resolve_edition_depots(
+            app_id,
+            depots,
+            target_platform=plat,
+            language=language,
+            include_store=include_store,
+        )
     return result
 
 

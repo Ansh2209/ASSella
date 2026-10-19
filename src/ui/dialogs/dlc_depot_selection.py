@@ -15,7 +15,7 @@ Features:
 import logging
 import re
 from typing import Dict, List, Optional, Any, Set, Tuple
-from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize
+from PyQt6.QtCore import Qt, QPoint, QRect, QRectF, QSize, QItemSelectionModel
 from PyQt6.QtGui import QColor, QPixmap, QMouseEvent, QPainter, QFont, QPen, QPalette
 from PyQt6.QtWidgets import (
     QDialog,
@@ -252,7 +252,9 @@ class DlcDepotSelectionDialog(QDialog):
 
         # DLCs that own no depot at all (entitlement only)
         self._depotless_dlcs: Set[str] = set(self._dlc_catalog)
-        for meta in self.depots.values():
+        self._depotless_dlcs.discard(self.app_id)
+        for did, meta in self.depots.items():
+            self._depotless_dlcs.discard(str(did).strip())
             if isinstance(meta, dict):
                 dlc_appid = str(meta.get("dlcappid") or "").strip()
                 self._depotless_dlcs.discard(dlc_appid)
@@ -410,7 +412,15 @@ class DlcDepotSelectionDialog(QDialog):
                 border-bottom: 1px solid rgba(255, 255, 255, 0.03);
             }}
             QTableWidget::item:disabled {{
-                color: rgba(255, 255, 255, 0.48);
+                color: rgba(255, 255, 255, 0.35) !important;
+                background-color: transparent !important;
+            }}
+            QTableWidget::item:disabled:hover {{
+                background-color: transparent !important;
+            }}
+            QTableWidget::item:disabled:selected {{
+                background-color: transparent !important;
+                color: rgba(255, 255, 255, 0.35) !important;
             }}
             QTableWidget::item:hover {{
                 background-color: rgba(255, 255, 255, 0.05);
@@ -453,6 +463,7 @@ class DlcDepotSelectionDialog(QDialog):
         )
         self.table.setPalette(palette)
         self.table.cellClicked.connect(self._on_table_cell_clicked)
+        self.table.itemSelectionChanged.connect(self._on_table_selection_changed)
         container_lay.addWidget(self.table, 1)
 
         # 5. Bottom Controls Bar
@@ -808,8 +819,9 @@ class DlcDepotSelectionDialog(QDialog):
         if arch_code:
             tags.append(f"[{arch_code}]")
 
-        # 2. [DLC] tag
-        tags.append("[DLC]")
+        # 2. [DLC] tag (only if actually a DLC depot and not base game)
+        if is_dlc_depot(did_str, desc, self.app_id, d_data) and not is_base_game_main_depot(did_str, desc, self.app_id, d_data):
+            tags.append("[DLC]")
 
         # 3. Language tag ([EN], [ZH-CN], etc.)
         lang_code = extract_language_code(d_data, desc)
@@ -860,6 +872,8 @@ class DlcDepotSelectionDialog(QDialog):
 
             dlc_app = str(d_data.get("dlcappid") or "").strip()
             if not dlc_app.isdigit() or dlc_app == self.app_id:
+                if dlc_app == self.app_id:
+                    continue
                 dlc_app = did_str
 
             group = groups.get(dlc_app)
@@ -933,17 +947,24 @@ class DlcDepotSelectionDialog(QDialog):
             # Col 1: DLC name, with the depot count when one DLC ships several.
             dlc_name = self._dlc_catalog.get(dlc_app) or ""
             if dlc_name:
-                clean_name = f"[DLC]  {dlc_name}"
-                if len(depot_ids) > 1:
-                    clean_name += f"  ({len(depot_ids)} depots)"
-                os_icon = get_os_icon(d_data.get("oslist"), tint_color=QColor(self.accent_color))
+                clean_title = re.sub(r"^\[DLC(?:\s+\d+)?\]\s*", "", dlc_name, flags=re.IGNORECASE)
+                clean_title = re.sub(r"^DLC\s+\d+\s*[-–:]?\s*", "", clean_title, flags=re.IGNORECASE)
+                clean_title = re.sub(r"\s*-\s*Depot\s*\d+", "", clean_title, flags=re.IGNORECASE).strip()
+                display_title = clean_title or dlc_name
             else:
-                clean_name, os_icon = self._build_enriched_config_label(first_id, d_data, desc)
+                display_title = desc
+
+            clean_name, os_icon = self._build_enriched_config_label(first_id, d_data, display_title)
+            if len(depot_ids) > 1:
+                clean_name += f"  ({len(depot_ids)} depots)"
             name_item = QTableWidgetItem(clean_name)
             if os_icon:
                 name_item.setIcon(os_icon)
             if is_steam_owned or is_missing_hubcap:
                 name_item.setForeground(QColor(130, 130, 130))
+                name_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            else:
+                name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if len(depot_ids) > 1:
                 name_item.setToolTip(
                     "\n".join(
@@ -953,7 +974,6 @@ class DlcDepotSelectionDialog(QDialog):
                 )
             else:
                 name_item.setToolTip(desc)
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 1, name_item)
 
             # Col 2: Size (summed over the DLC's depots)
@@ -961,7 +981,9 @@ class DlcDepotSelectionDialog(QDialog):
             size_item = NumericTableWidgetItem(format_size(raw_size) if raw_size > 0 else "0 B", raw_size)
             if is_steam_owned or is_missing_hubcap:
                 size_item.setForeground(QColor(130, 130, 130))
-            size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                size_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            else:
+                size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 2, size_item)
 
         # 2. Depotless DLCs
@@ -1004,12 +1026,18 @@ class DlcDepotSelectionDialog(QDialog):
             self.table.setItem(row, 0, id_item)
 
             # Col 1: Clean DLC Name with [DLC] tag (no duplicate DLC AppID in text)
-            clean_name = f"[DLC]  {dlc_name}"
+            clean_title = re.sub(r"^\[DLC(?:\s+\d+)?\]\s*", "", dlc_name, flags=re.IGNORECASE)
+            clean_title = re.sub(r"^DLC\s+\d+\s*[-–:]?\s*", "", clean_title, flags=re.IGNORECASE)
+            clean_title = re.sub(r"\s*-\s*Depot\s*\d+", "", clean_title, flags=re.IGNORECASE).strip()
+            display_title = clean_title or dlc_name
+            clean_name = f"[DLC]  {display_title}"
             name_item = QTableWidgetItem(clean_name)
             if is_steam_owned:
                 name_item.setForeground(QColor(130, 130, 130))
+                name_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            else:
+                name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             name_item.setToolTip(f"DLC {dlc_appid}: entitlement without separate depot files.")
-            name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 1, name_item)
 
             # Col 2: Size ('null' in italics rendered by DlcSizeDelegate)
@@ -1017,7 +1045,9 @@ class DlcDepotSelectionDialog(QDialog):
             size_item.setData(Qt.ItemDataRole.UserRole + 11, "null")
             if is_steam_owned:
                 size_item.setForeground(QColor(130, 130, 130))
-            size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                size_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            else:
+                size_item.setFlags(size_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, 2, size_item)
 
         self.table.blockSignals(False)
@@ -1034,6 +1064,11 @@ class DlcDepotSelectionDialog(QDialog):
     def _on_table_cell_clicked(self, row: int, col: int):
         id_item = self.table.item(row, 0)
         if not id_item or (id_item.flags() == Qt.ItemFlag.NoItemFlags):
+            sm = self.table.selectionModel()
+            if sm:
+                for c in range(self.table.columnCount()):
+                    idx = self.table.model().index(row, c)
+                    sm.select(idx, QItemSelectionModel.SelectionFlag.Deselect)
             return
         item_ids = self._row_depot_ids(id_item)
         curr = id_item.checkState()
@@ -1048,6 +1083,21 @@ class DlcDepotSelectionDialog(QDialog):
 
         self.edition_button.setText("Custom ▾")
         self._update_summary()
+
+    def _on_table_selection_changed(self):
+        sm = self.table.selectionModel()
+        if not sm:
+            return
+        to_deselect = []
+        for idx in sm.selectedIndexes():
+            item = self.table.item(idx.row(), 0)
+            if item and item.flags() == Qt.ItemFlag.NoItemFlags:
+                to_deselect.append(idx)
+        if to_deselect:
+            self.table.blockSignals(True)
+            for idx in to_deselect:
+                sm.select(idx, QItemSelectionModel.SelectionFlag.Deselect)
+            self.table.blockSignals(False)
 
     def _on_header_section_clicked(self, logical_index: int):
         if logical_index != 0:
