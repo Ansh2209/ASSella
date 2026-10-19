@@ -174,6 +174,65 @@ def main() -> int:
         ec.fetch_bundle(13931)
         check(len(calls) == before + 1, "an expired entry goes back to the store")
 
+        print("=== store packages are cached on disk and named without the price ===")
+        check(
+            ec.clean_package_name("Vampire Survivors - $4.99 $3.74") == "Vampire Survivors",
+            "two appended prices are both dropped",
+        )
+        check(
+            ec.clean_package_name("Darkest Dungeon - $24.99") == "Darkest Dungeon",
+            "one appended price is dropped",
+        )
+        store_answer = json.dumps({
+            "555": {
+                "success": True,
+                "data": {
+                    "package_groups": [{
+                        "subs": [
+                            {"packageid": 1001, "option_text": "Probe Game - $4.99 $3.74",
+                             "price_in_cents_with_discount": 374},
+                            {"packageid": 1002, "option_description": "Probe Deluxe",
+                             "price_in_cents_with_discount": 999},
+                        ]
+                    }]
+                },
+            }
+        })
+
+        def fake_appdetails(url: str, timeout: float) -> str | None:
+            calls.append(url)
+            if "appdetails" in url and "appids=555" in url:
+                return store_answer
+            return None
+
+        ec._store_get = fake_appdetails  # type: ignore[assignment]
+        first = ec.fetch_store_packages("555")
+        check(len(first) == 2, "both packages come back")
+        check(first[0]["name"] == "Probe Game", "the package option text is cleaned")
+        check(first[0]["price"] == 374, "the discounted price is kept")
+        check(first[1]["name"] == "Probe Deluxe", "a description is used when there is no text")
+
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        check(
+            data["packages"]["555"]["packages"][0]["packageid"] == 1001,
+            "the answer is written to the packages bucket",
+        )
+        before = len(calls)
+        again = ec.fetch_store_packages("555")
+        check(again == first and len(calls) == before, "a fresh answer never touches the network")
+
+        data["packages"]["555"]["ts"] = 0
+        cache.write_text(json.dumps(data), encoding="utf-8")
+        before = len(calls)
+        ec.fetch_store_packages("555")
+        check(len(calls) == before + 1, "an expired package answer goes back to the store")
+
+        ec._store_get = lambda url, timeout: None  # type: ignore[assignment]
+        check(
+            ec.fetch_store_packages("999", allow_network=False) == [],
+            "the network is never asked when it is disabled",
+        )
+
         print("=== an unreadable cache starts empty ===")
         cache.write_text("{not json", encoding="utf-8")
         check(ec._read_cache()["bundles"] == {}, "a broken cache is ignored")

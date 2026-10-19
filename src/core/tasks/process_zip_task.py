@@ -1111,16 +1111,8 @@ class ProcessZipTask:
 
                         game_data["depots"] = enriched_depots
 
-                if game_data.get("appid") and game_data.get("depots"):
-                    try:
-                        from utils.edition_helpers import resolve_multi_platform_editions
-                        logger.info(f"[ProcessZipTask] Pre-fetching package info and resolving editions for App {game_data['appid']}...")
-                        game_data["editions"] = resolve_multi_platform_editions(
-                            str(game_data["appid"]),
-                            game_data["depots"]
-                        )
-                    except Exception as _ed_err:
-                        logger.debug(f"[ProcessZipTask] Pre-fetching editions error: {_ed_err}")
+                # Editions are resolved by the depot selector when it opens (offline
+                # first, store tiers on demand), so the zip task does not block here.
 
                 if not game_data.get("game_name"):
                     _fallback_name = f"App_{game_data.get('appid', 'Unknown')}"

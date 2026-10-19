@@ -6,10 +6,9 @@ and Store Package tiers) across target platforms (Linux / Windows) and mapping
 them directly to their corresponding depot selections.
 """
 
-import json
 import logging
 import re
-import urllib.request
+import time
 from typing import Any, Dict, List, Optional, Set
 
 from utils import edition_catalog
@@ -24,11 +23,7 @@ _STORE_PACKAGES_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 
 def clean_package_name(raw_text: str) -> str:
     """Strip HTML tags and currency/pricing from package option text."""
-    if not raw_text:
-        return ""
-    clean = re.sub(r"<[^>]+>", "", str(raw_text)).strip()
-    clean = re.sub(r"\s*-\s*[\$€£¥\d\.,\s]+$", "", clean).strip()
-    return clean
+    return edition_catalog.clean_package_name(raw_text)
 
 
 def _is_same_game_name(left: str, right: str) -> bool:
@@ -174,8 +169,12 @@ def get_default_platform(
     return "windows"
 
 
-def fetch_store_packages(app_id: str, timeout: float = 2.5) -> List[Dict[str, Any]]:
-    """Query Steam Store API appdetails for package_groups."""
+def fetch_store_packages(app_id: str, timeout: float = 6.0) -> List[Dict[str, Any]]:
+    """Packages the store sells this game through, cached on disk.
+
+    The request and the disk cache live in ``edition_catalog`` so a cold start
+    is paid once a week rather than once per launch.
+    """
     aid_str = str(app_id).strip()
     if not aid_str or not aid_str.isdigit():
         return []
@@ -183,34 +182,7 @@ def fetch_store_packages(app_id: str, timeout: float = 2.5) -> List[Dict[str, An
     if aid_str in _STORE_PACKAGES_CACHE:
         return _STORE_PACKAGES_CACHE[aid_str]
 
-    results: List[Dict[str, Any]] = []
-    try:
-        url = f"https://store.steampowered.com/api/appdetails?appids={aid_str}&cc=us&l=en"
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) SteamStoreAPI"},
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            app_data = data.get(aid_str, {}).get("data", {})
-            pkg_groups = app_data.get("package_groups", [])
-            for pg in pkg_groups:
-                for sub in pg.get("subs", []):
-                    pkg_id = sub.get("packageid")
-                    if not pkg_id:
-                        continue
-                    desc = sub.get("option_description") or ""
-                    text = sub.get("option_text") or ""
-                    cleaned = clean_package_name(desc) or clean_package_name(text) or f"Package {pkg_id}"
-                    results.append({
-                        "packageid": pkg_id,
-                        "name": cleaned,
-                        "price": sub.get("price_in_cents_with_discount", 0) or 0,
-                        "apps": [],
-                    })
-    except Exception as e:
-        logger.debug(f"[EditionHelpers] Store package fetch for {aid_str} failed: {e}")
-
+    results = edition_catalog.fetch_store_packages(aid_str, timeout=timeout)
     _STORE_PACKAGES_CACHE[aid_str] = results
     return results
 
@@ -338,7 +310,9 @@ def resolve_edition_depots(
     editions: List[Dict[str, Any]] = []
 
     # Fetch store packages from Steam store API
-    store_pkgs = fetch_store_packages(aid_str, timeout=1.5) if include_store else []
+    # A cold appdetails call measured 1.3-1.8 s, so a 1.5 s budget used to time
+    # out and silently leave the store tiers out of the menu.
+    store_pkgs = fetch_store_packages(aid_str, timeout=6.0) if include_store else []
     pkg_contents = {}
     if store_pkgs:
         pids = [int(p["packageid"]) for p in store_pkgs if p.get("packageid") and str(p.get("packageid")).isdigit()]
@@ -476,6 +450,7 @@ def resolve_multi_platform_editions(
     ``include_store=False`` keeps the call offline: only the depot-derived
     Complete/Standard editions are returned.
     """
+    started = time.perf_counter()
     platforms = get_available_platforms(
         depots, app_id, allow_network=allow_network, timeout=timeout
     )
@@ -488,6 +463,13 @@ def resolve_multi_platform_editions(
             language=language,
             include_store=include_store,
         )
+    logger.debug(
+        "[Editions] editions for %s: %.2f s, platforms=%s, store=%s",
+        app_id,
+        time.perf_counter() - started,
+        ",".join(platforms) or "none",
+        include_store,
+    )
     return result
 
 
