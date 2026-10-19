@@ -1220,12 +1220,24 @@ class GameManager(QObject):
             if self._scan_cancelled:
                 return None
 
-            marker_path = marker_path or self._get_accela_marker_path(game_path)
-            is_accela_install = bool(marker_path)
-            is_managed = is_accela_install or is_vapor
-
             # Try to read appmanifest to get AppID and other metadata
             appmanifest_path, appid = self._parse_acf_for_appid(library_path, game_name, acf_cache=acf_cache)
+
+            # A DLC-only install writes into the Steam folder and leaves a
+            # `.DepotDownloader` marker behind, but the base game is still
+            # Steam's. The marker must not move such a game out of the Steam
+            # tab and into the ACCELA tab.
+            is_dlc_only = False
+            if appid and appid not in ("0", "N/A", "unknown"):
+                try:
+                    from utils.dlc_helpers import is_dlc_only_mode
+                    is_dlc_only = bool(is_dlc_only_mode(appid))
+                except Exception as e:
+                    logger.debug(f"  DLC-only check failed for {appid}: {e}")
+
+            marker_path = marker_path or self._get_accela_marker_path(game_path)
+            is_accela_install = bool(marker_path) and not is_dlc_only
+            is_managed = is_accela_install or is_vapor
 
             # Try to load metadata.json if ACF is missing/invalid, only when experimental mode is enabled
             try:
@@ -1266,7 +1278,7 @@ class GameManager(QObject):
             is_plugin_game = bool(plugin_record)
 
             # Smart correlation: If not in plugin library and no physical marker, check if configured in SLSsteam with DecryptionKeys
-            if not is_plugin_game and not is_accela_install and appid and appid not in ("0", "N/A", "unknown"):
+            if not is_plugin_game and not is_accela_install and not is_dlc_only and appid and appid not in ("0", "N/A", "unknown"):
                 try:
                     from utils.yaml_config_manager import get_user_config_path, get_additional_apps, get_decryption_keys
                     cfg_path = get_user_config_path()
