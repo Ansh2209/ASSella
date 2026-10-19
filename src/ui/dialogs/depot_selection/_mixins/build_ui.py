@@ -454,14 +454,15 @@ class BuildUIMixin:
                 get_available_platforms,
                 resolve_multi_platform_editions,
             )
-            self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
+            self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=False)
             if not getattr(self, "_multi_platform_editions", None):
-                # Offline on purpose: the store editions are resolved when the
-                # edition menu is opened, so building the dialog never waits
-                # on store.steampowered.com.
+                # Offline on purpose: building the dialog never waits on
+                # store.steampowered.com. The store tiers are fetched in the
+                # background so the edition menu can show them when they land.
                 self._multi_platform_editions = resolve_multi_platform_editions(
-                    self.app_id, self.depots, include_store=False, allow_network=True
+                    self.app_id, self.depots, include_store=False, allow_network=False
                 )
+            self._start_edition_prefetch()
             self._update_table_headers()
 
     def _build_bottom_bar(self, content_widget: QVBoxLayout) -> None:
@@ -488,11 +489,12 @@ class BuildUIMixin:
 
         bottom_bar.addStretch(1)
 
-        # [ Inject DLC Data Only ]  [ Close ]  [ Download Selected ]
-        btn_min_w = 150
+        # [ Inject DLC Data Only ]  [ Move to AT0-M ]  [ Close ]  [ Download Selected ]
+        btn_h = 32
+        btn_min_w = 140
 
         self.inject_btn = QPushButton("Inject DLC Data Only")
-        self.inject_btn.setFixedHeight(30)
+        self.inject_btn.setFixedHeight(btn_h)
         self.inject_btn.setMinimumWidth(btn_min_w)
         self.inject_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.inject_btn.setStyleSheet("""
@@ -509,15 +511,50 @@ class BuildUIMixin:
                 background-color: rgba(22, 166, 199, 0.28);
                 border-color: #38bdf8;
             }
+            QPushButton:disabled {
+                background-color: rgba(255, 255, 255, 0.04) !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                color: rgba(255, 255, 255, 0.28) !important;
+            }
         """)
         self.inject_btn.setToolTip("Directly write checked DLC entitlements to SLSsteam config without downloading files")
         self.inject_btn.clicked.connect(self._handle_inject_btn_clicked)
         self.inject_btn.setVisible(dlc_mode)
 
+        self.move_to_atom_btn = QPushButton("Move to AT0-M")
+        self.move_to_atom_btn.setFixedHeight(btn_h)
+        self.move_to_atom_btn.setMinimumWidth(btn_min_w)
+        self.move_to_atom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.move_to_atom_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(206, 147, 216, 0.16);
+                border: 1px solid #CE93D8;
+                border-radius: 5px;
+                color: #CE93D8;
+                font-size: 8.5pt;
+                font-weight: 600;
+                padding: 0 14px;
+            }
+            QPushButton:hover {
+                background-color: rgba(206, 147, 216, 0.28);
+                border-color: #E1BEE7;
+                color: #FFFFFF;
+            }
+            QPushButton:disabled {
+                background-color: rgba(255, 255, 255, 0.04) !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                color: rgba(255, 255, 255, 0.28) !important;
+            }
+        """)
+        self.move_to_atom_btn.setToolTip("Register selected depots and DLC entitlements to SLSsteam AT0-M (Steam Native) mode")
+        if hasattr(self, "_handle_move_to_atom_clicked"):
+            self.move_to_atom_btn.clicked.connect(self._handle_move_to_atom_clicked)
+        self.move_to_atom_btn.setVisible(dlc_mode or bool(getattr(self, "_is_atom_mode", False)))
+
         self.cancel_btn = QPushButton("Close")
         self.cancel_btn.setObjectName("cancel_button")
-        self.cancel_btn.setFixedHeight(30)
-        self.cancel_btn.setMinimumWidth(85)
+        self.cancel_btn.setFixedHeight(btn_h)
+        self.cancel_btn.setMinimumWidth(btn_min_w)
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_btn.setStyleSheet("""
             QPushButton {
@@ -527,6 +564,7 @@ class BuildUIMixin:
                 border-radius: 5px;
                 padding: 0 14px;
                 font-size: 8.5pt;
+                font-weight: 500;
             }
             QPushButton:hover {
                 background-color: rgba(255, 255, 255, 0.12);
@@ -540,7 +578,7 @@ class BuildUIMixin:
 
         self.download_btn = QPushButton("Download Selected")
         self.download_btn.setObjectName("ok_button")
-        self.download_btn.setFixedHeight(30)
+        self.download_btn.setFixedHeight(btn_h)
         self.download_btn.setMinimumWidth(btn_min_w)
         self.download_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.download_btn.setStyleSheet(f"""
@@ -557,10 +595,16 @@ class BuildUIMixin:
                 background-color: #FFFFFF;
                 color: #111318;
             }}
+            QPushButton:disabled {{
+                background-color: rgba(255, 255, 255, 0.04) !important;
+                border: 1px solid rgba(255, 255, 255, 0.08) !important;
+                color: rgba(255, 255, 255, 0.28) !important;
+            }}
         """)
         self.download_btn.clicked.connect(self.accept)
 
         bottom_bar.addWidget(self.inject_btn)
+        bottom_bar.addWidget(self.move_to_atom_btn)
         bottom_bar.addWidget(self.cancel_btn)
         bottom_bar.addWidget(self.download_btn)
         content_widget.addLayout(bottom_bar)

@@ -224,10 +224,10 @@ class DepotTableMixin:
                     get_default_platform,
                     resolve_multi_platform_editions,
                 )
-                self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
-                self._default_platform = get_default_platform(self.depots)
+                self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=False)
+                self._default_platform = get_default_platform(self.depots, self.app_id, allow_network=False)
                 self._multi_platform_editions = resolve_multi_platform_editions(
-                    self.app_id, self.depots, include_store=False, allow_network=True
+                    self.app_id, self.depots, include_store=False, allow_network=False
                 )
 
                 default_eds = self._multi_platform_editions.get(self._default_platform, [])
@@ -770,8 +770,12 @@ class DepotTableMixin:
 
         if hasattr(self, "download_btn"):
             self.download_btn.setText(f"Download Selected ({sel_count}/{total_count})")
+            self.download_btn.setEnabled(sel_count > 0)
         if hasattr(self, "inject_btn"):
             self.inject_btn.setText(f"Inject DLC Data Only ({dlcdata_sel})")
+            self.inject_btn.setEnabled(dlcdata_sel > 0)
+        if hasattr(self, "move_to_atom_btn"):
+            self.move_to_atom_btn.setEnabled(sel_count > 0 or dlcdata_sel > 0)
 
         if hasattr(self, "edition_button"):
             if not hasattr(self, "_multi_platform_editions") or not self._multi_platform_editions:
@@ -779,9 +783,9 @@ class DepotTableMixin:
                     get_available_platforms,
                     resolve_multi_platform_editions,
                 )
-                self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
+                self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=False)
                 self._multi_platform_editions = resolve_multi_platform_editions(
-                    self.app_id, self.depots, include_store=False, allow_network=True
+                    self.app_id, self.depots, include_store=False, allow_network=False
                 )
 
             from utils.edition_helpers import match_selection_to_edition

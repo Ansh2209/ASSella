@@ -4,7 +4,7 @@ auto-selection rules."""
 
 import logging
 
-from PyQt6.QtCore import Qt, QPoint, QItemSelectionModel
+from PyQt6.QtCore import Qt, QPoint, QItemSelectionModel, QThread, QTimer, pyqtSignal
 
 from PyQt6.QtWidgets import (
     QApplication,
@@ -18,6 +18,40 @@ except ImportError:
 from ui.dialogs.depot_selection import selection_policy
 
 logger = logging.getLogger(__name__)
+
+# A QThread destroyed while it is still running aborts the process, and the
+# dialog can close before the store answers, so finished threads are kept
+# referenced here until they end.
+_LIVE_EDITION_THREADS: set = set()
+
+
+class _EditionResolveThread(QThread):
+    """Resolve the store's edition tiers without blocking the dialog."""
+
+    resolved = pyqtSignal(object)
+
+    def __init__(self, app_id: str, depots: dict, language: str = "english"):
+        super().__init__()
+        self._app_id = app_id
+        self._depots = depots
+        self._language = language
+
+    def run(self) -> None:
+        from utils.edition_helpers import resolve_multi_platform_editions
+
+        try:
+            editions = resolve_multi_platform_editions(
+                self._app_id,
+                self._depots,
+                language=self._language,
+                include_store=True,
+                allow_network=True,
+            )
+        except Exception as exc:
+            logger.debug(f"[DepotSelection] store editions could not be resolved: {exc}")
+            editions = {}
+        self.resolved.emit(editions or {})
+
 
 
 class SelectionMixin:
@@ -233,23 +267,14 @@ class SelectionMixin:
         )
 
         if not hasattr(self, "_available_platforms") or not self._available_platforms:
-            self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=True)
-        if not getattr(self, "_editions_with_store", False):
-            # The store editions cost a store.steampowered.com round trip, so
-            # they are resolved here, when the menu is opened, instead of while
-            # the dialog is being built.
-            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-            try:
-                self._multi_platform_editions = resolve_multi_platform_editions(
-                    self.app_id, self.depots, include_store=True
-                )
-                self._editions_with_store = True
-            finally:
-                QApplication.restoreOverrideCursor()
-        elif not getattr(self, "_multi_platform_editions", None):
+            self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=False)
+        if not getattr(self, "_multi_platform_editions", None):
+            # Offline editions answer in milliseconds; the store tiers are
+            # already on their way from `_start_edition_prefetch`.
             self._multi_platform_editions = resolve_multi_platform_editions(
-                self.app_id, self.depots, include_store=False, allow_network=True
+                self.app_id, self.depots, include_store=False, allow_network=False
             )
+        self._start_edition_prefetch()
 
         menu = QMenu(self)
         menu.setStyleSheet("""
@@ -285,12 +310,55 @@ class SelectionMixin:
                     action.setChecked(True)
                 action.triggered.connect(lambda checked, target_ed=choice.edition: self._apply_edition_selection(target_ed))
 
+        if not getattr(self, "_editions_store_ready", False):
+            loading = menu.addAction("Loading store editions…")
+            loading.setEnabled(False)
+
         menu.adjustSize()
         menu_height = menu.sizeHint().height()
         pos = self.edition_button.mapToGlobal(QPoint(0, -menu_height - 2))
         if pos.y() < 0:
             pos = self.edition_button.mapToGlobal(QPoint(0, self.edition_button.height() + 2))
-        menu.exec(pos)
+        self._edition_menu = menu
+        self._edition_menu_open = True
+        try:
+            menu.exec(pos)
+        finally:
+            self._edition_menu_open = False
+            self._edition_menu = None
+        if getattr(self, "_reopen_edition_menu", False):
+            self._reopen_edition_menu = False
+            QTimer.singleShot(0, self._show_edition_menu)
+
+    def _start_edition_prefetch(self) -> None:
+        """Ask the store for its edition tiers once, off the UI thread."""
+        if getattr(self, "_edition_prefetch_started", False):
+            return
+        if getattr(self, "_editions_store_ready", False):
+            return
+        self._edition_prefetch_started = True
+        thread = _EditionResolveThread(self.app_id, self.depots)
+        thread.resolved.connect(self._on_editions_resolved)
+        thread.finished.connect(lambda: _LIVE_EDITION_THREADS.discard(thread))
+        _LIVE_EDITION_THREADS.add(thread)
+        thread.start()
+
+    def _on_editions_resolved(self, editions: dict) -> None:
+        """Take the store tiers once the background lookup answers."""
+        if not editions:
+            return
+        self._multi_platform_editions = editions
+        self._editions_with_store = True
+        self._editions_store_ready = True
+        try:
+            from utils.edition_helpers import get_available_platforms
+            self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=False)
+        except Exception:
+            pass
+        if getattr(self, "_edition_menu_open", False) and getattr(self, "_edition_menu", None) is not None:
+            # Rebuild the open menu so the store tiers show up without a second click.
+            self._reopen_edition_menu = True
+            self._edition_menu.close()
 
     def _apply_edition_selection(self, edition: dict):
         """Apply the chosen edition to the depot checkboxes."""

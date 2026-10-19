@@ -64,9 +64,9 @@ SEARCH_PLACEHOLDERS = (
     "Search by game name or AppID...",
 )
 
-# Re-exported for backward compatibility across dialogs and managers
 from ui.dialogs.single_depot_timer_dialog import SingleDepotTimerDialog
-from ui.widgets.search_item_widget import SearchItemWidget
+from ui.widgets.search_item_widget import SearchItemWidget, SearchTileWidget, SearchCompactWidget
+from utils.paths import Paths
 from utils.search_ranking import (
     normalize_for_match,
     extract_game_name,
@@ -154,7 +154,15 @@ class FetchManifestDialog(QDialog):
                 self._origins_movie.frameChanged.connect(self.update)
                 self._origins_movie.start()
 
+        self._view_mode = "detailed"
+        if self.settings:
+            self._view_mode = self.settings.value("fetch_manifest_view_mode", "detailed", type=str)
+        self._last_results: List[Dict] = []
+        self._last_raw_total: int = 0
+
         self._init_ui()
+        self._apply_view_mode_to_results()
+        self._update_view_mode_button()
         logger.debug("FetchManifestDialog initialized.")
 
         self._request_api_status_update()
@@ -355,9 +363,6 @@ class FetchManifestDialog(QDialog):
                 """
             )
 
-        # 1. API Status Bar
-        self._create_api_status_bar(layout)
-
         # Create Tab Widget
         self.tab_widget = QTabWidget()
         layout.addWidget(self.tab_widget)
@@ -365,14 +370,91 @@ class FetchManifestDialog(QDialog):
         # --- Tab 1: Game Manifests ---
         self.games_tab = QWidget()
         games_layout = QVBoxLayout(self.games_tab)
-        games_layout.setContentsMargins(0, 8, 0, 0)
+        games_layout.setContentsMargins(10, 8, 10, 0)
+        games_layout.setSpacing(4)
 
+        # 1. Sleek Pill Search Input
         self._placeholder_idx = 0
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(SEARCH_PLACEHOLDERS[0])
         self.search_input.returnPressed.connect(self.on_search)
         self.search_input.textChanged.connect(self._on_search_text_changed)
+        self.search_input.setFixedHeight(42)
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: rgba(255, 255, 255, 0.05);
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 21px;
+                padding: 0px 48px 0px 20px;
+                font-size: 13px;
+            }}
+            QLineEdit:focus {{
+                border: 1.5px solid {self.accent_color};
+                background-color: rgba(255, 255, 255, 0.08);
+                padding: 0px 47px 0px 19px;
+            }}
+        """)
+
+        # Layout switcher button placed inside the search bar on the right
+        search_inner_layout = QHBoxLayout(self.search_input)
+        search_inner_layout.setContentsMargins(0, 0, 10, 0)
+        search_inner_layout.addStretch()
+
+        self.view_mode_btn = QPushButton(self.search_input)
+        self.view_mode_btn.setFixedSize(28, 28)
+        self.view_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.view_mode_btn.clicked.connect(self._cycle_view_mode)
+        self.view_mode_btn.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+                border-radius: 14px;
+                padding: 4px;
+            }}
+            QPushButton:hover {{
+                background-color: rgba(255, 255, 255, 0.12);
+            }}
+            """
+        )
+        search_inner_layout.addWidget(self.view_mode_btn)
         games_layout.addWidget(self.search_input)
+
+        # 3. Clean Sub-Status Row (online on left, user and quota on right)
+        status_sub_widget = QWidget()
+        status_sub_widget.setStyleSheet("background: transparent; border: none;")
+        status_sub_layout = QHBoxLayout(status_sub_widget)
+        status_sub_layout.setContentsMargins(14, 2, 14, 6)
+        status_sub_layout.setSpacing(6)
+
+        self.api_status_dot = QLabel()
+        self.api_status_dot.setFixedSize(8, 8)
+        self.api_status_dot.setStyleSheet("border-radius: 4px; background-color: #7f8c8d;")
+        self.api_status_dot.setVisible(False)
+
+        self.top_spinner = MaterialSpinner(parent=status_sub_widget, size=12, color=self.accent_color, thickness=2)
+        self.top_spinner.setVisible(True)
+
+        self.api_status_text = QLabel("checking...")
+        self.api_status_text.setStyleSheet("color: rgba(255, 255, 255, 0.5); font-size: 11px;")
+
+        status_sub_layout.addWidget(self.top_spinner)
+        status_sub_layout.addWidget(self.api_status_dot)
+        status_sub_layout.addWidget(self.api_status_text)
+        status_sub_layout.addStretch(1)
+
+        self.username_label = QLabel("--")
+        self.username_label.setStyleSheet("color: #8ab4f8; font-size: 11px;")
+        status_sub_layout.addWidget(self.username_label)
+
+        status_sub_layout.addSpacing(12)
+
+        self.usage_label = QLabel("--/--")
+        self.usage_label.setStyleSheet("color: #8ab4f8; font-size: 11px;")
+        status_sub_layout.addWidget(self.usage_label)
+
+        games_layout.addWidget(status_sub_widget)
 
         # Debounce timer for live search suggestions (400ms, min 3 chars)
         self._live_search_timer = QTimer(self)
@@ -391,8 +473,6 @@ class FetchManifestDialog(QDialog):
         self.results_list.itemClicked.connect(self._on_item_clicked)
         self.results_list.currentItemChanged.connect(lambda cur, _prev: self._on_item_clicked(cur) if cur else None)
         games_layout.addWidget(self.results_list)
-
-
 
         # Bottom Status Footer Layout (Horizontal, Centered)
         status_footer_container = QWidget()
@@ -513,48 +593,13 @@ class FetchManifestDialog(QDialog):
         ws_enabled = self.settings.value("enable_workshop_downloader", False, type=bool) if self.settings else False
         if ws_enabled:
             self.tab_widget.addTab(self.workshop_tab, "Workshop Downloader")
+            self.tab_widget.tabBar().setVisible(True)
+        else:
+            self.tab_widget.tabBar().setVisible(False)
 
     def _create_api_status_bar(self, parent_layout):
-        """Builds the top status bar widget."""
-        status_widget = QWidget()
-        container = QHBoxLayout(status_widget)
-        container.setContentsMargins(0, 0, 0, 5)
-        container.setSpacing(10)
-
-        # Connection Dot & Top Spinner
-        self.api_status_dot = QLabel()
-        self.api_status_dot.setFixedSize(10, 10)
-        self.api_status_dot.setStyleSheet(
-            "border-radius: 5px; background-color: #7f8c8d;"
-        )
-        self.api_status_dot.setVisible(False)  # Hidden while checking
-
-        self.top_spinner = MaterialSpinner(parent=status_widget, size=14, color=self.accent_color, thickness=2)
-        self.top_spinner.setVisible(True)  # Visible while checking
-
-        self.api_status_text = QLabel("Checking...")
-        self.api_status_text.setStyleSheet("font-weight: bold; color: rgba(255, 255, 255, 0.6);")
-
-        # Group Dot + Spinner + Text
-        conn_layout = QHBoxLayout()
-        conn_layout.setSpacing(6)
-        conn_layout.addWidget(self.top_spinner)
-        conn_layout.addWidget(self.api_status_dot)
-        conn_layout.addWidget(self.api_status_text)
-
-        container.addLayout(conn_layout)
-        container.addStretch(1)
-
-        # User Info
-        self.username_label = QLabel("User: --")
-        self.username_label.setStyleSheet("color: rgba(255, 255, 255, 0.6); font-size: 11px;")
-        container.addWidget(self.username_label)
-
-        self.usage_label = QLabel("Daily: --")
-        self.usage_label.setStyleSheet("color: rgba(255, 255, 255, 0.6); font-size: 11px;")
-        container.addWidget(self.usage_label)
-
-        parent_layout.addWidget(status_widget)
+        """No-op: status is now cleanly rendered inside the games tab below the search pill."""
+        pass
 
     # --------------------------
     # Status / Health Logic
@@ -595,35 +640,36 @@ class FetchManifestDialog(QDialog):
         # Update Connection Status
         if is_healthy:
             self.api_status_dot.setStyleSheet(
-                "border-radius: 5px; background-color: #81C784;"
+                "border-radius: 4px; background-color: #81C784;"
             )  # Green
-            self.api_status_text.setText("Online")
-            self.api_status_text.setStyleSheet("font-weight: bold; color: #81C784;")
+            self.api_status_text.setText("online")
+            self.api_status_text.setStyleSheet("font-weight: 500; color: #81C784; font-size: 11px;")
         else:
             self.api_status_dot.setStyleSheet(
-                "border-radius: 5px; background-color: #FF8A80;"
+                "border-radius: 4px; background-color: #FF8A80;"
             )  # Red
-            self.api_status_text.setText("Offline")
-            self.api_status_text.setStyleSheet("font-weight: bold; color: #FF8A80;")
+            self.api_status_text.setText("offline")
+            self.api_status_text.setStyleSheet("font-weight: 500; color: #FF8A80; font-size: 11px;")
 
         # Update User Stats
         stats = result.get("stats", {})
         if stats.get("error"):
-            self.username_label.setText("User: Error")
-            self.usage_label.setText("Daily: --")
+            self.username_label.setText("Error")
+            self.usage_label.setText("--")
         else:
-            self.username_label.setText(f"User: {stats.get('username', 'Unknown')}")
+            uname = stats.get('username', 'Unknown')
+            self.username_label.setText(str(uname))
             usage = stats.get("daily_usage", 0)
             limit = stats.get("daily_limit", 0)
-            self.usage_label.setText(f"Daily: {usage}/{limit}")
+            self.usage_label.setText(f"{usage}/{limit}")
 
     def _on_api_status_error(self, error_info):
         """Handle errors during status check silently."""
         self.top_spinner.setVisible(False)
         self.api_status_dot.setVisible(True)
-        self.api_status_dot.setStyleSheet("border-radius: 5px; background-color: #FF8A80;")
-        self.api_status_text.setText("Offline")
-        self.api_status_text.setStyleSheet("font-weight: bold; color: #FF8A80;")
+        self.api_status_dot.setStyleSheet("border-radius: 4px; background-color: #FF8A80;")
+        self.api_status_text.setText("offline")
+        self.api_status_text.setStyleSheet("font-weight: 500; color: #FF8A80; font-size: 11px;")
         logger.error(f"Status check failed: {error_info}")
         self.api_status_dot.setStyleSheet(
             "border-radius: 6px; background-color: #e74c3c;"
@@ -777,6 +823,150 @@ class FetchManifestDialog(QDialog):
     _manifest_size = staticmethod(manifest_size)
     _is_likely_media_variant = staticmethod(is_likely_media_variant)
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Layout Switcher (Detailed Cards / 3x3 Grid Tiles / Compact Text List)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    _FALLBACK_VIEW_ICONS = {
+        "detailed": (
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+            '<rect x="3" y="4" width="18" height="6" rx="2"/>'
+            '<rect x="3" y="14" width="18" height="6" rx="2"/>'
+            '<line x1="8" y1="4" x2="8" y2="10"/>'
+            '<line x1="8" y1="14" x2="8" y2="20"/>'
+            '</svg>'
+        ),
+        "tiles": (
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+            '<rect x="3" y="3" width="7" height="7" rx="1.5"/>'
+            '<rect x="14" y="3" width="7" height="7" rx="1.5"/>'
+            '<rect x="3" y="14" width="7" height="7" rx="1.5"/>'
+            '<rect x="14" y="14" width="7" height="7" rx="1.5"/>'
+            '</svg>'
+        ),
+        "text": (
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">'
+            '<line x1="4" y1="6" x2="20" y2="6"/>'
+            '<line x1="4" y1="12" x2="20" y2="12"/>'
+            '<line x1="4" y1="18" x2="20" y2="18"/>'
+            '</svg>'
+        ),
+    }
+
+    def _load_view_mode_svg(self, mode: str) -> str:
+        file_map = {
+            "detailed": ("icons/layout_detailed.svg", "001-Artboard-4.svg"),
+            "tiles": ("icons/layout_tiles.svg", "001-Artboard-3.svg"),
+            "text": ("icons/layout_text.svg", "001-Artboard-5.svg"),
+        }
+        rel_icon, fallback_name = file_map.get(mode, file_map["detailed"])
+
+        target_path = Paths.resource(rel_icon)
+        if not target_path or not target_path.exists():
+            fb = Path.home() / ".local" / "share" / "ACCELA" / "Logo" / fallback_name
+            if fb.exists():
+                target_path = fb
+
+        if target_path and target_path.exists():
+            try:
+                with open(target_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                # Apply tight viewBox if reading original artboards
+                if mode == "tiles" and "259.583 259.583" in content:
+                    content = content.replace("0 0 259.583 259.583", "82 73 106 106")
+                elif mode == "detailed" and "288 253.226" in content:
+                    content = content.replace("0 0 288 253.226", "94 73 106 106")
+                elif mode == "text" and "290 259.445" in content:
+                    content = content.replace("0 0 290 259.445", "92 90 106 106")
+                return content
+            except Exception as e:
+                logger.warning(f"Failed to read view mode SVG {target_path}: {e}")
+
+        return self._FALLBACK_VIEW_ICONS.get(mode, "")
+
+    def _make_svg_icon(self, svg_str: str, color: str = None, size: int = 16) -> QIcon:
+        try:
+            from PyQt6.QtSvg import QSvgRenderer
+            from PyQt6.QtGui import QIcon, QPainter, QPixmap
+            import re
+            c = color or getattr(self, "accent_color", "#a1c9fd")
+            recolored = svg_str.replace("currentColor", c)
+            recolored = re.sub(r"\.cls-1\s*\{[^}]*fill:[^};]+", f".cls-1{{fill:{c}", recolored)
+            renderer = QSvgRenderer(recolored.encode("utf-8"))
+            if not renderer.isValid():
+                return QIcon()
+            pixmap = QPixmap(size, size)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            p = QPainter(pixmap)
+            renderer.render(p)
+            p.end()
+            return QIcon(pixmap)
+        except Exception as e:
+            logger.warning(f"Failed to generate SVG icon: {e}")
+            return QIcon()
+
+    def _update_view_mode_button(self) -> None:
+        if not hasattr(self, "view_mode_btn") or not self.view_mode_btn:
+            return
+        if hasattr(self, "settings") and self.settings:
+            self.accent_color = self.settings.value("accent_color", getattr(self, "accent_color", "#a1c9fd"))
+        mode = getattr(self, "_view_mode", "detailed")
+        labels = {
+            "detailed": "Layout: Detailed Cards (Click to switch to 3x3 Grid Tiles)",
+            "tiles": "Layout: 3x3 Grid Tiles (Click to switch to Text List)",
+            "text": "Layout: Compact Text List (Click to switch to Detailed Cards)",
+        }
+        svg_code = self._load_view_mode_svg(mode)
+        self.view_mode_btn.setIcon(self._make_svg_icon(svg_code, size=16))
+        self.view_mode_btn.setIconSize(QSize(16, 16))
+        self.view_mode_btn.setToolTip(labels.get(mode, "Toggle layout"))
+
+    def _cycle_view_mode(self) -> None:
+        modes = ["detailed", "tiles", "text"]
+        current = getattr(self, "_view_mode", "detailed")
+        next_idx = (modes.index(current) + 1) % len(modes) if current in modes else 0
+        self.set_view_mode(modes[next_idx])
+
+    def set_view_mode(self, mode: str) -> None:
+        if mode not in ("detailed", "tiles", "text"):
+            mode = "detailed"
+        self._view_mode = mode
+        if hasattr(self, "settings") and self.settings:
+            self.settings.setValue("fetch_manifest_view_mode", mode)
+        self._update_view_mode_button()
+        self._apply_view_mode_to_results()
+
+    def _apply_view_mode_to_results(self) -> None:
+        if not hasattr(self, "results_list") or not self.results_list:
+            return
+        mode = getattr(self, "_view_mode", "detailed")
+        if mode == "tiles":
+            self.results_list.setViewMode(QListWidget.ViewMode.IconMode)
+            self.results_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+            self.results_list.setMovement(QListWidget.Movement.Static)
+            self.results_list.setFlow(QListWidget.Flow.LeftToRight)
+            self.results_list.setWrapping(True)
+            self.results_list.setSpacing(10)
+            self.results_list.setUniformItemSizes(True)
+        else:
+            self.results_list.setViewMode(QListWidget.ViewMode.ListMode)
+            self.results_list.setResizeMode(QListWidget.ResizeMode.Fixed)
+            self.results_list.setMovement(QListWidget.Movement.Static)
+            self.results_list.setFlow(QListWidget.Flow.TopToBottom)
+            self.results_list.setWrapping(False)
+            self.results_list.setSpacing(4 if mode == "text" else 5)
+            self.results_list.setUniformItemSizes(False)
+
+        if hasattr(self, "_last_results") and self._last_results:
+            self._repopulate_current_results()
+
+    def _repopulate_current_results(self) -> None:
+        if not hasattr(self, "_last_results") or not self._last_results:
+            return
+        self.results_list.clear()
+        self._stop_active_image_fetchers()
+        for idx, game in enumerate(self._last_results):
+            self._add_game_to_list(game, gen=self._search_generation, delay_fetch=(idx >= 4), fetch_index=idx)
 
     def on_search_finished(self, results, gen: int = 0, is_live: bool = False):
         # Ignore stale search results from previous queries
@@ -799,6 +989,9 @@ class FetchManifestDialog(QDialog):
 
         filtered_results = results.get("results", [])
         raw_total = int(results.get("raw_total", len(filtered_results)))
+
+        self._last_results = list(filtered_results)
+        self._last_raw_total = raw_total
 
         if not filtered_results:
             self.status_label.setText("No results found")
@@ -834,25 +1027,34 @@ class FetchManifestDialog(QDialog):
 
         is_cached = self._is_app_cached(app_id)
 
+        mode = getattr(self, "_view_mode", "detailed")
         item = QListWidgetItem()
-        item.setSizeHint(QSize(0, 98))
+
+        if mode == "tiles":
+            item.setSizeHint(QSize(236, 175))
+            widget = SearchTileWidget(name, app_id, in_library, is_cached=is_cached, parent=self)
+        elif mode == "text":
+            item.setSizeHint(QSize(0, 36))
+            widget = SearchCompactWidget(name, app_id, in_library, is_cached=is_cached, parent=self)
+        else:
+            item.setSizeHint(QSize(0, 98))
+            widget = SearchItemWidget(name, app_id, in_library, is_cached=is_cached, parent=self)
 
         item.setData(Qt.ItemDataRole.UserRole, app_id)
         self.results_list.addItem(item)
-
-        widget = SearchItemWidget(name, app_id, in_library, is_cached=is_cached, parent=self)
         self.results_list.setItemWidget(item, widget)
 
-        if delay_fetch:
-            timer = QTimer(self)
-            timer.setSingleShot(True)
-            timer.timeout.connect(lambda w=widget, a=app_id, g=gen, t=timer: self._delayed_fetch_callback(w, a, g, t))
-            self._pending_image_timers.append(timer)
-            # Stagger delayed fetches smoothly so network and UI aren't flooded at the exact same moment
-            delay_ms = min(3500, 200 + max(0, fetch_index - 4) * 60)
-            timer.start(delay_ms)
-        else:
-            self._fetch_item_image(widget, app_id, gen)
+        if mode != "text":
+            if delay_fetch:
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(lambda w=widget, a=app_id, g=gen, t=timer: self._delayed_fetch_callback(w, a, g, t))
+                self._pending_image_timers.append(timer)
+                # Stagger delayed fetches smoothly so network and UI aren't flooded at the exact same moment
+                delay_ms = min(3500, 200 + max(0, fetch_index - 4) * 60)
+                timer.start(delay_ms)
+            else:
+                self._fetch_item_image(widget, app_id, gen)
 
     def _delayed_fetch_callback(self, widget, app_id: str, gen: int, timer: QTimer):
         if timer in self._pending_image_timers:
@@ -905,32 +1107,40 @@ class FetchManifestDialog(QDialog):
                 pixmap = QPixmap()
                 pixmap.loadFromData(image_data)
                 if not pixmap.isNull():
-                    target_size = QSize(230, 108)
-                    scaled = pixmap.scaled(
-                        target_size,
-                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
+                    if getattr(self, "_view_mode", "detailed") == "tiles":
+                        scaled_tile = pixmap.scaled(
+                            QSize(236, 110),
+                            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                            Qt.TransformationMode.SmoothTransformation,
+                        )
+                        widget.set_image(scaled_tile)
+                    else:
+                        target_size = QSize(230, 108)
+                        scaled = pixmap.scaled(
+                            target_size,
+                            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                            Qt.TransformationMode.SmoothTransformation,
+                        )
 
-                    cropped_faded = QPixmap(target_size)
-                    cropped_faded.fill(Qt.GlobalColor.transparent)
+                        cropped_faded = QPixmap(target_size)
+                        cropped_faded.fill(Qt.GlobalColor.transparent)
 
-                    painter = QPainter(cropped_faded)
-                    dx = (target_size.width() - scaled.width()) // 2
-                    dy = (target_size.height() - scaled.height()) // 2
-                    painter.drawPixmap(dx, dy, scaled)
+                        painter = QPainter(cropped_faded)
+                        dx = (target_size.width() - scaled.width()) // 2
+                        dy = (target_size.height() - scaled.height()) // 2
+                        painter.drawPixmap(dx, dy, scaled)
 
-                    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
-                    gradient = QLinearGradient(0, 0, target_size.width(), 0)
-                    gradient.setColorAt(0.0, QColor(0, 0, 0, 255))
-                    gradient.setColorAt(0.5, QColor(0, 0, 0, 255))
-                    gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
+                        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_DestinationIn)
+                        gradient = QLinearGradient(0, 0, target_size.width(), 0)
+                        gradient.setColorAt(0.0, QColor(0, 0, 0, 255))
+                        gradient.setColorAt(0.5, QColor(0, 0, 0, 255))
+                        gradient.setColorAt(1.0, QColor(0, 0, 0, 0))
 
-                    painter.fillRect(cropped_faded.rect(), QBrush(gradient))
-                    if painter.isActive():
-                        painter.end()
+                        painter.fillRect(cropped_faded.rect(), QBrush(gradient))
+                        if painter.isActive():
+                            painter.end()
 
-                    widget.set_image(cropped_faded)
+                        widget.set_image(cropped_faded)
             except Exception as e:
                 logger.debug(f"Failed to process image for AppID {app_id}: {e}")
 

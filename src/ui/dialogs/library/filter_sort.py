@@ -5,7 +5,12 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QListWidgetItem
 
-from ui.dialogs.library.widgets import GameItemWidget, format_size
+from ui.dialogs.library.widgets import (
+    GameItemWidget,
+    GameTileWidget,
+    GameCompactWidget,
+    format_size,
+)
 
 try:
     from managers.db_manager import DatabaseManager
@@ -108,6 +113,8 @@ class LibraryFilterSortMixin:
             LibraryFilterSortMixin._current_pinned_cache = None
 
     def _on_sort_changed(self) -> None:
+        if hasattr(self, "sort_button") and hasattr(self, "sort_combo"):
+            self.sort_button.setText(f"Sort by: {self.sort_combo.currentText()} ▾")
         if self.settings:
             sort_option = self.sort_combo.currentData()
             self.settings.setValue("library_sort_option", sort_option)
@@ -190,29 +197,52 @@ class LibraryFilterSortMixin:
         steam_games = getattr(self, "_steam_tab_games", [])
 
 
-        # Collect all AppIDs managed by ACCELA or AT0-M so they don't appear in Steam tab
+        # Collect all AppIDs managed exclusively by ACCELA or AT0-M so they don't appear in Steam tab
         managed_appids = set()
         for g in all_manager_games:
             aid = str(g.get("appid", "")).strip()
             if aid and aid not in ("0", "N/A", "unknown"):
                 if game_is_dlc_only(g):
-                    continue
+                    # Only ASSella DLC-only games bypass managed_appids to appear on the Steam tab.
+                    # AT0-M DLC-only games remain managed and stay on the AT0-M tab.
+                    if not (g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game")):
+                        continue
                 if g.get("is_accela_install") or g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game"):
                     managed_appids.add(aid)
         try:
             from utils.plugin_games import load_plugin_library
-            managed_appids.update(load_plugin_library().keys())
+            for p_aid in load_plugin_library().keys():
+                managed_appids.add(str(p_aid).strip())
         except Exception:
             pass
 
-        # Unmanaged Steam games: strictly exclude any game in ACCELA or AT0-M
-        steam_unmanaged = [
-            g
-            for g in steam_games
-            if str(g.get("appid", "")).strip() not in managed_appids
-            and not g.get("is_accela_install")
-            and not g.get("is_atom")
-        ]
+        # Steam tab games: unmanaged Steam games AND ASSella DLC-only games (excluding AT0-M games)
+        seen_steam_aids = set()
+        steam_unmanaged = []
+        for g in steam_games:
+            aid = str(g.get("appid", "")).strip()
+            is_atom_game = bool(g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game") or aid in managed_appids)
+            is_assella_dlc_only = game_is_dlc_only(g) and not is_atom_game
+            if is_assella_dlc_only:
+                steam_unmanaged.append(g)
+                if aid:
+                    seen_steam_aids.add(aid)
+            elif (
+                aid not in managed_appids
+                and not g.get("is_accela_install")
+                and not g.get("is_atom")
+            ):
+                steam_unmanaged.append(g)
+                if aid:
+                    seen_steam_aids.add(aid)
+
+        # Include any ASSella DLC-only games from manager that might not have been in steam_games
+        for g in all_manager_games:
+            aid = str(g.get("appid", "")).strip()
+            is_atom_game = bool(g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game") or aid in managed_appids)
+            if aid and game_is_dlc_only(g) and not is_atom_game and aid not in seen_steam_aids:
+                steam_unmanaged.append(g)
+                seen_steam_aids.add(aid)
 
         # Update tab counts on the bar
         accela_total = sum(
@@ -284,7 +314,7 @@ class LibraryFilterSortMixin:
         elif active_tab == TAB_ATOM:
             tab_label = "AT0-M"
         else:
-            tab_label = "ACCELA"
+            tab_label = "ASSella"
 
         if active_tab == TAB_STEAM and getattr(self, "_steam_scan_in_progress", False) and len(games) == 0:
             self.info_label.setText("Scanning Steam libraries for installed games... Please wait.")
@@ -312,6 +342,7 @@ class LibraryFilterSortMixin:
         size = game.get("size_on_disk", 0)
         appid = str(game.get("appid", "0"))
         is_selected = appid in self._selected_appids
+
         widget = GameItemWidget(
             game,
             format_size(size),
@@ -322,6 +353,7 @@ class LibraryFilterSortMixin:
             applist_2_0_enabled=self.applist_2_0_enabled,
             parent_dialog=self,
         )
+
         item = QListWidgetItem()
         item.setData(Qt.ItemDataRole.UserRole, game)
         item.setSizeHint(widget.sizeHint())

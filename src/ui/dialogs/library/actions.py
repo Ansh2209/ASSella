@@ -131,11 +131,82 @@ class LibraryActionsMixin:
         if hasattr(self, "fab_menu_container") and self.fab_menu_container.isVisible():
             self.fab_menu_container.setVisible(False)
             count = len(self._selected_appids)
-            self.selection_fab.setText(f"Actions ({count})  ▼" if count else "Actions  ▼")
+            if hasattr(self, "selection_fab") and self.selection_fab:
+                if self._select_mode and count > 0:
+                    self.selection_fab.setText(f"Actions ({count})  ▼")
+                else:
+                    self.selection_fab.setText("options")
 
-    def _toggle_select_mode(self) -> None:
+    def _on_fab_clicked(self) -> None:
+        """Handle click on persistent bottom-right FAB button."""
+        count = len(self._selected_appids)
+        if self._select_mode and count > 0:
+            self._show_fab_menu()
+        else:
+            self._show_options_menu()
+
+    def _show_options_menu(self) -> None:
+        """Show options popup menu containing Multi-Select, Scan for LUA, and Scan Libraries."""
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"""
+            QMenu {{
+                background-color: #1a1a20;
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                padding: 6px;
+            }}
+            QMenu::item {{
+                padding: 8px 20px;
+                border-radius: 4px;
+                font-size: 12px;
+                color: #FFFFFF;
+            }}
+            QMenu::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: {self.accent_color};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: rgba(255, 255, 255, 0.1);
+                margin: 4px 8px;
+            }}
+            """
+        )
+
+        select_text = "Exit Multi-Select" if self._select_mode else "Multi-Select"
+        act_select = QAction(select_text, menu)
+        act_select.triggered.connect(lambda: self._toggle_select_mode())
+        menu.addAction(act_select)
+
+        act_lua = QAction("Scan for LUA", menu)
+        act_lua.setToolTip("Scan for user-provided .lua files in the cached_luas folder")
+        act_lua.triggered.connect(self._on_scan_imports_clicked)
+        menu.addAction(act_lua)
+
+        act_scan = QAction("Scan Steam Libraries", menu)
+        act_scan.setToolTip("Scan local Steam library folders for installed games")
+        act_scan.triggered.connect(self._scan_for_games)
+        menu.addAction(act_scan)
+
+        if hasattr(self, "selection_fab") and self.selection_fab:
+            menu.adjustSize()
+            pos = self.selection_fab.mapToGlobal(self.selection_fab.rect().topLeft())
+            pos.setY(pos.y() - menu.sizeHint().height() - 6)
+            menu.exec(pos)
+
+    def _toggle_select_mode(self, enabled: Optional[bool] = None) -> None:
         """Enable or disable multi-select mode."""
-        self._select_mode = self.select_mode_button.isChecked()
+        if enabled is not None:
+            self._select_mode = enabled
+        elif hasattr(self, "select_mode_button") and self.sender() == self.select_mode_button:
+            self._select_mode = self.select_mode_button.isChecked()
+        else:
+            self._select_mode = not self._select_mode
+
+        if hasattr(self, "select_mode_button"):
+            self.select_mode_button.setChecked(self._select_mode)
         if not self._select_mode:
             self._selected_appids.clear()
 
@@ -143,14 +214,20 @@ class LibraryActionsMixin:
         self._refresh_game_list()
 
     def _update_selection_footer(self) -> None:
-        """Update the selection FAB state and count."""
+        """Update the selection/options FAB state and count."""
         count = len(self._selected_appids)
-        if self._select_mode and count > 0:
-            self.selection_fab.setText(f"Actions ({count})  ▼")
+        if hasattr(self, "selection_fab") and self.selection_fab:
+            if self._select_mode and count > 0:
+                self.selection_fab.setText(f"Actions ({count})  ▼")
+            else:
+                self.selection_fab.setText("options")
             self.selection_fab.setVisible(True)
             self._position_selection_fab()
-        else:
-            self.selection_fab.setVisible(False)
+
+    def _on_clear_selection_clicked(self) -> None:
+        """Clear selection and close action menu."""
+        self._clear_selection()
+        self._close_fab_menu()
 
     def _clear_selection(self) -> None:
         """Clear all selections and refresh visual state."""

@@ -1,7 +1,9 @@
 import logging
+import re
+from pathlib import Path
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QSize, Qt, QTimer, QPropertyAnimation
+from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, QPropertyAnimation
 from PyQt6.QtGui import QColor, QIcon, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
@@ -94,7 +96,7 @@ class BottomTitleBar(QFrame):
         left_widget = self._create_left_section()
         right_widget = self._create_right_section()
 
-        self.title_label = QLabel("ASSella")
+        self.title_label = QLabel()
         self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.title_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
@@ -275,7 +277,7 @@ class BottomTitleBar(QFrame):
         """
         )
         if self.title_label:
-            self.title_label.setStyleSheet(f"color: {accent_color}; font-weight: bold; font-size: 14px;")
+            self._update_title_logo()
 
     def update_style(self) -> None:
         """Update the style when colors change."""
@@ -283,11 +285,60 @@ class BottomTitleBar(QFrame):
         self._update_button_colors()
         self._update_button_styles()
         if self.title_label:
-            accent_color = get_settings().value("accent_color", "#C06C84")
-            self.title_label.setStyleSheet(f"color: {accent_color}; font-weight: bold; font-size: 14px;")
+            self._update_title_logo()
         if self.search_controller:
             self.search_controller._apply_style()
         self.refresh_search_mode()
+
+    def _update_title_logo(self) -> None:
+        """Render the custom SVG title logo tinted with the active accent color."""
+        if not self.title_label:
+            return
+        settings = get_settings()
+        accent_color = settings.value("accent_color", "#C06C84")
+
+        logo_path = Paths.resource("logo/assella_title.svg")
+        fallback_path = Path.home() / ".local" / "share" / "ACCELA" / "Logo" / "001-Artboard-6.svg"
+
+        target_path = None
+        if logo_path and logo_path.exists():
+            target_path = logo_path
+        elif fallback_path.exists():
+            target_path = fallback_path
+
+        if target_path and target_path.exists():
+            try:
+                with open(target_path, "r", encoding="utf-8") as f:
+                    svg_content = f.read()
+                # Apply tight viewBox if reading original artboard
+                if "0 0 666.067 253.333" in svg_content:
+                    svg_content = svg_content.replace("0 0 666.067 253.333", "94 58 478 123")
+                # Dynamically tint all paths with the user's accent color
+                svg_content = re.sub(
+                    r"\.cls-1\s*\{[^}]*fill:[^};]+",
+                    f".cls-1{{fill:{accent_color}",
+                    svg_content,
+                )
+                renderer = QSvgRenderer(svg_content.encode("utf-8"))
+                if renderer.isValid():
+                    target_h = 20
+                    target_w = int(target_h * (478.0 / 123.0))  # ~78px
+                    pixmap = QPixmap(target_w, target_h)
+                    pixmap.fill(Qt.GlobalColor.transparent)
+                    painter = QPainter(pixmap)
+                    renderer.render(painter, QRectF(0, 0, target_w, target_h))
+                    painter.end()
+                    self.title_label.setPixmap(pixmap)
+                    self.title_label.setText("")
+                    self.title_label.setToolTip("ASSella")
+                    return
+            except Exception as e:
+                logger.warning(f"Failed to render custom title logo SVG: {e}")
+
+        # Fallback to plain styled text if SVG cannot be loaded
+        self.title_label.setPixmap(QPixmap())
+        self.title_label.setText("ASSella")
+        self.title_label.setStyleSheet(f"color: {accent_color}; font-weight: bold; font-size: 14px;")
 
     def _update_button_styles(self) -> None:
         """Update all button styles with custom border and background."""
