@@ -19,6 +19,14 @@ This file defines essential guidelines, build rules, versioning conventions, and
 - **DLC-Only Depot Selection Guard**: Any DLC-only operation (`is_dlc_only=True`) must always prompt the user with `DepotSelectionDialog` (`should_prompt = True`, `auto_skip = False`) and must not silently reuse cached base-game selections.
 - **External Metadata & Fix Caching**: External API lookups (e.g. `lua.tools` community fixes) must use persistent disk and memory caching (7-day default TTL) with 404/empty-result caching to prevent UI rate-limiting, backed by a manual refresh button.
 - **Pre-release Verification Suite (`scripts/prerelease_check.py`)**: Do NOT run this test suite automatically. Never run it during development, after tasks, or on the `canary` branch unless the user explicitly and deliberately requests it. Automated CI also skips this suite on the `canary` branch.
+- **AT0-M DLC-Only & Complication Invariants**:
+  - **DLC-Only AT0-M Mapping Invariant**: In DLC-only mode, only the user's selected DLC depots and their mapped DLC AppIDs (resolved via `build_app_to_depots_map`) are injected into `AdditionalApps`, `AdditionalDepots`, and `DecryptionKeys`. The parent/base AppID must **NEVER** enter `AdditionalApps` for a DLC-only game, neither on initial AT0-M migration nor when converting back to ACCELA mode. If a selected DLC depot lacks a decryption key, trigger an emergency manifest fetch before completing mapping.
+  - **AT0-M Pre-Handoff Sanitization**:
+    - **Goldberg**: If Goldberg emulator is detected (`_is_goldberg_applied`), restore `.dll.valve` / `.so.valve` backups and delete `steam_settings/` / `steam_appid.txt` before Steam handoff (ignoring non-fatal errors).
+    - **EOS Proxy**: Revert EOS proxy DLL to genuine binaries (`EOSDetector.remove_proxy`) prior to handoff, as Steam file integrity checks overwrite modified DLLs.
+    - **Manifest Pinning**: For games with pinned builds, write the depot-to-manifest mapping to `config.yaml` (`ManifestIds`) via `set_manifest_ids` to lock the build in SLSsteam.
+    - **No Delayed Install API**: Never trigger delayed `slssteam_api_send("install|...")` after migration. Prompt the user with a dialog to restart Steam so Steam client safely adopts files without unexpected redownloads.
+    - **Complications Preflight Review**: If a game being migrated has any complications (pinned build, DLC-only, EOS proxy, Goldberg), display a preflight review window detailing all config additions and reversions before proceeding. Clean games proceed directly.
 
 ---
 
