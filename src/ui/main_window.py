@@ -1814,7 +1814,12 @@ class MainWindow(QMainWindow):
         )
 
         time_text = expiry_info["text"]
-        color = expiry_info["color"]
+        accent_color = self.settings.value("accent_color", "#C06C84", type=str) if self.settings else "#C06C84"
+        from utils.color_utils import get_semantic_colors
+        sem_colors = get_semantic_colors(accent_color)
+        status_key = expiry_info.get("status", "success")
+        color = sem_colors.get(status_key, expiry_info.get("color", "#a8dab5"))
+
         quota_str = f'API: {usage}/{limit} | <span style="color: {color}; font-weight: bold;">{time_text}</span>'
 
         if expiry_info["is_lifetime"]:

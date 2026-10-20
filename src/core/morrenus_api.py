@@ -329,6 +329,7 @@ def compute_api_key_expiry_info(
         return {
             "text": "∞",
             "color": "#10b981",
+            "status": "success",
             "percentage": 100.0,
             "days": 999999,
             "hours": 999999,
@@ -350,6 +351,7 @@ def compute_api_key_expiry_info(
         return {
             "text": "Unknown",
             "color": "rgba(255, 255, 255, 0.75)",
+            "status": "neutral",
             "percentage": 0.0,
             "days": 0,
             "hours": 0,
@@ -365,6 +367,7 @@ def compute_api_key_expiry_info(
         return {
             "text": "0d",
             "color": "#ef4444",
+            "status": "error",
             "percentage": 0.0,
             "days": 0,
             "hours": 0,
@@ -399,15 +402,19 @@ def compute_api_key_expiry_info(
         display_text = f"{days}d"
 
     if percentage >= 75.0:
-        color = "#10b981"  # Emerald green
+        color = "#10b981"  # Emerald green fallback
+        status = "success"
     elif percentage >= 25.0:
-        color = "#f59e0b"  # Amber / orange
+        color = "#f59e0b"  # Amber / orange fallback
+        status = "warning"
     else:
-        color = "#ef4444"  # Red
+        color = "#ef4444"  # Red fallback
+        status = "error"
 
     return {
         "text": display_text,
         "color": color,
+        "status": status,
         "percentage": percentage,
         "days": days,
         "hours": hours,
