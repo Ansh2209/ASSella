@@ -166,8 +166,10 @@ def create_downloads_tab(dialog) -> QWidget:
     loc_row.addWidget(dialog.dl_location_combo)
     dl_layout.addLayout(loc_row)
 
+    from utils.auto_tune import get_learned_display
+    learned_text = get_learned_display(dialog.settings, "auto_tune_best")
     dialog.auto_tune_checkbox = create_checkbox_setting(
-        "Auto adapting limiter (beta)",
+        f"Auto adapting limiter ({learned_text})",
         "auto_max_downloads",
         True,
         dialog,

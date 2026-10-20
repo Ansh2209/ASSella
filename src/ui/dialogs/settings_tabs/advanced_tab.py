@@ -60,8 +60,10 @@ def create_advanced_tab(dialog) -> QWidget:
     )
     ws_layout.addWidget(dialog.enable_workshop_downloader_checkbox)
 
+    from utils.auto_tune import get_learned_display
+    ws_learned_text = get_learned_display(dialog.settings, "workshop_auto_tune_best")
     dialog.workshop_auto_tune_checkbox = create_checkbox_setting(
-        "Auto adapting limiter (beta)",
+        f"Auto adapting limiter ({ws_learned_text})",
         "workshop_auto_max_downloads",
         True,
         dialog,
