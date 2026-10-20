@@ -108,48 +108,83 @@ class LibraryActionsMixin:
                 self.fab_menu_container.raise_()
 
     def _show_fab_menu(self) -> None:
-        is_visible = self.fab_menu_container.isVisible()
-        if not is_visible:
-            count = len(self._selected_appids)
-            if hasattr(self, "btn_move_atom") and self.btn_move_atom:
-                self.btn_move_atom.setEnabled(count > 0)
-            if hasattr(self, "btn_update") and self.btn_update:
-                self.btn_update.setEnabled(count > 0)
-            if hasattr(self, "btn_uninstall") and self.btn_uninstall:
-                self.btn_uninstall.setEnabled(count > 0)
-            if hasattr(self, "btn_clear") and self.btn_clear:
-                self.btn_clear.setEnabled(count > 0)
-            if hasattr(self, "btn_select_all") and self.btn_select_all:
-                self.btn_select_all.setEnabled(True)
+        """Show drop-up action menu for multi-selected games."""
+        menu = QMenu(self)
+        menu.setStyleSheet(
+            f"""
+            QMenu {{
+                background-color: #1a1a20;
+                color: #FFFFFF;
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 8px;
+                padding: 6px;
+            }}
+            QMenu::item {{
+                padding: 8px 24px;
+                border-radius: 4px;
+                font-size: 12px;
+                color: #FFFFFF;
+            }}
+            QMenu::item:selected {{
+                background-color: rgba(255, 255, 255, 0.12);
+                color: {self.accent_color};
+            }}
+            QMenu::item:disabled {{
+                color: rgba(255, 255, 255, 0.35);
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: rgba(255, 255, 255, 0.1);
+                margin: 4px 8px;
+            }}
+            """
+        )
 
-            self.fab_menu_container.setVisible(True)
-            self._position_selection_fab()
+        count = len(self._selected_appids)
 
-            # Material Design 3 menu entry fade-in animation
-            op = QGraphicsOpacityEffect(self.fab_menu_container)
-            self.fab_menu_container.setGraphicsEffect(op)
-            self.anim = QPropertyAnimation(op, b"opacity")
-            self.anim.setDuration(150)
-            self.anim.setStartValue(0.0)
-            self.anim.setEndValue(1.0)
-            self.anim.setEasingCurve(QEasingCurve.Type.OutQuad)
-            self.anim.start()
+        act_select_all = QAction("✓  Select All", menu)
+        act_select_all.triggered.connect(self._on_select_all_action_clicked)
+        menu.addAction(act_select_all)
 
-            self.selection_fab.setText("✕  Close")
-        else:
-            self._close_fab_menu()
+        menu.addSeparator()
+
+        act_move_atom = QAction("→  Move to AT0-M", menu)
+        act_move_atom.setEnabled(count > 0)
+        act_move_atom.triggered.connect(self._on_move_to_atom_action_clicked)
+        menu.addAction(act_move_atom)
+
+        act_update = QAction("↻  Update Selected", menu)
+        act_update.setEnabled(count > 0)
+        act_update.triggered.connect(self._on_update_action_clicked)
+        menu.addAction(act_update)
+
+        act_uninstall = QAction("✕  Uninstall Selected", menu)
+        act_uninstall.setEnabled(count > 0)
+        act_uninstall.triggered.connect(self._on_uninstall_action_clicked)
+        menu.addAction(act_uninstall)
+
+        menu.addSeparator()
+
+        act_clear = QAction("↩  Clear Selection", menu)
+        act_clear.setEnabled(count > 0)
+        act_clear.triggered.connect(self._on_clear_selection_clicked)
+        menu.addAction(act_clear)
+
+        act_exit = QAction("✕  Exit Multi-Select", menu)
+        act_exit.triggered.connect(lambda: self._toggle_select_mode(False))
+        menu.addAction(act_exit)
+
+        if hasattr(self, "selection_fab") and self.selection_fab:
+            menu.adjustSize()
+            pos = self.selection_fab.mapToGlobal(self.selection_fab.rect().topLeft())
+            menu_w = menu.sizeHint().width()
+            menu_h = menu.sizeHint().height()
+            pos.setY(pos.y() - menu_h - 6)
+            pos.setX(max(10, pos.x() + self.selection_fab.width() - menu_w))
+            menu.exec(pos)
 
     def _close_fab_menu(self) -> None:
-        if hasattr(self, "fab_menu_container") and self.fab_menu_container.isVisible():
-            self.fab_menu_container.setVisible(False)
-            count = len(self._selected_appids)
-            if hasattr(self, "selection_fab") and self.selection_fab:
-                if self._select_mode and count > 0:
-                    self.selection_fab.setText(f"Actions ({count})  ▼")
-                elif self._select_mode:
-                    self.selection_fab.setText("Select  ▼")
-                else:
-                    self.selection_fab.setText("options")
+        pass
 
     def _on_fab_clicked(self) -> None:
         """Handle click on persistent bottom-right FAB button."""
@@ -211,7 +246,10 @@ class LibraryActionsMixin:
         if hasattr(self, "selection_fab") and self.selection_fab:
             menu.adjustSize()
             pos = self.selection_fab.mapToGlobal(self.selection_fab.rect().topLeft())
-            pos.setY(pos.y() - menu.sizeHint().height() - 6)
+            menu_w = menu.sizeHint().width()
+            menu_h = menu.sizeHint().height()
+            pos.setY(pos.y() - menu_h - 6)
+            pos.setX(max(10, pos.x() + self.selection_fab.width() - menu_w))
             menu.exec(pos)
 
     def _toggle_select_mode(self, enabled: Optional[bool] = None) -> None:
@@ -236,9 +274,9 @@ class LibraryActionsMixin:
         count = len(self._selected_appids)
         if hasattr(self, "selection_fab") and self.selection_fab:
             if self._select_mode and count > 0:
-                self.selection_fab.setText(f"Actions ({count})  ▼")
+                self.selection_fab.setText(f"Actions ({count})  ▲")
             elif self._select_mode:
-                self.selection_fab.setText("Select  ▼")
+                self.selection_fab.setText("Select  ▲")
             else:
                 self.selection_fab.setText("options")
             self.selection_fab.setVisible(True)
