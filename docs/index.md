@@ -12,6 +12,9 @@ hero:
     - theme: brand
       text: Installation Guide
       link: /install
+    - theme: brand
+      text: Decky Plugin (Uran)
+      link: /decky
     - theme: alt
       text: Arch / SteamOS Repo
       link: /arch-repo
@@ -23,6 +26,9 @@ features:
   - icon: 🚀
     title: One-Line Installer & Updates
     details: Instant setup on Steam Deck and Linux desktops with automatic backup, delta-update zsync support, and rollback pins.
+  - icon: 🎮
+    title: Steam Deck Companion Plugin
+    details: Official Decky Loader plugin (Uran) for native game search, injection, and library management directly in Game Mode.
   - icon: ⚡
     title: Modern Manifest Architecture
     details: ACF-independent metadata tracking with smart depot discovery, manifest repair, and multi-library discovery.
