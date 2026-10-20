@@ -781,25 +781,19 @@ class MainWindow(QMainWindow):
         
         self._quote_text, self._quote_source = self.quotes[0]
 
-        self.quote_label = QLabel(self.quotes[0][0])
-        self.quote_label.setStyleSheet("font-style: italic; font-size: 12px; color: rgba(255, 255, 255, 0.92); background: transparent; border: none;")
-        # The footer spans the window, so a long quote would otherwise raise the
-        # window's minimum width and stretch the whole app sideways.
+        self.quote_label = QLabel()
+        self.quote_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.quote_label.setStyleSheet(
+            "font-size: 11.5px; color: rgba(255, 255, 255, 0.92); background: transparent; border: none;"
+        )
         self.quote_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         self.quote_label.setMinimumWidth(0)
 
-        self.quote_source_label = QLabel(f"— {self.quotes[0][1]}")
-        self.quote_source_label.setStyleSheet("font-size: 11px; font-weight: bold; color: rgba(255, 255, 255, 0.55); background: transparent; border: none;")
-        self.quote_source_label.setSizePolicy(
-            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred
-        )
+        self.quote_source_label = None
 
-        footer_layout.addStretch()
-        footer_layout.addWidget(self.quote_label)
-        footer_layout.addWidget(self.quote_source_label)
-        footer_layout.addStretch()
+        footer_layout.addWidget(self.quote_label, 1)
 
         self.layout.addWidget(self.footer_widget)
         self._refresh_quote_display()
@@ -1593,16 +1587,15 @@ class MainWindow(QMainWindow):
         if available_quotes:
             import random
             self._quote_text, self._quote_source = random.choice(available_quotes)
-            self.quote_source_label.setText(f"— {self._quote_source}")
+            if hasattr(self, "quote_source_label") and self.quote_source_label:
+                self.quote_source_label.setText(f"— {self._quote_source}")
             self._refresh_quote_display()
 
     def _refresh_quote_display(self) -> None:
         """Draw the rotating quote elided to the footer width.
 
-        A QLabel without word wrap reports its full text as its size hint, and
-        the footer spans the window, so an unelided long quote becomes the
-        window's minimum width and stretches the app. Eliding keeps the quote on
-        the footer's existing line; the full text stays in the tooltip.
+        Formats the quote inside typographic quotation marks and the source game in italics.
+        Eliding ensures long quotes never force minimum width on the window.
         """
         if not getattr(self, "quote_label", None) or not getattr(
             self, "footer_widget", None
@@ -1610,21 +1603,27 @@ class MainWindow(QMainWindow):
             return
 
         layout = self.footer_widget.layout()
-        margins = layout.contentsMargins()
-        available = (
-            self.footer_widget.width()
-            - margins.left()
-            - margins.right()
-            - self.quote_source_label.sizeHint().width()
-            - layout.spacing()
-        )
+        margins = layout.contentsMargins() if layout else None
+        left_m = margins.left() if margins else 15
+        right_m = margins.right() if margins else 15
+
+        # Available horizontal space inside the footer widget
+        available = max(100, self.footer_widget.width() - left_m - right_m)
         metrics = QFontMetrics(self.quote_label.font())
-        self.quote_label.setText(
-            metrics.elidedText(
-                self._quote_text, Qt.TextElideMode.ElideRight, max(0, available)
-            )
+
+        source_str = f" — {self._quote_source}"
+        source_width = metrics.horizontalAdvance(source_str) + 30
+        max_quote_width = max(50, available - source_width)
+
+        elided_quote = metrics.elidedText(
+            self._quote_text, Qt.TextElideMode.ElideRight, max_quote_width
         )
-        tooltip = f"{self._quote_text} — {self._quote_source}"
+        html = (
+            f'“{elided_quote}” &nbsp;—&nbsp; '
+            f'<i style="color: rgba(255, 255, 255, 0.55); font-style: italic;">{self._quote_source}</i>'
+        )
+        self.quote_label.setText(html)
+        tooltip = f'“{self._quote_text}” — {self._quote_source}'
         self.quote_label.setToolTip(tooltip)
 
     def check_steamdb_status(self) -> None:
