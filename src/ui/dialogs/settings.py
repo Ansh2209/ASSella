@@ -573,7 +573,7 @@ class SettingsDialog(QDialog):
         self.btn_ok = QPushButton("✓  OK", self.button_container)
         self.btn_ok.setObjectName("SettingsOkButton")
         self.btn_ok.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_ok.setFixedSize(82, 32)
+        self.btn_ok.setFixedSize(88, 32)
         self.btn_ok.setStyleSheet(f"""
             QPushButton#SettingsOkButton {{
                 background-color: {self.accent_color};
@@ -602,21 +602,21 @@ class SettingsDialog(QDialog):
         self.btn_cancel.setObjectName("SettingsCancelButton")
         self.btn_cancel.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_cancel.setFixedSize(88, 32)
-        self.btn_cancel.setStyleSheet("""
+        self.btn_cancel.setStyleSheet(f"""
             QPushButton#SettingsCancelButton {{
-                background-color: rgba(25, 25, 28, 0.90);
-                color: #FFFFFF;
-                font-weight: 500;
+                background-color: {self.accent_color};
+                color: #000000;
+                font-weight: bold;
                 font-size: 9.5pt;
                 border-radius: 14px;
-                border: 1px solid rgba(255, 255, 255, 0.22);
+                border: none;
             }}
             QPushButton#SettingsCancelButton:hover {{
-                background-color: rgba(255, 255, 255, 0.16);
-                border-color: rgba(255, 255, 255, 0.40);
+                background-color: #FFFFFF;
+                color: #000000;
             }}
             QPushButton#SettingsCancelButton:pressed {{
-                background-color: rgba(255, 255, 255, 0.05);
+                background-color: rgba(255, 255, 255, 0.85);
             }}
         """)
         shadow_cancel = QGraphicsDropShadowEffect(self.btn_cancel)
