@@ -96,7 +96,7 @@ def is_base_game_main_depot(
         return False
 
     # If depot_meta is available and lacks dlcappid / is_dlc, it belongs to the base game
-    if depot_meta is not None and isinstance(depot_meta, dict):
+    if bool(depot_meta) and isinstance(depot_meta, dict):
         dlc_val = str(depot_meta.get("dlcappid") or "").strip()
         if not dlc_val or dlc_val == base_appid_str:
             if not depot_meta.get("is_dlc"):
@@ -131,18 +131,29 @@ def filter_dlc_depots_only(
         except Exception as e:
             logger.debug(f"[DLCHelpers] depot metadata lookup failed for {appid_str}: {e}")
 
+    dlc_mapped_depots: Set[str] = set()
+    try:
+        app_to_depots = build_app_to_depots_map(appid_str, extra_appids=dlc_set, candidate_depots=depot_ids)
+        for aid, dids in app_to_depots.items():
+            if aid != appid_str and (not dlc_set or aid in dlc_set):
+                dlc_mapped_depots.update(str(d).strip() for d in dids)
+    except Exception as e:
+        logger.debug(f"[DLCHelpers] build_app_to_depots_map in filter_dlc_depots_only failed: {e}")
+
     filtered = []
     for d in depot_ids:
         d_str = str(d).strip()
-        if not d_str.isdigit() or d_str == appid_str:
+        if not d_str.isdigit() or d_str == appid_str or d_str in dlc_set:
+            continue
+        if d_str in dlc_mapped_depots:
+            filtered.append(d_str)
             continue
         d_meta = meta_dict.get(d_str) or meta_dict.get(int(d_str) if d_str.isdigit() else 0) or {}
         desc = d_meta.get("desc", "") if isinstance(d_meta, dict) else ""
         if is_dlc_depot(d_str, desc=desc, base_appid=appid_str, depot_meta=d_meta if isinstance(d_meta, dict) else None, dlc_appids=dlc_set):
             filtered.append(d_str)
         elif not is_base_game_main_depot(d_str, desc=desc, base_appid=appid_str, depot_meta=d_meta if isinstance(d_meta, dict) else None):
-            # If depot has no metadata and isn't base game regex, keep only if no explicit dlc_set
-            if not dlc_set and not meta_dict:
+            if not meta_dict:
                 filtered.append(d_str)
 
     return filtered
@@ -274,14 +285,18 @@ def build_app_to_depots_map(
         plugin_lib = load_plugin_library()
         for aid in list(target_apps):
             rec = plugin_lib.get(aid, {})
+            is_dlc_game = rec.get("dlc_only")
+            dlc_ids = [str(x).strip() for x in rec.get("dlc_appids", []) if str(x).strip() and str(x).strip() != appid_str]
             for did in rec.get("depots", []):
                 did_s = str(did).strip()
                 if did_s != appid_str:
-                    mapping.setdefault(aid, set()).add(did_s)
-            for dlc_id in rec.get("dlc_appids", []):
-                s_dlc = str(dlc_id).strip()
-                if s_dlc and s_dlc != appid_str:
-                    target_apps.add(s_dlc)
+                    if is_dlc_game and dlc_ids:
+                        for d_id in dlc_ids:
+                            mapping.setdefault(d_id, set()).add(did_s)
+                    else:
+                        mapping.setdefault(aid, set()).add(did_s)
+            for dlc_id in dlc_ids:
+                target_apps.add(dlc_id)
     except Exception as e:
         logger.warning(f"[DLCHelpers] plugin library unreadable, plugin DLCs are not mapped: {e}")
 

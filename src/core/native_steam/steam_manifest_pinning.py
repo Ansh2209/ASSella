@@ -196,19 +196,40 @@ def resolve_pinned_manifests(game_data: Dict[str, Any], appid: str) -> Dict[str,
             if gid and str(gid).isdigit() and str(depot_id) not in manifest_map:
                 manifest_map[str(depot_id)] = str(gid)
 
-    # 4. Fall back to Voices recommended build overrides
+    # 5. Fall back to scanning cached hubcap manifest bundles for this build/game
     if not manifest_map:
         try:
-            from managers.voices_manager import VoicesManager
-            rec = VoicesManager.get_instance().get_recommendation(
-                appid_str, game_data.get("game_name", "")
-            )
-            if rec and rec.get("manifest_overrides"):
-                for d, gid in rec["manifest_overrides"].items():
-                    if d and gid:
-                        manifest_map[str(d)] = str(gid)
-        except Exception:
-            pass
+            import os
+            import zipfile
+            from utils.helpers import get_base_path
+            hubcap_dir = Path(get_base_path()) / "hubcap_manifests"
+            if hubcap_dir.exists():
+                build_id = str(
+                    game_data.get("buildid")
+                    or (settings.value(f"installed_buildid/{appid_str}", "") if settings else "")
+                ).strip()
+                zips = []
+                if build_id:
+                    specific = hubcap_dir / f"accela_fetch_{appid_str}_build_{build_id}.zip"
+                    if specific.exists():
+                        zips.append(specific)
+                zips.extend(hubcap_dir.glob(f"accela_fetch_{appid_str}*.zip"))
+                for z_path in zips:
+                    try:
+                        with zipfile.ZipFile(z_path, "r") as zf:
+                            for name in zf.namelist():
+                                base_name = os.path.basename(name)
+                                m_file = re.match(r"^(\d+)_(\d+)\.manifest$", base_name)
+                                if m_file:
+                                    did, mid = m_file.group(1), m_file.group(2)
+                                    if did not in manifest_map and did != appid_str:
+                                        manifest_map[did] = mid
+                        if manifest_map:
+                            break
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.debug(f"[ManifestPinning] Zip manifest scan fallback error: {e}")
 
     if manifest_map:
         logger.info(
@@ -216,3 +237,4 @@ def resolve_pinned_manifests(game_data: Dict[str, Any], appid: str) -> Dict[str,
         )
 
     return manifest_map
+
