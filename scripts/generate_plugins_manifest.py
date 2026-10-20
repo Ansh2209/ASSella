@@ -8,13 +8,6 @@ and formats a clean plugins_manifest.json.
 import argparse
 import hashlib
 import json
-from datetime import datetime, timezone
-from pathlib import Path
-
-
-import argparse
-import hashlib
-import json
 import os
 import shutil
 import subprocess

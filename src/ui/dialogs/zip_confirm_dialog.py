@@ -1752,7 +1752,14 @@ class ZipImportConfirmationDialog(QDialog):
                 _read_config_content,
                 _get_section_bounds,
             )
-            from utils.plugin_games import load_plugin_library, save_plugin_library, SHARED_REDISTS, SLSBridge
+            from utils.plugin_games import (
+                SHARED_REDISTS,
+                SLSBridge,
+                build_depot_comment,
+                build_key_comment,
+                load_plugin_library,
+                save_plugin_library,
+            )
             from core.native_steam.steam_manifest_pinning import (
                 resolve_pinned_manifests,
                 set_manifest_ids,
@@ -1829,20 +1836,18 @@ class ZipImportConfirmationDialog(QDialog):
 
                     # Invariant: Base AppID never in AdditionalDepots
                     for did, d_desc in missing_depots.items():
-                        depot_comment = f"{game_name} - {d_desc} ({did})" if d_desc else f"{game_name} ({did})"
+                        depot_comment = build_depot_comment(game_name, did, d_desc, appid_str)
                         if did in SHARED_REDISTS:
                             depot_comment = "Steamworks Shared"
                         editor.add_depot(did, comment=depot_comment, app_id=appid_str)
 
                     # Invariant: Valid 64-hex keys in DecryptionKeys
                     for did, k in missing_keys.items():
-                        if did == appid_str:
-                            k_comment = f"{game_name} [AppKey] ({appid_str})"
-                        elif did in SHARED_REDISTS:
+                        if did in SHARED_REDISTS:
                             k_comment = "Steamworks Shared"
                         else:
                             d_desc = candidate_depots.get(did, "")
-                            k_comment = f"{game_name} - {d_desc}" if d_desc else game_name
+                            k_comment = build_key_comment(game_name, did, d_desc, appid_str)
                         editor.add_key(did, k, comment=k_comment)
 
                 # Keep plugin_library.json in sync

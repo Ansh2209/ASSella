@@ -41,7 +41,13 @@ from utils.yaml_config_manager import (
     _get_section_bounds,
 )
 from utils.sls_bridge import SLSBridge
-from utils.plugin_games import SHARED_REDISTS, load_plugin_library
+from utils.plugin_games import (
+    SHARED_REDISTS,
+    build_depot_comment,
+    build_key_comment,
+    comment_has_owner_tag,
+    load_plugin_library,
+)
 from utils.lua_parsing import iter_live_matches
 from ui.assets import DEPOT_BLACKLIST
 
@@ -721,7 +727,7 @@ def init_depots_tab(dialog) -> None:
                         m = re.match(r"^[ \t]*-[ \t]*(\d+)[ \t]*(?:#[ \t]*(.*))?$", line)
                         if m:
                             aid, comment = m.group(1), (m.group(2) or "")
-                            if (game_name and game_name.lower() in comment.lower()) or appid_str in comment:
+                            if (game_name and game_name.lower() in comment.lower()) or comment_has_owner_tag(comment, appid_str):
                                 if aid != appid_str:
                                     clean_c = re.sub(r"^\[DLC\]\s*", "", comment.strip(), flags=re.IGNORECASE)
                                     tagged_apps_from_config[aid] = clean_c or f"DLC {aid}"
@@ -733,7 +739,7 @@ def init_depots_tab(dialog) -> None:
                         m = re.match(r"^[ \t]*-[ \t]*(\d+)[ \t]*(?:#[ \t]*(.*))?$", line)
                         if m:
                             did, comment = m.group(1), (m.group(2) or "")
-                            if (game_name and game_name.lower() in comment.lower()) or appid_str in comment:
+                            if (game_name and game_name.lower() in comment.lower()) or comment_has_owner_tag(comment, appid_str):
                                 tagged_depots_from_config.add(did)
 
                 key_bounds = _get_section_bounds(cfg_text, "DecryptionKeys")
@@ -743,7 +749,7 @@ def init_depots_tab(dialog) -> None:
                         m = re.match(r"^[ \t]*['\"]?(\d+)['\"]?[ \t]*:[ \t]*['\"]?([a-fA-F0-9]{64})['\"]?[ \t]*(?:#[ \t]*(.*))?$", line)
                         if m:
                             did, kval, comment = m.group(1), m.group(2), (m.group(3) or "")
-                            if (game_name and game_name.lower() in comment.lower()) or appid_str in comment:
+                            if (game_name and game_name.lower() in comment.lower()) or comment_has_owner_tag(comment, appid_str):
                                 tagged_keys_from_config[did] = kval.lower()
             except Exception as e:
                 logger.debug(f"[DepotsTab] Error reading tagged config comments: {e}")
@@ -1372,7 +1378,7 @@ def init_depots_tab(dialog) -> None:
                         continue  # Safeguard: AppIDs must never be in AdditionalDepots
                     desired = desired_depots.get(did, did in state["live_depots"])
                     if desired and did not in state["live_depots"]:
-                        comment = f"{game_name} ({did})"
+                        comment = build_depot_comment(game_name, did, "", appid_str)
                         editor.add_depot(did, comment=comment, app_id=appid_str)
                         added_count += 1
                     elif not desired and did in state["live_depots"]:
@@ -1386,7 +1392,7 @@ def init_depots_tab(dialog) -> None:
                     kval = item["key"]
                     if desired and not item["in_config"]:
                         if kval:
-                            comment = f"{game_name} [AppKey]" if kid == appid_str else f"{game_name} ({kid})"
+                            comment = build_key_comment(game_name, kid, "", appid_str)
                             editor.add_key(kid, kval, comment=comment)
                             added_count += 1
                     elif not desired and item["in_config"]:
@@ -1412,7 +1418,7 @@ def init_depots_tab(dialog) -> None:
                     if did == appid_str:
                         continue  # Safeguard: AppIDs must never be in AdditionalDepots
                     if did not in state["live_depots"] and did in valid_keys:
-                        comment = f"{game_name} ({did})"
+                        comment = build_depot_comment(game_name, did, "", appid_str)
                         editor.add_depot(did, comment=comment, app_id=appid_str)
                         added_count += 1
 
@@ -1421,7 +1427,7 @@ def init_depots_tab(dialog) -> None:
                     kid = item["id"]
                     kval = item["key"]
                     if kval and not item["in_config"]:
-                        comment = f"{game_name} [AppKey]" if kid == appid_str else f"{game_name} ({kid})"
+                        comment = build_key_comment(game_name, kid, "", appid_str)
                         editor.add_key(kid, kval, comment=comment)
                         added_count += 1
 
@@ -1579,9 +1585,8 @@ def init_depots_tab(dialog) -> None:
                                             for did, k in fresh_keys.items():
                                                 if did not in SHARED_REDISTS:
                                                     if did != appid_str and not is_dlc_only:
-                                                        editor.add_depot(did, comment=f"{game_name} ({did})", app_id=appid_str)
-                                                    key_comment = f"{game_name} [AppKey]" if did == appid_str else f"{game_name} ({did})"
-                                                    editor.add_key(did, k, comment=key_comment)
+                                                        editor.add_depot(did, comment=build_depot_comment(game_name, did, "", appid_str), app_id=appid_str)
+                                                    editor.add_key(did, k, comment=build_key_comment(game_name, did, "", appid_str))
                                         if editor.has_changes:
                                             SLSBridge.notify_reload()
 

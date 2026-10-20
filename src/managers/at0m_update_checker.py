@@ -30,7 +30,12 @@ from managers.depot_key_manager import DepotKeyManager
 from utils.helpers import get_base_path
 from utils.lua_parsing import is_placeholder_key, iter_live_matches
 from utils.paths import Paths
-from utils.plugin_games import SHARED_REDISTS, load_plugin_library
+from utils.plugin_games import (
+    SHARED_REDISTS,
+    build_depot_comment,
+    build_key_comment,
+    load_plugin_library,
+)
 from utils.settings import get_settings
 from utils.sls_bridge import SLSBridge
 from utils.yaml_config_manager import (
@@ -556,9 +561,8 @@ class At0mUpdateChecker(QObject):
                     for did, k in fresh_keys.items():
                         if did not in ALL_SHARED_REDISTS:
                             if did != appid_str:
-                                editor.add_depot(did, comment=f"{game_title} ({did})", app_id=appid_str)
-                            key_comment = f"{game_title} [AppKey]" if did == appid_str else f"{game_title} ({did})"
-                            editor.add_key(did, k, comment=key_comment)
+                                editor.add_depot(did, comment=build_depot_comment(game_title, did, "", appid_str), app_id=appid_str)
+                            editor.add_key(did, k, comment=build_key_comment(game_title, did, "", appid_str))
 
                 if editor.has_changes:
                     SLSBridge.notify_reload()

@@ -69,7 +69,20 @@ class BatchAtomMigrationConfirmDialog(ThemedDialog):
         desc_lbl.setStyleSheet("color: rgba(255, 255, 255, 0.75); font-size: 9pt; line-height: 1.4;")
         self.body.addWidget(desc_lbl)
 
-        # 2. Eligible Games Section
+        # 2. Changes applied to every migrated game. The migration touches
+        #    user-visible settings, so they are listed instead of being
+        #    applied silently.
+        changes_lbl = QLabel(
+            "<b>Also applied to every game:</b> excluded from Update&nbsp;All "
+            "(AT0-M games are updated by Steam), and the existing branch selection is kept."
+        )
+        changes_lbl.setWordWrap(True)
+        changes_lbl.setStyleSheet(
+            "color: rgba(255, 255, 255, 0.6); font-size: 8.5pt; line-height: 1.4; margin-top: 2px;"
+        )
+        self.body.addWidget(changes_lbl)
+
+        # 3. Eligible Games Section
         eligible_count = len(self.eligible_games)
         lbl_eligible_hdr = QLabel(f"Eligible for Migration ({eligible_count})")
         lbl_eligible_hdr.setStyleSheet(
@@ -94,19 +107,27 @@ class BatchAtomMigrationConfirmDialog(ThemedDialog):
             eligible_lay.addWidget(no_elig)
         else:
             for g in self.eligible_games:
+                if g.get("acf_pending"):
+                    status_text = "Re-run: adopt Steam manifest"
+                    status_color = "#f59e0b"  # amber
+                    bg_badge = "rgba(245, 158, 11, 0.15)"
+                else:
+                    status_text = "Ready to Migrate"
+                    status_color = "#10b981"  # emerald green
+                    bg_badge = "rgba(16, 185, 129, 0.15)"
                 row = self._create_game_row(
                     title=g.get("game_name") or f"App {g.get('appid')}",
                     appid=str(g.get("appid", "")),
-                    status_text="Ready to Migrate",
-                    status_color="#10b981",  # emerald green
-                    bg_badge="rgba(16, 185, 129, 0.15)",
+                    status_text=status_text,
+                    status_color=status_color,
+                    bg_badge=bg_badge,
                 )
                 eligible_lay.addWidget(row)
 
         scroll_eligible.setWidget(eligible_container)
         self.body.addWidget(scroll_eligible)
 
-        # 3. Skipped / Excluded Games Section (if any)
+        # 4. Skipped / Excluded Games Section (if any)
         skipped_count = len(self.skipped_games)
         if skipped_count > 0:
             lbl_skipped_hdr = QLabel(f"Excluded Games ({skipped_count})")
@@ -142,7 +163,7 @@ class BatchAtomMigrationConfirmDialog(ThemedDialog):
 
         self.body.addStretch()
 
-        # 4. Action Buttons
+        # 5. Action Buttons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(10)
         btn_layout.addStretch()
@@ -284,10 +305,24 @@ class BatchAtomMigrationWorker(QThread):
             if not self._is_canceled:
                 self.progress.emit(cur, tot, name, msg)
 
-        results = batch_convert_games_to_atom(
-            self.games,
-            progress_callback=_progress_cb,
-            cancel_check=lambda: self._is_canceled,
-        )
+        try:
+            results = batch_convert_games_to_atom(
+                self.games,
+                progress_callback=_progress_cb,
+                cancel_check=lambda: self._is_canceled,
+            )
+        except Exception as e:
+            # A raise here would leave the progress dialog spinning forever.
+            logger.exception("[BatchAtomMigration] Batch migration crashed")
+            results = {
+                "migrated": [],
+                "failed": [
+                    {
+                        "appid": "",
+                        "name": "Batch migration",
+                        "reason": f"Unexpected error: {e}",
+                    }
+                ],
+            }
         self.finished.emit(results)
 

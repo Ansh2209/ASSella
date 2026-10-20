@@ -132,6 +132,49 @@ def build_dlc_reverse_map() -> Dict[str, str]:
 # SHARED_REDISTS is imported above canonically from utils.yaml_config_manager
 
 
+def build_depot_comment(name: str, depot_id: str, depot_name: str, appid: str) -> str:
+    """Build the comment written next to an AdditionalDepots entry.
+
+    The trailing tag carries the *owner* AppID, never the depot id. The game
+    details view attributes a depot to a game by looking for the AppID inside
+    the comment (see ui/dialogs/game_details/depots_tab.py), so a depot tagged
+    with its own id is never matched back to the game it belongs to.
+    """
+    if depot_name:
+        return f"{name} - {depot_name} ({appid})"
+    return f"{name} ({appid})"
+
+
+def build_key_comment(name: str, depot_id: str, depot_name: str, appid: str) -> str:
+    """Build the comment written next to a DecryptionKeys entry.
+
+    Same owner-tag rule as the depots: the tag is the parent AppID.
+    """
+    if str(depot_id) == str(appid):
+        return f"{name} [AppKey] ({appid})"
+    if depot_name:
+        return f"{name} - {depot_name} ({appid})"
+    return f"{name} ({appid})"
+
+
+_OWNER_TAG_RE = re.compile(r"\(\s*(\d+)\s*\)")
+
+
+def comment_has_owner_tag(comment: str, appid: Union[str, int]) -> bool:
+    """True only when ``comment`` carries this game's exact ``(appid)`` owner tag.
+
+    Every depot/key comment written since the migration ends with the parent
+    AppID, so ``appid_str in comment`` is not an identity test: it also matches
+    another game's tag when one AppID is a prefix of another (220 vs 2200).
+    Attributing a depot to the wrong game let unregister delete the other
+    game's ManifestIds pins, so the tag is compared as a whole number instead.
+    """
+    appid_str = str(appid).strip()
+    if not appid_str or not comment:
+        return False
+    return any(m.group(1) == appid_str for m in _OWNER_TAG_RE.finditer(comment))
+
+
 def register_plugin_game(
     appid: Union[str, int],
     name: str,
@@ -187,57 +230,116 @@ def register_plugin_game(
             if did_str.isdigit() and dname and did_str != appid_str:
                 clean_depot_names[did_str] = str(dname).strip()
 
+    # Only publish the keys of the depots this game actually mounts, plus the
+    # root AppKey. A key for an unmounted depot is dead weight: Steam has
+    # nothing to decrypt with it, and its presence in DecryptionKeys makes the
+    # config look like the depot is served when it is not mounted at all.
+    published_ids = set(clean_depots) | set(clean_dlc_appids) | {appid_str} | set(SHARED_REDISTS)
+    published_keys = {did: key for did, key in clean_keys.items() if did in published_ids}
+
     lib = load_plugin_library()
     game_record = {
         "appid": appid_str,
         "name": name,
         "installdir": installdir,
         "depots": clean_depots,
-        "keys": clean_keys,
+        "keys": published_keys,
         "depot_names": clean_depot_names,
         "dlc_only": is_dlc_only,
         "dlc_appids": clean_dlc_appids,
         "updated_at": int(time.time()),
         "source": "plugin_native",
     }
+    previous_record = lib.get(appid_str)
     lib[appid_str] = game_record
     if not save_plugin_library(lib):
         return False
 
     # Smart injection into SLSsteam config.yaml
     cfg_path = get_user_config_path()
-    if cfg_path.exists():
-        with batch_config_edit(cfg_path) as editor:
-            if is_dlc_only:
-                # DLC-only: add DLC AppIDs to AdditionalApps, NOT the base game appid.
-                for dlc_id in clean_dlc_appids:
-                    editor.add_app(dlc_id, comment=f"{name} DLC ({dlc_id})")
+    if not cfg_path.exists():
+        logger.error(
+            f"[PluginGames] SLSsteam config not found at {cfg_path} - '{name}' "
+            f"({appid_str}) was NOT registered in SLSsteam."
+        )
+        _rollback_plugin_library_record(appid_str, previous_record)
+        return False
+
+    with batch_config_edit(cfg_path) as editor:
+        if is_dlc_only:
+            # DLC-only: add DLC AppIDs to AdditionalApps, NOT the base game appid.
+            for dlc_id in clean_dlc_appids:
+                editor.add_app(dlc_id, comment=f"{name} DLC ({dlc_id})")
+        else:
+            # Normal mode: add base AppID
+            editor.add_app(appid_str, comment=name)
+
+        # Add only the required depots with clear comments (never AppIDs!)
+        # A depot can be refused by the editor's guards (it is already a
+        # registered base AppID, it lives in AdditionalApps, ...). Only a
+        # depot that actually ends up mounted may carry a key, otherwise
+        # DecryptionKeys claims to serve a depot that is not there.
+        mounted_depots: Set[str] = set()
+        for did in clean_depots:
+            if did in SHARED_REDISTS:
+                depot_comment = "Steamworks Shared"
             else:
-                # Normal mode: add base AppID
-                editor.add_app(appid_str, comment=name)
+                depot_comment = build_depot_comment(name, did, clean_depot_names.get(did, ""), appid_str)
+            editor.add_depot(did, comment=depot_comment, app_id=appid_str)
+            if editor.contains_depot(did):
+                mounted_depots.add(did)
+            else:
+                logger.warning(
+                    f"[PluginGames] Depot {did} was not mounted for '{name}' ({appid_str}); "
+                    "its decryption key is not published."
+                )
 
-            # Add only the required depots with clear comments (never AppIDs!)
-            for did in clean_depots:
-                if did in SHARED_REDISTS:
-                    depot_comment = "Steamworks Shared"
-                else:
-                    d_name = clean_depot_names.get(did, "")
-                    depot_comment = f"{name} - {d_name} ({did})" if d_name else f"{name} ({did})"
-                editor.add_depot(did, comment=depot_comment)
+        # Add decryption keys with game comment
+        publishable = mounted_depots | set(clean_dlc_appids) | {appid_str} | set(SHARED_REDISTS)
+        for did, key in published_keys.items():
+            if did not in publishable:
+                continue
+            if did in SHARED_REDISTS:
+                key_comment = "Steamworks Shared"
+            else:
+                key_comment = build_key_comment(name, did, clean_depot_names.get(did, ""), appid_str)
+            editor.add_key(did, key, comment=key_comment)
 
-            # Add decryption keys with game comment
-            for did, key in clean_keys.items():
-                if did == appid_str:
-                    key_comment = f"{name} [AppKey] ({appid_str})"
-                elif did in SHARED_REDISTS:
-                    key_comment = "Steamworks Shared"
-                else:
-                    d_name = clean_depot_names.get(did, "")
-                    key_comment = f"{name} - {d_name}" if d_name else name
-                editor.add_key(did, key, comment=key_comment)
+    if not editor.committed_successfully:
+        logger.error(
+            f"[PluginGames] Failed to commit SLSsteam config changes for '{name}' ({appid_str})"
+        )
+        _rollback_plugin_library_record(appid_str, previous_record)
+        return False
 
-        # Notify bridge / SLSsteam of update
-        SLSBridge.notify_reload()
+    # The library was written before the config edit, so it still claims every
+    # requested depot. Trim it to the depots that actually mounted: the
+    # library is what the depots view and the re-run path read, and a record
+    # that claims a depot the config does not serve is the same lie the
+    # DecryptionKeys section used to tell.
+    mounted_list = [d for d in clean_depots if d in mounted_depots]
+    mounted_keys = {
+        did: key for did, key in published_keys.items()
+        if did in (mounted_depots | set(clean_dlc_appids) | {appid_str} | set(SHARED_REDISTS))
+    }
+    if mounted_list != clean_depots or mounted_keys != published_keys:
+        lib = load_plugin_library()
+        record = lib.get(appid_str)
+        if record:
+            record["depots"] = mounted_list
+            record["keys"] = mounted_keys
+            lib[appid_str] = record
+            if not save_plugin_library(lib):
+                # The config is already committed and correct; only the library
+                # record still over-claims. Say so instead of failing the whole
+                # registration, which would leave the markers in place.
+                logger.warning(
+                    f"[PluginGames] Could not record the mounted depot set for '{name}' "
+                    f"({appid_str}); the library record may list refused depots."
+                )
+
+    # Notify bridge / SLSsteam of update
+    SLSBridge.notify_reload()
 
     mode_str = "DLC-only" if is_dlc_only else "normal"
     logger.info(
@@ -245,6 +347,31 @@ def register_plugin_game(
         f"in {mode_str} mode with {len(clean_depots)} depot(s)"
     )
     return True
+
+
+def _rollback_plugin_library_record(appid_str: str, previous_record: Optional[Dict[str, Any]]) -> None:
+    """Undo a plugin library entry that was written for a failed registration.
+
+    A half-registered game is worse than an unregistered one: the library
+    claims the game is AT0-M managed while SLSsteam never heard of it.
+    """
+    lib = load_plugin_library()
+    if previous_record is None:
+        lib.pop(appid_str, None)
+    else:
+        lib[appid_str] = previous_record
+    save_plugin_library(lib)
+
+
+def _rollback_plugin_library_records(previous_records: Dict[str, Optional[Dict[str, Any]]]) -> None:
+    """Undo a batch of plugin library entries in a single write."""
+    lib = load_plugin_library()
+    for appid_str, previous_record in previous_records.items():
+        if previous_record is None:
+            lib.pop(appid_str, None)
+        else:
+            lib[appid_str] = previous_record
+    save_plugin_library(lib)
 
 
 def unregister_plugin_game(appid: Union[str, int], keep_in_additional_apps: bool = False) -> bool:
@@ -307,7 +434,9 @@ def unregister_plugin_game(appid: Union[str, int], keep_in_additional_apps: bool
                         m = re.match(r"^[ \t]*['\"]?(\d+)['\"]?[ \t]*:[ \t]*[^\r\n#]+(?:#[ \t]*(.*))?$", line)
                     if m:
                         item_id, comment = m.group(1), (m.group(2) or "").lower()
-                        if appid_str in comment or (gname and len(gname) > 3 and gname in comment):
+                        if comment_has_owner_tag(comment, appid_str) or (
+                            gname and len(gname) > 3 and gname in comment
+                        ):
                             if sec == "AdditionalDepots":
                                 target_depots.add(item_id)
                             else:
@@ -425,18 +554,16 @@ def sync_all_plugin_games_to_config() -> None:
                     depot_comment = "Steamworks Shared"
                 else:
                     d_name = depot_names.get(did, "")
-                    depot_comment = f"{name} - {d_name} ({did})" if d_name else f"{name} ({did})"
-                editor.add_depot(did, comment=depot_comment)
+                    depot_comment = build_depot_comment(name, did, d_name, appid_str)
+                editor.add_depot(did, comment=depot_comment, app_id=appid_str)
 
             for did, key in game.get("keys", {}).items():
                 did_str = str(did)
-                if did_str == appid_str:
-                    key_comment = f"{name} [AppKey] ({appid_str})"
-                elif did_str in SHARED_REDISTS:
+                if did_str in SHARED_REDISTS:
                     key_comment = "Steamworks Shared"
                 else:
                     d_name = depot_names.get(did_str, "")
-                    key_comment = f"{name} - {d_name}" if d_name else name
+                    key_comment = build_key_comment(name, did_str, d_name, appid_str)
                 editor.add_key(did_str, key, comment=key_comment)
 
         if editor.has_changes:
@@ -564,106 +691,6 @@ def get_atom_game_install_path(appid: Union[str, int]) -> Optional[str]:
     return None
 
 
-def _atomic_write_acf(acf_path: str, content: str) -> bool:
-    """Back up and atomically replace a Steam ACF."""
-    path = Path(acf_path)
-    if not path.exists():
-        return False
-    try:
-        stamp = int(time.time())
-        backup = path.with_suffix(path.suffix + f".assella-bak-{stamp}")
-        shutil.copy2(path, backup)
-    except Exception as e:
-        logger.warning(f"[PluginGames] Could not back up ACF {acf_path}: {e}")
-        return False
-
-    tmp = path.with_suffix(path.suffix + f".tmp-{os.getpid()}")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-        return True
-    except Exception as e:
-        logger.warning(f"[PluginGames] Atomic ACF write failed for {acf_path}: {e}")
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return False
-
-
-def _ensure_acf_has_installed_depots(acf_path: str, appid: str, depot_ids: list, game_data: dict) -> None:
-    """Make Steam adopt an already-downloaded install by adding InstalledDepots to ACF."""
-    if not acf_path or not os.path.exists(acf_path):
-        return
-    try:
-        with open(acf_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-
-        needs_size = False
-        m_size = re.search(r'"SizeOnDisk"\s*"(\d+)"', content)
-        if m_size and m_size.group(1) == "0":
-            needs_size = True
-
-        install_path = game_data.get("install_path")
-        if not install_path and game_data.get("library_path"):
-            folder_name = game_data.get("installdir") or game_data.get("game_name")
-            if folder_name:
-                cand_install = Path(game_data["library_path"]) / "steamapps" / "common" / folder_name
-                if cand_install.is_dir():
-                    install_path = str(cand_install)
-
-        actual_size = 0
-        if install_path and os.path.isdir(install_path):
-            try:
-                for root, _, files in os.walk(install_path):
-                    for file in files:
-                        try:
-                            actual_size += os.path.getsize(os.path.join(root, file))
-                        except Exception:
-                            pass
-            except Exception as e:
-                logger.warning(f"[PluginGames] Error calculating size: {e}")
-
-        wanted = [str(d).strip() for d in (depot_ids or []) if str(d).strip() and str(d).strip() != str(appid)]
-        has_entries = bool(re.search(r'"InstalledDepots"\s*\{[^}]*"\d+"\s*\n\s*\{', content))
-
-        if not has_entries and wanted:
-            depots_lines = []
-            per_depot = actual_size // max(1, len(wanted))
-            for did_str in wanted:
-                dsize = actual_size if len(wanted) == 1 else per_depot
-                depots_lines.append(
-                    f'\t\t"{did_str}"\n\t\t{{\n\t\t\t"manifest"\t\t"0"\n\t\t\t"size"\t\t"{dsize}"\n\t\t}}'
-                )
-            if depots_lines:
-                new_block = '\t"InstalledDepots"\n\t{\n' + "\n".join(depots_lines) + '\n\t}'
-                if re.search(r'"InstalledDepots"\s*\{\s*\}', content):
-                    content = re.sub(
-                        r'"InstalledDepots"\s*\{\s*\}', new_block.replace("\\", "\\\\"), content, count=1
-                    )
-                else:
-                    content = re.sub(
-                        r'("AppState"\s*\{)', rf'\1\n{new_block}', content, count=1
-                    )
-
-        if (needs_size or not m_size) and actual_size > 0:
-            if m_size:
-                content = re.sub(r'"SizeOnDisk"\s*"\d+"', f'"SizeOnDisk"\t\t"{actual_size}"', content)
-            else:
-                content = re.sub(r'("AppState"\s*\{)', rf'\1\n\t"SizeOnDisk"\t\t"{actual_size}"', content)
-
-        if not _atomic_write_acf(acf_path, content):
-            return
-        logger.info(
-            f"[PluginGames] Updated ACF {acf_path}: {len(wanted)} depot(s) listed"
-        )
-    except Exception as e:
-        logger.warning(f"[PluginGames] Graceful fallback on updating ACF {acf_path}: {e}")
-
-
 def collect_game_depots_and_keys(
     appid: Union[str, int],
     game_data: Optional[Dict[str, Any]] = None,
@@ -673,6 +700,10 @@ def collect_game_depots_and_keys(
     Collect all known depot IDs, decryption keys, and depot names for a game.
     Queries DatabaseManager, local .depot files, SQLite DepotKeyManager,
     cached luas, manifest zips, and falls back to Hubcap API manifest fetch if needed.
+
+    The result is everything that is *known* about the game. Narrowing it to
+    the user's depot scope is the caller's decision, so the caller can report
+    what it left out.
     """
     from utils.lua_parsing import iter_live_matches
 
@@ -680,8 +711,6 @@ def collect_game_depots_and_keys(
     depot_ids: List[str] = []
     decryption_keys: Dict[str, str] = {}
     depot_names: Dict[str, str] = {}
-
-    game_dict = game_data or {}
 
     # 1. DatabaseManager lookup
     try:
@@ -754,20 +783,7 @@ def collect_game_depots_and_keys(
         except Exception as e:
             logger.debug(f"[PluginGames] Could not read manifest zip for {appid_str}: {e}")
 
-    # 5. Respect user's saved depot selection if available
-    from utils.dlc_helpers import get_saved_depot_selection
-    saved_selection = get_saved_depot_selection(appid_str)
-    if not saved_selection and game_dict:
-        saved_selection = game_dict.get("selected_depots") or (
-            game_dict.get("metadata", {}).get("selected_depots_list")
-        )
-    if saved_selection:
-        saved_depot_set = {str(d) for d in saved_selection}
-        user_depots = [d for d in depot_ids if str(d) in saved_depot_set]
-        if user_depots:
-            depot_ids = user_depots
-
-    # 6. Filter out appid itself from depot_ids
+    # 5. Filter out appid itself from depot_ids
     depot_ids = [d for d in depot_ids if str(d) != appid_str]
 
     # 7. If any depot is missing keys, attempt emergency Hubcap fetch
@@ -800,6 +816,50 @@ def collect_game_depots_and_keys(
     return depot_ids, decryption_keys, depot_names
 
 
+def _resolve_install_path(game_data: Dict[str, Any]) -> Optional[str]:
+    """Resolve the on-disk install folder of a game."""
+    install_path = game_data.get("install_path")
+    if install_path and os.path.isdir(install_path):
+        return str(install_path)
+    if game_data.get("library_path"):
+        folder_name = game_data.get("installdir") or game_data.get("game_name")
+        if folder_name:
+            cand = Path(game_data["library_path"]) / "steamapps" / "common" / folder_name
+            if cand.is_dir():
+                return str(cand)
+    return None
+
+
+def _remove_accela_markers(install_path: Optional[str]) -> List[str]:
+    """Retire the ASSella/ACCELA marker files from an install folder.
+
+    Returns the marker paths that were actually removed. The marker is what
+    identifies a game as ASSella-managed, so it is only retired once the AT0-M
+    identity (config.yaml + plugin library) is safely committed. A removal
+    that silently failed is not reported as a removal.
+    """
+    removed: List[str] = []
+    if not install_path or not os.path.isdir(install_path):
+        return removed
+    for marker_name in (".assella", ".ASSELLA", ".ACCELA", ".accela", ".DepotDownloader", ".depotdownloader"):
+        m_path = os.path.join(install_path, marker_name)
+        if not os.path.exists(m_path):
+            continue
+        try:
+            if os.path.isdir(m_path):
+                shutil.rmtree(m_path, ignore_errors=True)
+            else:
+                os.remove(m_path)
+        except Exception as e:
+            logger.warning(f"[PluginGames] Marker cleanup failed for {m_path}: {e}")
+            continue
+        if os.path.exists(m_path):
+            logger.warning(f"[PluginGames] Marker still present after cleanup: {m_path}")
+            continue
+        removed.append(m_path)
+    return removed
+
+
 def batch_convert_games_to_atom(
     games: List[Dict[str, Any]],
     progress_callback: Optional[Callable[[int, int, str, str], None]] = None,
@@ -807,25 +867,43 @@ def batch_convert_games_to_atom(
 ) -> Dict[str, Any]:
     """
     Batch convert multiple eligible games from ASSella to AT0-M (Steam Native) mode.
-    - Resolves depots and keys per game.
-    - Excludes unkeyed depots to safeguard against Steam DepotWithoutKey errors.
-    - Skips games with zero decryption keys.
-    - Removes .DepotDownloader / legacy markers from install folders.
-    - Seeds Steam central depotcache.
-    - Prepares InstalledDepots in Steam appmanifest ACF files.
-    - Injects all games, depots, and keys into SLSsteam config.yaml in a single atomic batch.
-    - Emits SLSBridge.notify_reload() once.
-    - Strict: Does NOT send SLSsteam install API commands.
+
+    The order of operations is deliberate and load-bearing:
+
+    1. Collect and validate depots/keys (no side effects yet).
+    2. Persist the plugin library records (rolled back if step 3 fails).
+    3. Write SLSsteam config.yaml in ONE atomic batch and verify the commit.
+    4. Adopt the Steam appmanifest (InstalledDepots) for each game.
+    5. Retire the ASSella markers LAST.
+
+    The marker is the physical proof that a game is ASSella-managed, so it is
+    only removed after the AT0-M identity is committed. Doing it earlier left
+    games with no identity at all (neither ACCELA nor AT0-M) whenever a later
+    step failed.
+
+    The library is written before the config on purpose: the config editor
+    refuses to mount a depot whose id is a registered base AppID, and that
+    guard reads the library from disk.
     """
     from utils.settings import get_settings
+    from utils.steam_acf import (
+        ACF_DEFERRED,
+        ACF_FAILED,
+        ensure_acf_has_installed_depots,
+        find_appmanifest_path,
+        steam_is_running,
+    )
 
     migrated: List[Dict[str, Any]] = []
     failed: List[Dict[str, Any]] = []
     staged_records: List[Dict[str, Any]] = []
+    staged_game_data: List[Dict[str, Any]] = []
+    acf_pending: List[Dict[str, Any]] = []
 
     total = len(games)
     lib = load_plugin_library()
     settings = get_settings()
+    steam_running = steam_is_running()
 
     for idx, game_data in enumerate(games):
         if cancel_check and cancel_check():
@@ -839,14 +917,51 @@ def batch_convert_games_to_atom(
         if progress_callback:
             progress_callback(step_num, total, game_name, "Collecting depots and decryption keys...")
 
-        # 1. Collect depots, keys, and names
-        depot_ids, decryption_keys, depot_names = collect_game_depots_and_keys(
-            appid_str, game_data=game_data, allow_hubcap_fetch=True
-        )
+        # 1. Collect depots, keys, and names. A game whose manifest adoption
+        #    was deferred already has a plugin record with its depots and
+        #    keys - reuse it instead of re-deriving them, so the re-run works
+        #    even when the sources that produced them are gone.
+        existing_record = lib.get(appid_str) or {}
+        reusing_record = bool(existing_record.get("acf_pending") and existing_record.get("depots"))
+        if reusing_record:
+            depot_ids = [str(d) for d in existing_record.get("depots", [])]
+            decryption_keys = {
+                str(k): str(v) for k, v in (existing_record.get("keys") or {}).items()
+            }
+            depot_names = dict(existing_record.get("depot_names") or {})
+        else:
+            depot_ids, decryption_keys, depot_names = collect_game_depots_and_keys(
+                appid_str, game_data=game_data, allow_hubcap_fetch=True
+            )
 
-        # 2. Exclude unkeyed depots
+        # 2. Exclude unkeyed depots (a depot without a key would make Steam
+        #    report DepotWithoutKey, so it must not be mounted).
         valid_keys_and_redists = set(decryption_keys.keys()) | SHARED_REDISTS
+        excluded_unkeyed = [d for d in depot_ids if d not in valid_keys_and_redists]
         depot_ids = [d for d in depot_ids if d in valid_keys_and_redists]
+
+        # 2b. Respect the user's depot scope, but never at the cost of a depot
+        #     that is already on disk: the QSettings value is also rewritten
+        #     by the update flow as a pre-selection for the next download, and
+        #     trusting it blindly is what made the migration skip depots.
+        #     A re-run of a deferred adoption must not narrow the set again -
+        #     those depots are already mounted in SLSsteam.
+        from utils.dlc_helpers import get_saved_depot_selection, resolve_depot_scope
+        scope = get_saved_depot_selection(appid_str) or (
+            game_data.get("selected_depots")
+            or (game_data.get("metadata", {}).get("selected_depots_list"))
+        )
+        excluded_out_of_scope: List[str] = []
+        if scope and not reusing_record:
+            depot_ids, excluded_out_of_scope = resolve_depot_scope(
+                appid_str, depot_ids, extra_scope=scope
+            )
+            if excluded_out_of_scope:
+                logger.info(
+                    f"[PluginGames] {len(excluded_out_of_scope)} depot(s) of {appid_str} are "
+                    f"outside the user's selected scope and will not be mounted: "
+                    f"{excluded_out_of_scope}"
+                )
 
         # 3. Guard against games with zero decryption keys
         if not decryption_keys or not depot_ids:
@@ -861,70 +976,22 @@ def batch_convert_games_to_atom(
             continue
 
         if progress_callback:
-            progress_callback(step_num, total, game_name, "Cleaning legacy markers & updating metadata...")
+            progress_callback(step_num, total, game_name, "Staging AT0-M configuration...")
 
-        # 4. Remove ASSella markers from install directory
-        install_path = game_data.get("install_path")
-        if not install_path and game_data.get("library_path"):
-            folder_name = game_data.get("installdir") or game_data.get("game_name")
-            if folder_name:
-                cand = Path(game_data["library_path"]) / "steamapps" / "common" / folder_name
-                if cand.is_dir():
-                    install_path = str(cand)
-
-        if install_path and os.path.isdir(install_path):
-            for marker_name in (".assella", ".ASSELLA", ".ACCELA", ".accela", ".DepotDownloader", ".depotdownloader"):
-                m_path = os.path.join(install_path, marker_name)
-                if os.path.exists(m_path):
-                    try:
-                        if os.path.isdir(m_path):
-                            shutil.rmtree(m_path, ignore_errors=True)
-                        else:
-                            os.remove(m_path)
-                    except Exception as e:
-                        logger.debug(f"[PluginGames] Marker cleanup failed for {m_path}: {e}")
-
-        # 5. Update settings
-        settings.setValue(f"exclude_from_update_all/{appid_str}", True)
-        settings.setValue(f"selected_branch/{appid_str}", "public")
-        settings.setValue(f"installed_branch/{appid_str}", "public")
-
-        # 6. Update ACF InstalledDepots
-        acf_path = game_data.get("appmanifest_path")
-        if not acf_path and game_data.get("library_path"):
-            cand_acf = Path(game_data["library_path"]) / "steamapps" / f"appmanifest_{appid_str}.acf"
-            if cand_acf.exists():
-                acf_path = str(cand_acf)
-        if not acf_path:
-            try:
-                from core.steam_helpers import get_steam_libraries
-                for slib in (get_steam_libraries() or []):
-                    cand_acf = Path(slib) / "steamapps" / f"appmanifest_{appid_str}.acf"
-                    if cand_acf.exists():
-                        acf_path = str(cand_acf)
-                        break
-            except Exception:
-                pass
-
-        if acf_path and os.path.exists(acf_path):
-            _ensure_acf_has_installed_depots(acf_path, appid_str, depot_ids, game_data)
-
-        # 7. Seed Steam central depotcache
-        try:
-            from core.native_steam.native_steam_handoff import sync_manifests_to_depotcache
-            dest_lib = game_data.get("library_path") or install_path or ""
-            sync_manifests_to_depotcache(appid_str, dest_lib)
-        except Exception as e:
-            logger.debug(f"[PluginGames] Depotcache sync failed for {appid_str}: {e}")
-
-        # 8. Stage game record for plugin_library
+        # 4. Stage the record. Only the depots that are actually mounted may
+        #    carry a key: a key for an unmounted depot claims a depot the
+        #    config does not serve.
         installdir = game_data.get("installdir") or game_data.get("game_name") or ""
+        mounted_ids = set(depot_ids) | {appid_str} | SHARED_REDISTS
+        published_keys = {
+            did: key for did, key in decryption_keys.items() if did in mounted_ids
+        }
         game_record = {
             "appid": appid_str,
             "name": game_name,
             "installdir": installdir,
             "depots": depot_ids,
-            "keys": decryption_keys,
+            "keys": published_keys,
             "depot_names": depot_names,
             "dlc_only": False,
             "dlc_appids": [],
@@ -932,55 +999,241 @@ def batch_convert_games_to_atom(
             "source": "plugin_native",
         }
         staged_records.append(game_record)
+        staged_game_data.append(game_data)
         migrated.append({
             "appid": appid_str,
             "name": game_name,
             "depots": len(depot_ids),
-            "keys": len(decryption_keys),
+            "keys": len(published_keys),
+            "excluded_depots": excluded_unkeyed,
+            "excluded_out_of_scope": excluded_out_of_scope,
         })
 
-    # Save to plugin_library.json
-    if staged_records:
-        if progress_callback:
-            progress_callback(total, total, "SLSsteam Config", "Applying atomic batch configuration updates...")
+    if not staged_records:
+        return {"migrated": migrated, "failed": failed}
 
+    if progress_callback:
+        progress_callback(total, total, "SLSsteam Config", "Applying atomic batch configuration updates...")
+
+    # 5. Write config.yaml in one atomic batch. The commit is verified: a
+    #    failed write must NOT be reported as a success, and must not leave
+    #    the games without an identity.
+    cfg_path = get_user_config_path()
+    if not cfg_path.exists():
+        logger.error(
+            f"[PluginGames] SLSsteam config not found at {cfg_path}; aborting AT0-M batch migration."
+        )
         for rec in staged_records:
-            lib[rec["appid"]] = rec
-        save_plugin_library(lib)
+            failed.append({
+                "appid": rec["appid"],
+                "name": rec["name"],
+                "reason": "SLSsteam config.yaml not found - migration aborted, nothing was changed",
+            })
+        return {"migrated": [], "failed": failed}
 
-        # Atomic batch edit to config.yaml
-        cfg_path = get_user_config_path()
-        if cfg_path.exists():
-            with batch_config_edit(cfg_path) as editor:
-                for rec in staged_records:
-                    aid = rec["appid"]
-                    name = rec["name"]
-                    editor.add_app(aid, comment=name)
+    # 5. Persist the plugin library records BEFORE the config edit, the same
+    #    order register_plugin_game uses: the editor refuses to mount a depot
+    #    whose id is a registered base AppID, and that guard reads the library
+    #    from disk.
+    #
+    #    The previous records are kept so the library can be rolled back if
+    #    the config commit fails - a half-migrated game (library says AT0-M,
+    #    config has no keys) is worse than no migration at all.
+    previous_records: Dict[str, Optional[Dict[str, Any]]] = {}
+    for rec in staged_records:
+        previous_records[rec["appid"]] = lib.get(rec["appid"])
+        lib[rec["appid"]] = rec
+    if not save_plugin_library(lib):
+        logger.error("[PluginGames] Failed to persist plugin library; nothing was changed.")
+        for rec in staged_records:
+            failed.append({
+                "appid": rec["appid"],
+                "name": rec["name"],
+                "reason": "Failed to save the plugin library - migration aborted, nothing was changed",
+            })
+        return {"migrated": [], "failed": failed}
 
-                    for did in rec["depots"]:
-                        if did in SHARED_REDISTS:
-                            depot_comment = "Steamworks Shared"
-                        else:
-                            d_name = rec["depot_names"].get(did, "")
-                            depot_comment = f"{name} - {d_name} ({did})" if d_name else f"{name} ({did})"
-                        editor.add_depot(did, comment=depot_comment)
+    mounted_by_record: Dict[str, Set[str]] = {}
+    with batch_config_edit(cfg_path) as editor:
+        for rec in staged_records:
+            aid = rec["appid"]
+            name = rec["name"]
 
-                    for did, key in rec["keys"].items():
-                        if did == aid:
-                            key_comment = f"{name} [AppKey] ({aid})"
-                        elif did in SHARED_REDISTS:
-                            key_comment = "Steamworks Shared"
-                        else:
-                            d_name = rec["depot_names"].get(did, "")
-                            key_comment = f"{name} - {d_name}" if d_name else name
-                        editor.add_key(did, key, comment=key_comment)
+            editor.add_app(aid, comment=name)
 
-            # Reload SLSsteam
-            SLSBridge.notify_reload()
-            logger.info(
-                f"[PluginGames] Batch AT0-M migration successfully applied for {len(staged_records)} game(s)."
+            # Mount the depots first, then publish the keys of the depots that
+            # actually landed. A key for a depot that was refused by the
+            # editor's guards would make DecryptionKeys advertise a depot the
+            # config does not serve.
+            mounted: Set[str] = set()
+            unmounted: List[str] = []
+            for did in rec["depots"]:
+                if did in SHARED_REDISTS:
+                    depot_comment = "Steamworks Shared"
+                else:
+                    d_name = rec["depot_names"].get(did, "")
+                    depot_comment = build_depot_comment(name, did, d_name, aid)
+                editor.add_depot(did, comment=depot_comment, app_id=aid)
+                if editor.contains_depot(did):
+                    mounted.add(did)
+                else:
+                    unmounted.append(did)
+                    logger.warning(
+                        f"[PluginGames] Depot {did} was not mounted for '{name}' ({aid}); "
+                        "its decryption key is not published."
+                    )
+            mounted_by_record[aid] = mounted
+            if unmounted:
+                rec["unmounted_depots"] = unmounted
+
+            # The root AppKey lives under the AppID in DecryptionKeys - that is
+            # what marks the game as AT0-M - and is published alongside the
+            # mounted depots.
+            publishable = mounted | {aid} | set(SHARED_REDISTS)
+            for did, key in rec["keys"].items():
+                if did not in publishable:
+                    continue
+                if did in SHARED_REDISTS:
+                    key_comment = "Steamworks Shared"
+                else:
+                    d_name = rec["depot_names"].get(did, "")
+                    key_comment = build_key_comment(name, did, d_name, aid)
+                editor.add_key(did, key, comment=key_comment)
+
+    if not editor.committed_successfully:
+        logger.error("[PluginGames] AT0-M batch config commit failed; rolling back the plugin library.")
+        _rollback_plugin_library_records(previous_records)
+        for rec in staged_records:
+            failed.append({
+                "appid": rec["appid"],
+                "name": rec["name"],
+                "reason": "Failed to write SLSsteam config.yaml - migration aborted, nothing was changed",
+            })
+        return {"migrated": [], "failed": failed}
+
+    # Reload SLSsteam now that the config is committed
+    SLSBridge.notify_reload()
+
+    # The library was written before the config edit, so it still claims every
+    # requested depot. Trim it to the depots that actually mounted: the
+    # library is what the depots view and the re-run path read, and a record
+    # that claims a depot the config does not serve is the same lie the
+    # DecryptionKeys section used to tell.
+    library_changed = False
+    for rec in staged_records:
+        mounted = mounted_by_record.get(rec["appid"], set())
+        mounted_depots = [d for d in rec["depots"] if d in mounted]
+        if mounted_depots != rec["depots"]:
+            rec["depots"] = mounted_depots
+            library_changed = True
+        mounted_keys = {
+            did: key
+            for did, key in rec["keys"].items()
+            if did in (mounted | {rec["appid"]} | set(SHARED_REDISTS))
+        }
+        if mounted_keys != rec["keys"]:
+            rec["keys"] = mounted_keys
+            library_changed = True
+
+    # The depots the editor refused are only known after the commit. Report
+    # them so the user can see which depots of the game were skipped instead
+    # of discovering it later as missing content.
+    for entry, rec in zip(migrated, staged_records):
+        if rec.get("unmounted_depots"):
+            entry["unmounted_depots"] = list(rec["unmounted_depots"])
+            entry["depots"] = len(rec["depots"])
+
+    # 6. Adopt the Steam appmanifest for each game. The markers are retired
+    #    afterwards, once the last library write has succeeded - see below.
+    markers_to_remove: List[Tuple[str, str, Optional[str]]] = []
+    for idx, (rec, game_data) in enumerate(zip(staged_records, staged_game_data)):
+        appid_str = rec["appid"]
+        game_name = rec["name"]
+        if progress_callback:
+            progress_callback(idx + 1, total, game_name, "Adopting Steam manifest & finalizing...")
+
+        install_path = _resolve_install_path(game_data)
+        acf_path = find_appmanifest_path(game_data, appid_str)
+
+        if acf_path:
+            acf_status = ensure_acf_has_installed_depots(
+                acf_path, appid_str, rec["depots"], game_data, steam_running=steam_running
+            )
+            if acf_status == ACF_DEFERRED:
+                acf_pending.append({"appid": appid_str, "name": game_name})
+                rec["acf_pending"] = True
+                logger.info(
+                    f"[PluginGames] Steam is running; deferred appmanifest adoption for {appid_str}."
+                )
+            elif acf_status == ACF_FAILED:
+                logger.warning(
+                    f"[PluginGames] Failed to update appmanifest for {appid_str}; Steam will re-verify on next launch."
+                )
+
+        # Seed Steam central depotcache
+        try:
+            from core.native_steam.native_steam_handoff import sync_manifests_to_depotcache
+            dest_lib = game_data.get("library_path") or install_path or ""
+            sync_manifests_to_depotcache(appid_str, dest_lib)
+        except Exception as e:
+            logger.warning(f"[PluginGames] Depotcache sync failed for {appid_str}: {e}")
+
+        # Update settings. The branch is the user's choice, so an existing
+        # value is preserved instead of being reset to "public".
+        settings.setValue(f"exclude_from_update_all/{appid_str}", True)
+        _preserve_branch_settings(appid_str, settings)
+
+        markers_to_remove.append((appid_str, game_name, install_path))
+
+    # The ACF step may have flagged games as "adoption pending", and the trim
+    # above changed what the library claims. Both are only durable once this
+    # save lands, so it happens before any marker is retired: if it fails, the
+    # markers stay exactly where they are and the games can be migrated again
+    # instead of ending up with no identity at all.
+    library_saved = True
+    if library_changed or acf_pending:
+        library_saved = save_plugin_library(lib)
+        if not library_saved:
+            logger.error(
+                "[PluginGames] Failed to persist the final plugin library state; "
+                "keeping the ASSella markers so the migration can be retried."
             )
 
-    return {"migrated": migrated, "failed": failed}
+    markers_retained: List[Dict[str, Any]] = []
+    if library_saved:
+        for _aid, _name, install_path in markers_to_remove:
+            _remove_accela_markers(install_path)
+    else:
+        markers_retained = [
+            {
+                "appid": aid,
+                "name": name,
+                "reason": "the plugin library could not be saved - marker kept for a retry",
+            }
+            for aid, name, _path in markers_to_remove
+        ]
+
+    logger.info(
+        f"[PluginGames] Batch AT0-M migration successfully applied for {len(staged_records)} game(s)."
+    )
+
+    result: Dict[str, Any] = {"migrated": migrated, "failed": failed}
+    if acf_pending:
+        result["acf_pending"] = acf_pending
+    if markers_retained:
+        result["markers_retained"] = markers_retained
+    return result
+
+
+def _preserve_branch_settings(appid_str: str, settings: Any) -> None:
+    """Keep the branch the user already selected for a game.
+
+    The single-game path uses the same rule (see
+    ``utils.settings.preserve_branch_selection``), so the two migration entry
+    points cannot disagree about which branch a game is on.
+    """
+    from utils.settings import preserve_branch_selection
+
+    preserve_branch_selection(settings, appid_str)
 
 

@@ -14,6 +14,7 @@ from PyQt6.QtGui import (
     QKeySequence,
     QShortcut,
     QColor,
+    QFontMetrics,
 )
 from PyQt6.QtWidgets import (
     QLabel,
@@ -36,6 +37,7 @@ from ui.widgets import (
     ResizeHandle,
     SimplifiedTerminalWidget,
 )
+from ui.widgets.elided_label import ElidedLabel
 from utils.logger import qt_log_handler
 from utils.paths import Paths
 from queue import Queue
@@ -777,18 +779,30 @@ class MainWindow(QMainWindow):
         footer_layout.setContentsMargins(15, 0, 15, 0)
         footer_layout.setSpacing(8)
         
+        self._quote_text, self._quote_source = self.quotes[0]
+
         self.quote_label = QLabel(self.quotes[0][0])
         self.quote_label.setStyleSheet("font-style: italic; font-size: 12px; color: rgba(255, 255, 255, 0.92); background: transparent; border: none;")
-        
+        # The footer spans the window, so a long quote would otherwise raise the
+        # window's minimum width and stretch the whole app sideways.
+        self.quote_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred
+        )
+        self.quote_label.setMinimumWidth(0)
+
         self.quote_source_label = QLabel(f"— {self.quotes[0][1]}")
         self.quote_source_label.setStyleSheet("font-size: 11px; font-weight: bold; color: rgba(255, 255, 255, 0.55); background: transparent; border: none;")
-        
+        self.quote_source_label.setSizePolicy(
+            QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred
+        )
+
         footer_layout.addStretch()
         footer_layout.addWidget(self.quote_label)
         footer_layout.addWidget(self.quote_source_label)
         footer_layout.addStretch()
-        
+
         self.layout.addWidget(self.footer_widget)
+        self._refresh_quote_display()
 
         # Start quote rotation timer
         self.quote_timer = QTimer(self)
@@ -865,6 +879,7 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._update_resize_handles_geometry()
         self.position_update_all_btn()
+        self._refresh_quote_display()
         titlebar = getattr(self, "bottom_titlebar", None)
         if titlebar and titlebar.search_controller:
             titlebar.search_controller.reposition()
@@ -1173,10 +1188,10 @@ class MainWindow(QMainWindow):
         self.progress_controls_layout.setContentsMargins(2, 1, 2, 1)
         self.progress_controls_layout.setSpacing(6)
 
-        self.speed_label = QLabel("")
+        self.speed_label = ElidedLabel("")
         self.speed_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.speed_label.setVisible(False)
-        self.progress_controls_layout.addWidget(self.speed_label)
+        self.progress_controls_layout.addWidget(self.speed_label, 1)
 
         self.progress_controls_layout.addStretch()
 
@@ -1573,13 +1588,44 @@ class MainWindow(QMainWindow):
     def rotate_quote(self):
         if not hasattr(self, "quote_label") or not self.quote_label:
             return
-        current_text = self.quote_label.text()
+        current_text = self._quote_text
         available_quotes = [q for q in self.quotes if q[0] != current_text]
         if available_quotes:
             import random
-            quote, source = random.choice(available_quotes)
-            self.quote_label.setText(quote)
-            self.quote_source_label.setText(f"— {source}")
+            self._quote_text, self._quote_source = random.choice(available_quotes)
+            self.quote_source_label.setText(f"— {self._quote_source}")
+            self._refresh_quote_display()
+
+    def _refresh_quote_display(self) -> None:
+        """Draw the rotating quote elided to the footer width.
+
+        A QLabel without word wrap reports its full text as its size hint, and
+        the footer spans the window, so an unelided long quote becomes the
+        window's minimum width and stretches the app. Eliding keeps the quote on
+        the footer's existing line; the full text stays in the tooltip.
+        """
+        if not getattr(self, "quote_label", None) or not getattr(
+            self, "footer_widget", None
+        ):
+            return
+
+        layout = self.footer_widget.layout()
+        margins = layout.contentsMargins()
+        available = (
+            self.footer_widget.width()
+            - margins.left()
+            - margins.right()
+            - self.quote_source_label.sizeHint().width()
+            - layout.spacing()
+        )
+        metrics = QFontMetrics(self.quote_label.font())
+        self.quote_label.setText(
+            metrics.elidedText(
+                self._quote_text, Qt.TextElideMode.ElideRight, max(0, available)
+            )
+        )
+        tooltip = f"{self._quote_text} — {self._quote_source}"
+        self.quote_label.setToolTip(tooltip)
 
     def check_steamdb_status(self) -> None:
         """Asynchronously verify that Byparr is running and SteamDB Cloudflare bypass works."""

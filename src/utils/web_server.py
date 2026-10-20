@@ -258,7 +258,9 @@ class WebRequestHandler(BaseHTTPRequestHandler):
 
                 try:
                     if main_win.speed_label and main_win.speed_label.isVisible():
-                        speed = main_win.speed_label.text()
+                        # The label elides what it displays; the web UI wants
+                        # the whole speed string.
+                        speed = getattr(main_win.speed_label, "full_text", "") or main_win.speed_label.text()
                 except Exception:
                     pass
 

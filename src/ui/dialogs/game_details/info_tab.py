@@ -38,6 +38,12 @@ from ui.progress_button import ProgressButton
 from utils.helpers import get_base_path
 from utils.qt_utils import clear_layout
 from utils.lua_parsing import iter_live_matches
+from utils.steam_acf import (
+    ACF_DEFERRED,
+    ACF_FAILED,
+    ensure_acf_has_installed_depots,
+    find_appmanifest_path,
+)
 from utils.yaml_config_manager import (
     get_user_config_path, add_fake_app_id, remove_fake_app_id,
     get_fake_appid, is_slssteam_config_management_enabled,
@@ -2327,136 +2333,6 @@ def handle_move_dlc_to_dlcdata(dialog) -> None:
         refresh_dlcdata_btn_text(dialog)
 
 
-def _atomic_write_acf(acf_path: str, content: str) -> bool:
-    """Back up and atomically replace a Steam ACF.
-
-    Steam parses ``appmanifest_*.acf`` strictly; a partial write can make it drop
-    the app from the library entirely. Write to a sibling temp file, fsync, then
-    ``os.replace`` so Steam only ever observes a complete file. A timestamped
-    backup is kept because we are editing Steam's own state.
-    """
-    path = Path(acf_path)
-    if not path.exists():
-        return False
-    try:
-        stamp = int(time.time())
-        backup = path.with_suffix(path.suffix + f".assella-bak-{stamp}")
-        shutil.copy2(path, backup)
-    except Exception as e:
-        logger.warning(f"[VaporTransition] Could not back up ACF {acf_path}: {e}")
-        return False
-
-    tmp = path.with_suffix(path.suffix + f".tmp-{os.getpid()}")
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(content)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-        return True
-    except Exception as e:
-        logger.warning(f"[VaporTransition] Atomic ACF write failed for {acf_path}: {e}")
-        try:
-            tmp.unlink(missing_ok=True)
-        except Exception as e:
-            logger.debug(f"[GameDetails] Could not remove the temporary manifest file: {e}")
-        return False
-
-
-def _ensure_acf_has_installed_depots(acf_path: str, appid: str, depot_ids: list, game_data: dict) -> None:
-    """Make Steam adopt an already-downloaded (ACCELA/DepotDownloader) install.
-
-    Deliberately does NOT touch StateFlags or AutoUpdateBehavior. The files on
-    disk are current for the pinned build, so declaring "update required" only
-    invites Steam to re-fetch a manifest for content we already have. All Steam
-    ACFs on this machine sit at StateFlags=4; leaving them alone is correct.
-    """
-    if not acf_path or not os.path.exists(acf_path):
-        return
-    try:
-        with open(acf_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-
-        needs_size = False
-        m_size = re.search(r'"SizeOnDisk"\s*"(\d+)"', content)
-        if m_size and m_size.group(1) == "0":
-            needs_size = True
-
-        install_path = game_data.get("install_path")
-        if not install_path and game_data.get("library_path"):
-            folder_name = game_data.get("installdir") or game_data.get("game_name")
-            if folder_name:
-                cand_install = Path(game_data["library_path"]) / "steamapps" / "common" / folder_name
-                if cand_install.is_dir():
-                    install_path = str(cand_install)
-
-        actual_size = 0
-        if install_path and os.path.isdir(install_path):
-            try:
-                for root, _, files in os.walk(install_path):
-                    for file in files:
-                        try:
-                            actual_size += os.path.getsize(os.path.join(root, file))
-                        except Exception as e:
-                            logger.debug(f"[GameDetails] Could not stat a file while measuring the install size: {e}")
-            except Exception as e:
-                logger.warning(f"[VaporTransition] Error calculating size: {e}")
-
-        # No manifest handling here, ever.
-        #
-        # `setManifestid` in a Hubcap Lua is a *pinning* directive, not download
-        # metadata. Writing it into a Steam ACF (or config.yaml) makes Steam
-        # verify against that exact manifest, which fights the live branch and
-        # triggers needless re-downloads. Build pinning is handled exclusively by
-        # core.native_steam.steam_manifest_pinning via the ManifestIds section,
-        # and only when the user opts into "Pin build". This function therefore
-        # never reads, resolves, or writes manifest GIDs -- Steam derives them
-        # itself from the depotcache/CDN during adoption.
-        wanted = [str(d).strip() for d in (depot_ids or []) if str(d).strip() and str(d).strip() != str(appid)]
-
-        has_entries = bool(
-            re.search(r'"InstalledDepots"\s*\{[^}]*"\d+"\s*\n\s*\{', content)
-        )
-
-        if not has_entries and wanted:
-            depots_lines = []
-            per_depot = actual_size // max(1, len(wanted))
-            for did_str in wanted:
-                dsize = actual_size if len(wanted) == 1 else per_depot
-                # "0" tells Steam "manifest unknown, verify it yourself". This is
-                # the correct hint: Steam then matches the depot against the
-                # files already on disk instead of pinning a stale GID.
-                depots_lines.append(
-                    f'\t\t"{did_str}"\n\t\t{{\n\t\t\t"manifest"\t\t"0"\n\t\t\t"size"\t\t"{dsize}"\n\t\t}}'
-                )
-            if depots_lines:
-                new_block = '\t"InstalledDepots"\n\t{\n' + "\n".join(depots_lines) + '\n\t}'
-                if re.search(r'"InstalledDepots"\s*\{\s*\}', content):
-                    content = re.sub(
-                        r'"InstalledDepots"\s*\{\s*\}', new_block.replace("\\", "\\\\"), content, count=1
-                    )
-                else:
-                    content = re.sub(
-                        r'("AppState"\s*\{)', rf'\1\n{new_block}', content, count=1
-                    )
-
-        if (needs_size or not m_size) and actual_size > 0:
-            if m_size:
-                content = re.sub(r'"SizeOnDisk"\s*"\d+"', f'"SizeOnDisk"\t\t"{actual_size}"', content)
-            else:
-                content = re.sub(r'("AppState"\s*\{)', rf'\1\n\t"SizeOnDisk"\t\t"{actual_size}"', content)
-
-        if not _atomic_write_acf(acf_path, content):
-            return
-        logger.info(
-            f"[VaporTransition] Updated ACF {acf_path}: "
-            f"{len(wanted)} depot(s) listed "
-            "(StateFlags and manifests left untouched)"
-        )
-    except Exception as e:
-        logger.warning(f"[VaporTransition] Graceful fallback on updating ACF {acf_path}: {e}")
-
-
 def on_move_to_vapor_clicked(dialog) -> None:
     game_data = dialog.game_data
     appid = str(dialog.appid)
@@ -2613,18 +2489,21 @@ def on_move_to_vapor_clicked(dialog) -> None:
                 if dlc_id and dlc_id != str(appid) and dlc_id not in dlc_appids:
                     dlc_appids.append(dlc_id)
 
-    # Respect user's saved depot selection if available
-    from utils.dlc_helpers import get_saved_depot_selection
-    saved_selection = get_saved_depot_selection(appid)
-    if not saved_selection and game_data:
-        saved_selection = game_data.get("selected_depots") or (
-            game_data.get("metadata", {}).get("selected_depots_list")
-        )
-    if saved_selection:
-        saved_depot_set = {str(d) for d in saved_selection}
-        user_depots = [d for d in depot_ids if str(d) in saved_depot_set]
-        if user_depots:
-            depot_ids = user_depots
+    # Respect the user's depot scope. The scope is the set the user confirmed
+    # for this game, but it must never drop a depot that is actually
+    # installed - the QSettings value is also rewritten by the update flow as
+    # a pre-selection for the next download.
+    from utils.dlc_helpers import get_saved_depot_selection, resolve_depot_scope
+    scope = get_saved_depot_selection(appid) or game_data.get("selected_depots") or (
+        game_data.get("metadata", {}).get("selected_depots_list")
+    )
+    if scope:
+        depot_ids, scope_dropped = resolve_depot_scope(appid, depot_ids, extra_scope=scope)
+        if scope_dropped:
+            logger.info(
+                f"[VaporTransition] {len(scope_dropped)} depot(s) of {appid} are outside the "
+                f"user's selected scope and will not be mounted: {scope_dropped}"
+            )
 
     # Clean depot IDs and decryption keys (depot_ids never has AppIDs; decryption_keys retains AppID)
     if is_dlc:
@@ -2675,7 +2554,7 @@ def on_move_to_vapor_clicked(dialog) -> None:
         )
 
     # Register into plugin_library and config.yaml
-    register_plugin_game(
+    registered = register_plugin_game(
         appid=appid,
         name=game_name,
         depot_ids=depot_ids,
@@ -2684,6 +2563,20 @@ def on_move_to_vapor_clicked(dialog) -> None:
         depot_names=depot_names,
         dlc_appids=dlc_appids,
     )
+
+    # The AT0-M identity must exist before the ACCELA marker is retired.
+    # A failed registration leaves the game ASSella-managed, which is
+    # recoverable; removing the marker anyway would leave it with no
+    # identity at all.
+    if not registered:
+        logger.error(f"[VaporTransition] Registration failed for {appid}; ACCELA markers left in place.")
+        ThemedMessageBox.critical(
+            dialog,
+            "Migration Failed",
+            f"'{game_name}' could not be registered in the SLSsteam configuration.\n\n"
+            "The game was left as an ASSella install. See the log for details.",
+        )
+        return
 
     # Remove ACCELA markers from install folder
     install_path = game_data.get("install_path")
@@ -2700,38 +2593,48 @@ def on_move_to_vapor_clicked(dialog) -> None:
                 except Exception as e:
                     logger.warning(f"[VaporTransition] Could not remove marker {m_path}: {e}")
 
-    # Update settings
-    if dialog.settings:
-        dialog.settings.setValue(f"exclude_from_update_all/{appid}", True)
-        dialog.settings.setValue(f"selected_branch/{appid}", "public")
-        dialog.settings.setValue(f"installed_branch/{appid}", "public")
+    # Update settings. The branch is the user's choice; forcing "public" would
+    # silently refresh a beta-pinned game from the public branch. The batch
+    # migration uses the same rule (utils.settings.preserve_branch_selection),
+    # so the two entry points cannot disagree about which branch a game is on.
+    from utils.settings import get_settings, preserve_branch_selection
+
+    settings_obj = dialog.settings or get_settings()
+    settings_obj.setValue(f"exclude_from_update_all/{appid}", True)
+    branch, installed_branch = preserve_branch_selection(settings_obj, appid)
 
     # Update game data dict
     game_data["is_vapor"] = True
     game_data["is_atom"] = True
     game_data["source"] = "at0-m"
     game_data["update_status"] = "at0m"
-    game_data["selected_branch"] = "public"
-    game_data["installed_branch"] = "public"
+    game_data["selected_branch"] = branch
+    game_data["installed_branch"] = installed_branch
+
+    # The ACF may only advertise the depots registration actually mounted: a
+    # depot the config editor refused is not served by SLSsteam, and listing it
+    # in the appmanifest would make Steam look for content that has no key.
+    from utils.plugin_games import load_plugin_library
+
+    library_record = load_plugin_library().get(appid) or {}
+    adopted_depots = [str(d) for d in (library_record.get("depots") or depot_ids)]
+    adopted_keys = library_record.get("keys") or decryption_keys
 
     # Ensure the appmanifest ACF lists the installed depots so Steam adopts the
     # existing files. StateFlags/AutoUpdateBehavior are intentionally not touched.
     # If no ACF exists on disk, we log gracefully and fall back to triggering the install API directly without crashing.
+    acf_deferred = False
     try:
-        acf_path = game_data.get("appmanifest_path")
-        if not acf_path and game_data.get("library_path"):
-            cand = Path(game_data["library_path"]) / "steamapps" / f"appmanifest_{appid}.acf"
-            if cand.exists():
-                acf_path = str(cand)
-        if not acf_path:
-            from core.steam_helpers import get_steam_libraries
-            for lib in (get_steam_libraries() or []):
-                cand = Path(lib) / "steamapps" / f"appmanifest_{appid}.acf"
-                if cand.exists():
-                    acf_path = str(cand)
-                    break
-        if acf_path and os.path.exists(acf_path):
-            _ensure_acf_has_installed_depots(acf_path, appid, depot_ids, game_data)
+        acf_path = find_appmanifest_path(game_data, appid)
+        if acf_path:
+            acf_status = ensure_acf_has_installed_depots(acf_path, appid, adopted_depots, game_data)
+            if acf_status == ACF_DEFERRED:
+                # Steam rewrites appmanifest_*.acf from its own state on exit,
+                # so a write made while it runs would be lost.
+                acf_deferred = True
+                logger.info(f"[VaporTransition] Steam is running; deferred appmanifest adoption for {appid}.")
+            elif acf_status == ACF_FAILED:
+                logger.warning(f"[VaporTransition] Appmanifest update failed for {appid}; Steam will re-verify on next launch.")
         else:
             logger.info(f"[VaporTransition] No existing ACF found for {appid}; install API will handle clean adoption.")
     except Exception as _acf_err:
@@ -2755,7 +2658,6 @@ def on_move_to_vapor_clicked(dialog) -> None:
         lib_idx = 0
 
     def _delayed_atom_api_worker():
-        import time
         time.sleep(5)
         try:
             logger.info(f"[VaporTransition] Triggering delayed AT0-M install pipe for '{game_name}' ({appid}) into library index {lib_idx}...")
@@ -2766,13 +2668,24 @@ def on_move_to_vapor_clicked(dialog) -> None:
 
     threading.Thread(target=_delayed_atom_api_worker, daemon=True).start()
 
-    ThemedMessageBox.information(
-        dialog,
-        "Moved to plugin AT0-M",
-        f"'{game_name}' has been successfully moved to AT0-M mode.\n"
-        f"Registered {len(depot_ids)} depot(s) and {len(decryption_keys)} decryption key(s) into SLSsteam.\n\n"
-        f"Steam will automatically verify and adopt the game files.",
-    )
+    if acf_deferred:
+        ThemedMessageBox.information(
+            dialog,
+            "Moved to plugin AT0-M",
+            f"'{game_name}' has been successfully moved to AT0-M mode.\n"
+            f"Registered {len(adopted_depots)} depot(s) and {len(adopted_keys)} decryption key(s) into SLSsteam.\n\n"
+            "Steam is running, so the appmanifest file was left untouched (Steam rewrites it "
+            "on exit and would discard the change). Close Steam and move the game to AT0-M "
+            "again to let Steam adopt the existing files.",
+        )
+    else:
+        ThemedMessageBox.information(
+            dialog,
+            "Moved to plugin AT0-M",
+            f"'{game_name}' has been successfully moved to AT0-M mode.\n"
+            f"Registered {len(adopted_depots)} depot(s) and {len(adopted_keys)} decryption key(s) into SLSsteam.\n\n"
+            f"Steam will automatically verify and adopt the game files.",
+        )
 
     # Close dialog and refresh parent
     dialog.accept()

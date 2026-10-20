@@ -8,7 +8,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, NamedTuple, Optional
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from PyQt6.QtCore import Qt, QTimer, QMetaObject, Q_ARG, pyqtSlot, QPropertyAnimation, QEasingCurve
 from PyQt6.QtWidgets import QWidget
@@ -666,6 +666,12 @@ class LibraryActionsMixin:
             aid = str(g.get("appid", "")).strip()
             name = g.get("game_name") or f"App {aid}"
 
+            # 0. A game whose Steam manifest adoption was deferred (Steam was
+            #    running during the migration) is AT0-M already, but the
+            #    appmanifest still has to be adopted. It stays eligible so
+            #    the migration can be re-run once Steam is closed.
+            acf_pending = bool(g.get("acf_pending"))
+
             # 1. Already in AT0-M
             if (
                 g.get("is_atom")
@@ -673,7 +679,7 @@ class LibraryActionsMixin:
                 or g.get("is_plugin_game")
                 or g.get("source") in ("at0-m", "AT0-M")
                 or g.get("update_status") in ("at0m", "vapor")
-            ):
+            ) and not acf_pending:
                 skipped_games.append((g, "Already in AT0-M"))
                 continue
 
@@ -744,6 +750,7 @@ class LibraryActionsMixin:
             progress_dlg.close()
             migrated = result.get("migrated", [])
             failed = result.get("failed", [])
+            acf_pending = result.get("acf_pending", [])
 
             # Update GameManager in-memory cache
             if self.game_manager and hasattr(self.game_manager, "games"):
@@ -756,8 +763,20 @@ class LibraryActionsMixin:
                         g["is_plugin_game"] = True
                         g["source"] = "at0-m"
                         g["update_status"] = "at0m"
-                        g["selected_branch"] = "public"
-                        g["installed_branch"] = "public"
+                        # The branch is the user's choice - the migration keeps
+                        # whatever was already selected instead of forcing
+                        # "public" (see core.morrenus_api.get_selected_branch).
+                        # selected and installed are separate facts: a game can
+                        # be installed on public while the user selected beta.
+                        selected_b = str(
+                            settings.value(f"selected_branch/{aid}", "", type=str) or ""
+                        ).strip()
+                        installed_b = str(
+                            settings.value(f"installed_branch/{aid}", "", type=str) or ""
+                        ).strip()
+                        branch = selected_b or installed_b or "public"
+                        g["selected_branch"] = branch
+                        g["installed_branch"] = installed_b or branch
                 if hasattr(self.game_manager, "games_cache") and self.game_manager.games_cache:
                     self.game_manager.games_cache.save(self.game_manager.games)
 
@@ -779,7 +798,67 @@ class LibraryActionsMixin:
                     self._dialog_parent(),
                     "AT0-M Migration Complete",
                     f"Successfully moved all {len(migrated)} game(s) to AT0-M mode!\n\n"
-                    "All markers have been cleaned and SLSsteam configuration has been reloaded.",
+                    "SLSsteam configuration has been written and reloaded.",
+                )
+
+            markers_retained = result.get("markers_retained", [])
+            if markers_retained:
+                retained_str = "\n".join(f"• {m['name']}" for m in markers_retained[:8])
+                if len(markers_retained) > 8:
+                    retained_str += f"\n• ...and {len(markers_retained) - 8} more."
+                ThemedMessageBox.warning(
+                    self._dialog_parent(),
+                    "Migration Saved, Markers Left In Place",
+                    "The SLSsteam configuration was written for these games, but the "
+                    "plugin library could not be saved. Their ASSella markers were "
+                    "left untouched so the migration can be retried:\n\n"
+                    f"{retained_str}",
+                )
+
+            if acf_pending:
+                pending_str = "\n".join(f"• {p['name']}" for p in acf_pending[:8])
+                if len(acf_pending) > 8:
+                    pending_str += f"\n• ...and {len(acf_pending) - 8} more."
+                ThemedMessageBox.warning(
+                    self._dialog_parent(),
+                    "Steam Manifest Adoption Deferred",
+                    "Steam is running, so the appmanifest files were left untouched "
+                    "(Steam rewrites them on exit and would discard the change).\n\n"
+                    f"Close Steam and run the migration again for these games:\n{pending_str}",
+                )
+
+            # Depots that were not mounted must be reported: the user asked
+            # for the whole game, and a depot missing from AdditionalDepots
+            # means missing content for that game.
+            #   - no decryption key  -> Steam would report DepotWithoutKey
+            #   - refused by the config editor -> the depot is a registered
+            #     app or otherwise cannot be mounted under this game
+            #   - outside the user's saved depot scope -> the user never
+            #     selected it, so it is not part of this install
+            skipped: List[Tuple[str, str, List[str]]] = []
+            for m in migrated:
+                name = m.get("name") or m.get("appid", "")
+                if m.get("excluded_depots"):
+                    skipped.append((name, "no decryption key", list(m["excluded_depots"])))
+                if m.get("unmounted_depots"):
+                    skipped.append((name, "not mounted by SLSsteam", list(m["unmounted_depots"])))
+                if m.get("excluded_out_of_scope"):
+                    skipped.append(
+                        (name, "outside the selected depot scope", list(m["excluded_out_of_scope"]))
+                    )
+            if skipped:
+                lines = []
+                for name, reason, deps in skipped[:8]:
+                    lines.append(f"• {name} ({reason}): {', '.join(str(d) for d in deps)}")
+                if len(skipped) > 8:
+                    lines.append(f"• ...and {len(skipped) - 8} more.")
+                skipped_str = "\n".join(lines)
+                ThemedMessageBox.warning(
+                    self._dialog_parent(),
+                    "Depots Not Mounted",
+                    "Some depots of these games were not mounted in SLSsteam, so "
+                    "that content is not served for them:\n\n"
+                    f"{skipped_str}",
                 )
 
         self._batch_atom_worker.progress.connect(_on_worker_progress)

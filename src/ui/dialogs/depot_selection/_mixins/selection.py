@@ -353,8 +353,8 @@ class SelectionMixin:
         try:
             from utils.edition_helpers import get_available_platforms
             self._available_platforms = get_available_platforms(self.depots, self.app_id, allow_network=False)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[DepotSelection] platform list could not be re-derived for {self.app_id}: {e}")
         if getattr(self, "_edition_menu_open", False) and getattr(self, "_edition_menu", None) is not None:
             # Rebuild the open menu so the store tiers show up without a second click.
             self._reopen_edition_menu = True

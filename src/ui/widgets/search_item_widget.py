@@ -1,3 +1,5 @@
+import logging
+
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
@@ -7,6 +9,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QSizePolicy,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SearchItemWidget(QWidget):
@@ -130,97 +134,42 @@ class SearchItemWidget(QWidget):
 
     def update_ratings(self) -> None:
         """Update Denuvo and ProtonDB badges dynamically."""
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self):
-                return
-        except Exception:
-            pass
-
-        try:
-            from core.ratings import get_denuvo_status, get_protondb_tier
-
-            # Denuvo status as colored text next to App ID
-            denuvo_status = get_denuvo_status(self.app_id)
-            _denuvo_text_map = {
-                "cracked":    ("•  Denuvo Cracked",    "#81C784"),
-                "hypervisor": ("•  Denuvo Hypervisor", "#FFA726"),
-                "uncracked":  ("•  Denuvo Uncracked",  "#E57373"),
-            }
-            if denuvo_status and denuvo_status in _denuvo_text_map:
-                text, color = _denuvo_text_map[denuvo_status]
-                self.denuvo_lbl.setText(text)
-                self.denuvo_lbl.setStyleSheet(f"font-size: 11px; font-weight: bold; color: {color};")
-                self.denuvo_lbl.show()
-            else:
-                self.denuvo_lbl.hide()
-
-            # Minimal ProtonDB badge (read cached value without queuing network fetch)
-            from core.ratings import _load_protondb_cache, is_protondb_fetching
-            proton_cache = _load_protondb_cache()
-            c_entry = proton_cache.get(str(self.app_id))
-            proton_tier = c_entry.get("tier") if isinstance(c_entry, dict) else None
-            _tier_map = {
-                "platinum": ("PLATINUM", "#90CAF9", "rgba(33, 150, 243, 0.15)", "rgba(144, 202, 249, 0.30)"),
-                "gold":     ("GOLD",     "#FFE082", "rgba(255, 193, 7, 0.15)",   "rgba(255, 224, 130, 0.30)"),
-                "silver":   ("SILVER",   "#CFD8DC", "rgba(144, 164, 174, 0.15)", "rgba(207, 216, 220, 0.30)"),
-                "bronze":   ("BRONZE",   "#FFAB91", "rgba(255, 112, 67, 0.15)",  "rgba(255, 171, 145, 0.30)"),
-                "borked":   ("BORKED",   "#EF9A9A", "rgba(239, 83, 80, 0.18)",   "rgba(239, 154, 154, 0.35)"),
-                "native":   ("NATIVE",   "#A5D6A7", "rgba(76, 175, 80, 0.15)",   "rgba(165, 214, 167, 0.30)"),
-            }
-            if proton_tier and proton_tier in _tier_map:
-                self._is_fetching_proton = False
-                text, color, bg, border = _tier_map[proton_tier]
-                self.proton_badge.setText(text)
-                self.proton_badge.setStyleSheet(
-                    f"color: {color}; background-color: {bg}; border: 1px solid {border}; "
-                    f"border-radius: 4px; padding: 1px 6px; font-size: 9px; font-weight: bold; letter-spacing: 0.5px;"
-                )
-                self.proton_badge.show()
-            elif getattr(self, "_is_fetching_proton", False) or is_protondb_fetching(str(self.app_id)):
-                self.set_proton_fetching()
-            else:
-                self._is_fetching_proton = False
-                self.proton_badge.hide()
-        except Exception:
-            pass
+        # The list layout uses slightly larger badges than the tile/compact
+        # layouts, so the sizes are passed in rather than hard-coded here.
+        _apply_ratings_to_widget(self, denuvo_font_size="11px", badge_padding="1px 6px")
 
     def set_proton_fetching(self) -> None:
         """Display 'FETCHING...' badge while resolving rating in parallel."""
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self):
-                return
-        except Exception:
-            pass
-        self._is_fetching_proton = True
-        self.proton_badge.setText("FETCHING...")
-        self.proton_badge.setStyleSheet(
-            "color: #B0BEC5; background-color: rgba(255, 255, 255, 0.08); "
-            "border: 1px solid rgba(255, 255, 255, 0.20); "
-            "border-radius: 4px; padding: 1px 6px; font-size: 9px; font-weight: bold; letter-spacing: 0.5px;"
-        )
-        self.proton_badge.show()
+        _set_proton_fetching_on_widget(self, badge_padding="1px 6px")
 
     def set_image(self, pixmap: QPixmap) -> None:
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self):
-                return
-            if pixmap and not pixmap.isNull():
-                self.img_lbl.setPixmap(pixmap)
-        except (RuntimeError, Exception):
-            pass
+        _set_image_on_widget(self, pixmap)
 
 
-def _apply_ratings_to_widget(widget: QWidget) -> None:
+def _set_image_on_widget(widget: QWidget, pixmap: QPixmap) -> None:
+    """Attach a cover pixmap to a widget's image label, if it still exists."""
+    try:
+        from PyQt6 import sip
+        if sip.isdeleted(widget):
+            return
+        if pixmap and not pixmap.isNull():
+            widget.img_lbl.setPixmap(pixmap)
+    except Exception as e:
+        logger.debug(f"[SearchWidgets] Could not apply image to {getattr(widget, 'app_id', '?')}: {e}")
+
+
+def _apply_ratings_to_widget(
+    widget: QWidget,
+    denuvo_font_size: str = "10px",
+    badge_padding: str = "1px 5px",
+) -> None:
     """Helper to dynamically populate Denuvo and ProtonDB badges across search widget styles."""
     try:
         from PyQt6 import sip
         if sip.isdeleted(widget):
             return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[SearchWidgets] Could not probe widget liveness: {e}")
 
     try:
         from core.ratings import get_denuvo_status, get_protondb_tier
@@ -235,7 +184,7 @@ def _apply_ratings_to_widget(widget: QWidget) -> None:
         if denuvo_status and denuvo_status in _denuvo_text_map:
             text, color = _denuvo_text_map[denuvo_status]
             widget.denuvo_lbl.setText(text)
-            widget.denuvo_lbl.setStyleSheet(f"font-size: 10px; font-weight: bold; color: {color};")
+            widget.denuvo_lbl.setStyleSheet(f"font-size: {denuvo_font_size}; font-weight: bold; color: {color};")
             widget.denuvo_lbl.show()
         else:
             widget.denuvo_lbl.hide()
@@ -259,31 +208,31 @@ def _apply_ratings_to_widget(widget: QWidget) -> None:
             widget.proton_badge.setText(text)
             widget.proton_badge.setStyleSheet(
                 f"color: {color}; background-color: {bg}; border: 1px solid {border}; "
-                f"border-radius: 4px; padding: 1px 5px; font-size: 9px; font-weight: bold; letter-spacing: 0.5px;"
+                f"border-radius: 4px; padding: {badge_padding}; font-size: 9px; font-weight: bold; letter-spacing: 0.5px;"
             )
             widget.proton_badge.show()
         elif getattr(widget, "_is_fetching_proton", False) or is_protondb_fetching(str(widget.app_id)):
-            _set_proton_fetching_on_widget(widget)
+            _set_proton_fetching_on_widget(widget, badge_padding=badge_padding)
         else:
             widget._is_fetching_proton = False
             widget.proton_badge.hide()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[SearchWidgets] Rating lookup failed for {getattr(widget, 'app_id', '?')}: {e}")
 
 
-def _set_proton_fetching_on_widget(widget: QWidget) -> None:
+def _set_proton_fetching_on_widget(widget: QWidget, badge_padding: str = "1px 5px") -> None:
     try:
         from PyQt6 import sip
         if sip.isdeleted(widget):
             return
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"[SearchWidgets] Could not probe widget liveness: {e}")
     widget._is_fetching_proton = True
     widget.proton_badge.setText("FETCHING...")
     widget.proton_badge.setStyleSheet(
         "color: #B0BEC5; background-color: rgba(255, 255, 255, 0.08); "
         "border: 1px solid rgba(255, 255, 255, 0.20); "
-        "border-radius: 4px; padding: 1px 5px; font-size: 9px; font-weight: bold; letter-spacing: 0.5px;"
+        f"border-radius: 4px; padding: {badge_padding}; font-size: 9px; font-weight: bold; letter-spacing: 0.5px;"
     )
     widget.proton_badge.show()
 
@@ -381,14 +330,7 @@ class SearchTileWidget(QWidget):
         self.update_ratings()
 
     def set_image(self, pixmap: QPixmap) -> None:
-        try:
-            from PyQt6 import sip
-            if sip.isdeleted(self):
-                return
-            if pixmap and not pixmap.isNull():
-                self.img_lbl.setPixmap(pixmap)
-        except Exception:
-            pass
+        _set_image_on_widget(self, pixmap)
 
     def set_cached(self, cached: bool = True):
         self.is_cached = cached

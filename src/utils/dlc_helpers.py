@@ -882,6 +882,88 @@ def get_base_depot_ids_for_app(appid: str, game_data: Optional[dict] = None) -> 
     return sorted(list(base_depots))
 
 
+def get_installed_depot_ids(appid: str) -> List[str]:
+    """Return the depot ids that were actually installed for a game.
+
+    The ``{base_path}/depots/{appid}.depot`` file is written when a game is
+    installed and lists the depots that were fetched. It is the only local
+    record of what is on disk.
+
+    This matters because ``depot_selection/{appid}`` in QSettings is a
+    *pre-selection for the next download* (the update flow and the install
+    flow both rewrite it), not a record of what is installed. Trusting it to
+    narrow the mounted set can drop depots that are on disk.
+    """
+    appid_str = str(appid).strip()
+    if not appid_str:
+        return []
+    try:
+        from utils.helpers import get_base_path
+        depot_file = get_base_path() / "depots" / f"{appid_str}.depot"
+        if not depot_file.exists():
+            return []
+        depots = []
+        for line in depot_file.read_text(errors="ignore").splitlines():
+            line = line.strip()
+            if line and ":" in line:
+                did = line.split(":", 1)[0].strip()
+                if did.isdigit() and did not in depots:
+                    depots.append(did)
+        return depots
+    except Exception as e:
+        logger.debug(f"[DLCHelpers] installed depot list for {appid_str} is unreadable: {e}")
+        return []
+
+
+def resolve_depot_scope(
+    appid: str,
+    candidate_depots: List[str],
+    extra_scope: Optional[List[str]] = None,
+) -> Tuple[List[str], List[str]]:
+    """Narrow a depot list to the user's chosen scope.
+
+    ``depot_selection/{appid}`` in QSettings is the set the user confirmed for
+    this game, but it is also rewritten by the update flow as a *pre-selection
+    for the next download*, so it can be narrower than what is on disk. It may
+    therefore never drop a depot that the install actually fetched: doing so
+    would mount a game without content that is already on the machine.
+
+    Returns ``(kept, dropped)`` so the caller can tell the user which depots
+    were left out instead of silently mounting a partial game.
+    """
+    appid_str = str(appid).strip()
+    candidates = [str(d) for d in candidate_depots if str(d).strip()]
+
+    scope: Optional[Set[str]] = None
+    try:
+        saved = get_saved_depot_selection(appid_str)
+        if saved:
+            scope = {str(d) for d in saved}
+    except Exception as e:
+        logger.debug(f"[DLCHelpers] saved scope for {appid_str} is unreadable: {e}")
+
+    if extra_scope:
+        scope = (scope or set()) | {str(d) for d in extra_scope}
+
+    installed = set(get_installed_depot_ids(appid_str))
+    if scope and installed and not installed.issubset(scope):
+        # The saved scope does not cover what is installed: it is stale or
+        # partial. Keep the installed depots.
+        scope = scope | installed
+
+    if not scope:
+        return candidates, []
+
+    kept = [d for d in candidates if d in scope]
+    if not kept:
+        # The scope has nothing in common with the candidates: it belongs to a
+        # different game state. Narrowing to it would mount nothing.
+        return candidates, []
+
+    dropped = [d for d in candidates if d not in scope]
+    return kept, dropped
+
+
 def get_saved_depot_selection(appid: str) -> List[str]:
     """Retrieve user's selected depots from QSettings or .depot file."""
     appid_str = str(appid).strip()
@@ -1048,7 +1130,7 @@ def purge_and_sanitize_for_dlc_only(
                 continue  # Safeguard: parent AppID is NEVER in AdditionalDepots
             meta = depots_meta.get(d) or depots_meta.get(int(d) if d.isdigit() else d) or {}
             desc = meta.get("desc", "") if isinstance(meta, dict) else ""
-            comment = f"{game_name} [{desc}]" if desc else f"{game_name}"
+            comment = f"{game_name} [{desc}] ({appid_str})" if desc else f"{game_name} ({appid_str})"
             add_additional_depot(config_path, d, comment=comment)
 
         # 3. DecryptionKeys: Remove unselected depot keys, then add keys for selected DLC depots

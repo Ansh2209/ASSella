@@ -16,6 +16,7 @@ class.
 * :class:`HeaderImageMixin` - thumbnail fetching for the header.
 * :class:`FileCustomisationMixin` - browse files: manifest dump and the file-selection tree.
 * :class:`BranchBuildMixin` - branch and build selection, plus the build pin and manifest overrides.
+* :class:`MigrationMixin` - registration of the checked depots and DLC entitlements into AT0-M mode.
 """
 
 from ui.dialogs.depot_selection._mixins.build_ui import BuildUIMixin
@@ -27,6 +28,7 @@ from ui.dialogs.depot_selection._mixins.executable import ExecutableVerifyMixin
 from ui.dialogs.depot_selection._mixins.header_image import HeaderImageMixin
 from ui.dialogs.depot_selection._mixins.files import FileCustomisationMixin
 from ui.dialogs.depot_selection._mixins.branch_build import BranchBuildMixin
+from ui.dialogs.depot_selection._mixins.migration import MigrationMixin
 
 __all__ = [
     "BuildUIMixin",
@@ -38,4 +40,5 @@ __all__ = [
     "HeaderImageMixin",
     "FileCustomisationMixin",
     "BranchBuildMixin",
+    "MigrationMixin",
 ]

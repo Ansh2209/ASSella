@@ -595,10 +595,15 @@ class PreReleaseTester:
             from utils.dlc_helpers import is_dlc_only_mode, get_dlc_uninstall_message
             from utils.settings import get_settings
             st = get_settings()
-            st.setValue("dlc_only_mode/999999", True)
-            assert is_dlc_only_mode("999999") is True
-            st.setValue("dlc_only_mode/999999", False)
-            assert is_dlc_only_mode("999999") is False
+            try:
+                st.setValue("dlc_only_mode/999999", True)
+                assert is_dlc_only_mode("999999") is True
+                st.setValue("dlc_only_mode/999999", False)
+                assert is_dlc_only_mode("999999") is False
+            finally:
+                # Never leave the sentinel in the user's real settings: a
+                # leaked True makes the AT0-M checker treat 999999 as a game.
+                st.remove("dlc_only_mode/999999")
 
             msg = get_dlc_uninstall_message({"appid": "813230", "game_name": "Animal Well"})
             assert "DLC Only" in msg and "base game files will NOT be deleted" in msg
@@ -610,36 +615,44 @@ class PreReleaseTester:
         t0 = time.time()
         try:
             from utils.dlc_helpers import sync_dlc_only_sls_config
-            from utils.yaml_config_manager import _read_config_content
+            from utils.yaml_config_manager import _read_config_content, _get_section_bounds
             from utils.settings import get_settings
             st = get_settings()
-            with tempfile.TemporaryDirectory() as tmp_d:
-                cfg_p = Path(tmp_d) / "config.yaml"
-                cfg_p.write_text("AdditionalApps:\n  - 108600 # Base\nDlcData:\n")
+            try:
+                with tempfile.TemporaryDirectory() as tmp_d:
+                    cfg_p = Path(tmp_d) / "config.yaml"
+                    cfg_p.write_text("AdditionalApps:\n  - 108600 # Base\nDlcData:\n")
 
-                # Test A: Under 64 DLCs in DLC-only mode
-                fake_game_under64 = {
-                    "appid": "999999",
-                    "game_name": "Test DLC Game",
-                    "dlcs": {str(i): f"DLC {i}" for i in range(1001, 1010)}
-                }
-                st.setValue("dlc_only_mode/999999", True)
-                sync_dlc_only_sls_config(cfg_p, "999999", "Test DLC Game", game_data=fake_game_under64)
-                content = _read_config_content(cfg_p)
-                assert "999999" not in content  # Base game excluded
-                assert "1001" in content        # DLC added
+                    # Test A: Under 64 DLCs in DLC-only mode
+                    fake_game_under64 = {
+                        "appid": "999999",
+                        "game_name": "Test DLC Game",
+                        "dlcs": {str(i): f"DLC {i}" for i in range(1001, 1010)}
+                    }
+                    st.setValue("dlc_only_mode/999999", True)
+                    sync_dlc_only_sls_config(cfg_p, "999999", "Test DLC Game", game_data=fake_game_under64)
+                    content = _read_config_content(cfg_p)
+                    # Depot comments carry the owner tag "(999999)", so the whole
+                    # file legitimately mentions the base AppID. What must not
+                    # happen is the base AppID being listed in AdditionalApps.
+                    app_bounds = _get_section_bounds(content, "AdditionalApps")
+                    app_section = content[app_bounds[1]:app_bounds[2]] if app_bounds else ""
+                    assert "999999" not in app_section  # Base game excluded from AdditionalApps
+                    assert "1001" in content        # DLC added
 
-                # Test B: 64+ DLCs -> Migrates to DlcData section
-                fake_game_over64 = {
-                    "appid": "999999",
-                    "game_name": "Massive DLC Game",
-                    "dlcs": {str(i): f"DLC {i}" for i in range(2000, 2070)}
-                }
-                sync_dlc_only_sls_config(cfg_p, "999999", "Massive DLC Game", game_data=fake_game_over64)
-                content = _read_config_content(cfg_p)
-                assert "DlcData:" in content
-                assert "2000:" in content or "'2000':" in content
-
+                    # Test B: 64+ DLCs -> Migrates to DlcData section
+                    fake_game_over64 = {
+                        "appid": "999999",
+                        "game_name": "Massive DLC Game",
+                        "dlcs": {str(i): f"DLC {i}" for i in range(2000, 2070)}
+                    }
+                    sync_dlc_only_sls_config(cfg_p, "999999", "Massive DLC Game", game_data=fake_game_over64)
+                    content = _read_config_content(cfg_p)
+                    assert "DlcData:" in content
+                    assert "2000:" in content or "'2000':" in content
+            finally:
+                # A failure above must not leave the sentinel enabled: the app
+                # reads every dlc_only_mode/<id> and would chase 999999 as a game.
                 st.remove("dlc_only_mode/999999")
             self.log_result("SLSsteam Configuration & 64+ DLC Limit Bypass", True, "Under-64 & 64+ bypass verified", duration=time.time() - t0)
         except Exception as e:
