@@ -1544,10 +1544,26 @@ def init_depots_tab(dialog) -> None:
 
         def _worker():
             try:
+                # 1. Bypass existing cached zip to ensure a completely fresh download from Hubcap
+                try:
+                    target_zip = morrenus_api.get_manifest_zip_path(appid_str, "public")
+                    if target_zip and target_zip.exists():
+                        target_zip.unlink()
+                except Exception as unlink_err:
+                    logger.debug(f"[DepotsTab] Could not unlink existing manifest zip: {unlink_err}")
+
                 zip_path, err = morrenus_api.download_manifest(appid_str, force_update=True)
                 if zip_path and os.path.exists(zip_path):
                     import zipfile
                     with zipfile.ZipFile(zip_path, "r") as zf:
+                        all_discovered_depots = set()
+                        for fname in zf.namelist():
+                            if fname.endswith(".manifest"):
+                                bname = os.path.basename(fname)
+                                parts = bname.split("_")
+                                if parts and parts[0].isdigit():
+                                    all_discovered_depots.add(parts[0])
+
                         lua_files = [f for f in zf.namelist() if f.endswith(".lua")]
                         if lua_files:
                             from utils.helpers import get_base_path
@@ -1555,6 +1571,9 @@ def init_depots_tab(dialog) -> None:
                             dest_lua.parent.mkdir(parents=True, exist_ok=True)
                             lua_data = zf.read(lua_files[0]).decode("utf-8", errors="ignore")
                             dest_lua.write_text(lua_data, encoding="utf-8")
+
+                            for m in iter_live_matches(lua_data, r'addappid\((\d+)'):
+                                all_discovered_depots.add(m.group(1))
 
                             # Extract and persist keys to SQLite
                             fresh_keys = {}
@@ -1564,37 +1583,48 @@ def init_depots_tab(dialog) -> None:
                                 from managers.depot_key_manager import DepotKeyManager
                                 DepotKeyManager.get_instance().save_depot_keys(appid_str, fresh_keys)
 
-                                # Sync fresh keys and depots to config.yaml and plugin library
-                                try:
-                                    from utils.yaml_config_manager import (
-                                        get_user_config_path,
-                                        batch_config_edit,
-                                        SHARED_REDISTS,
-                                    )
-                                    from utils.sls_bridge import SLSBridge
-                                    from utils.plugin_games import load_plugin_library, save_plugin_library
+                            # Sync fresh keys and all discovered depots to config.yaml and plugin library
+                            try:
+                                import time
+                                from utils.yaml_config_manager import (
+                                    get_user_config_path,
+                                    batch_config_edit,
+                                    SHARED_REDISTS,
+                                )
+                                from utils.sls_bridge import SLSBridge
+                                from utils.plugin_games import load_plugin_library, save_plugin_library
 
-                                    cfg_path = get_user_config_path()
-                                    lib = load_plugin_library()
-                                    rec = lib.get(appid_str)
-                                    is_dlc_only = rec.get("dlc_only", False) if rec else False
-                                    game_name = dialog.game_data.get("game_name") or f"App {appid_str}"
+                                cfg_path = get_user_config_path()
+                                lib = load_plugin_library()
+                                rec = lib.get(appid_str)
+                                is_dlc_only = rec.get("dlc_only", False) if rec else False
+                                game_name = dialog.game_data.get("game_name") or f"App {appid_str}"
 
-                                    if cfg_path and cfg_path.exists():
-                                        with batch_config_edit(cfg_path) as editor:
-                                            for did, k in fresh_keys.items():
-                                                if did not in SHARED_REDISTS:
-                                                    if did != appid_str and not is_dlc_only:
-                                                        editor.add_depot(did, comment=build_depot_comment(game_name, did, "", appid_str), app_id=appid_str)
-                                                    editor.add_key(did, k, comment=build_key_comment(game_name, did, "", appid_str))
-                                        if editor.has_changes:
-                                            SLSBridge.notify_reload()
+                                if cfg_path and cfg_path.exists():
+                                    with batch_config_edit(cfg_path) as editor:
+                                        for did, k in fresh_keys.items():
+                                            editor.add_key(did, k, comment=build_key_comment(game_name, did, "", appid_str))
+                                        for did in all_discovered_depots:
+                                            if did not in SHARED_REDISTS and did != appid_str and not is_dlc_only:
+                                                editor.add_depot(did, comment=build_depot_comment(game_name, did, "", appid_str), app_id=appid_str)
+                                    if editor.has_changes:
+                                        SLSBridge.notify_reload()
 
-                                    if rec:
-                                        rec.setdefault("keys", {}).update(fresh_keys)
-                                        save_plugin_library(lib)
-                                except Exception as sync_err:
-                                    logger.debug(f"[DepotsTab] Error syncing refetched keys to config: {sync_err}")
+                                if rec:
+                                    rec.setdefault("keys", {}).update(fresh_keys)
+                                    existing_deps = set(str(d) for d in rec.get("depots", []))
+                                    existing_deps.update(all_discovered_depots)
+                                    rec["depots"] = sorted(list(existing_deps), key=lambda x: int(x) if x.isdigit() else 0)
+                                    rec["updated_at"] = int(time.time())
+                                    save_plugin_library(lib)
+
+                                if hasattr(dialog, "game_data") and isinstance(dialog.game_data, dict):
+                                    g_deps = set(str(d) for d in dialog.game_data.get("depots", []))
+                                    g_deps.update(all_discovered_depots)
+                                    dialog.game_data["depots"] = sorted(list(g_deps), key=lambda x: int(x) if x.isdigit() else 0)
+                                    dialog.game_data.setdefault("keys", {}).update(fresh_keys)
+                            except Exception as sync_err:
+                                logger.debug(f"[DepotsTab] Error syncing refetched keys to config: {sync_err}")
 
                     try:
                         from managers.db_manager import DatabaseManager
