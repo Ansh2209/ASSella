@@ -1,4 +1,4 @@
-# Decky Plugin (Uran)
+# Uran (Decky Plugin)
 
 <img width="100%" alt="Uran Decky Plugin Banner" src="https://github.com/user-attachments/assets/b664f362-4412-4bb6-9924-6121a6eecb10" style="border-radius: 8px; margin-bottom: 1.5rem;" />
 
@@ -36,7 +36,7 @@ Uran is distributed as a pre-packaged plugin zip that you can install directly u
 
 Download the latest `Uran.zip` from the official GitHub releases:
 
-👉 **[Download Uran.zip on GitHub Releases](https://github.com/niwia/Uran/releases)**
+**[Download Uran.zip on GitHub Releases](https://github.com/niwia/Uran/releases)**
 
 Save `Uran.zip` to your Steam Deck's `Downloads` folder (or any accessible folder).
 

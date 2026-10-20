@@ -16,8 +16,8 @@ export default defineConfig({
     nav: [
       { text: 'Home', link: '/' },
       { text: 'Installation Guide', link: '/install' },
-      { text: 'Arch Repo', link: '/arch-repo' },
-      { text: 'Decky Plugin', link: '/decky' },
+      { text: 'Arch', link: '/arch-repo' },
+      { text: 'Uran', link: '/uran' },
       {
         text: 'Documentation',
         items: [
@@ -33,8 +33,8 @@ export default defineConfig({
         text: 'Getting Started',
         items: [
           { text: 'Installation Guide', link: '/install' },
-          { text: 'Arch / SteamOS Repo', link: '/arch-repo' },
-          { text: 'Decky Plugin (Uran)', link: '/decky' }
+          { text: 'Arch', link: '/arch-repo' },
+          { text: 'Uran (Decky Plugin)', link: '/uran' }
         ]
       },
       {

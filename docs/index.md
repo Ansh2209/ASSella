@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "ASSella"
   text: "Make linux great again"
-  tagline: "Depotdownloader on steroids."
+  tagline: "Depotdownloader made with AI on steroids."
   image:
     src: /logo.png
     alt: ASSella Logo
@@ -13,11 +13,8 @@ hero:
       text: Installation Guide
       link: /install
     - theme: brand
-      text: Decky Plugin (Uran)
-      link: /decky
-    - theme: alt
-      text: Arch / SteamOS Repo
-      link: /arch-repo
+      text: Uran (Decky Plugin)
+      link: /uran
     - theme: alt
       text: View on GitHub
       link: https://github.com/niwia/ASSella
