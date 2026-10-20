@@ -23,17 +23,13 @@ hero:
       link: https://github.com/niwia/ASSella
 
 features:
-  - icon: 🚀
-    title: One-Line Installer & Updates
+  - title: One-Line Installer & Updates
     details: Instant setup on Steam Deck and Linux desktops with automatic backup, delta-update zsync support, and rollback pins.
-  - icon: 🎮
-    title: Steam Deck Companion Plugin
+  - title: Steam Deck Companion Plugin
     details: Official Decky Loader plugin (Uran) for native game search, injection, and library management directly in Game Mode.
-  - icon: ⚡
-    title: Modern Manifest Architecture
+  - title: Modern Manifest Architecture
     details: ACF-independent metadata tracking with smart depot discovery, manifest repair, and multi-library discovery.
-  - icon: 🎨
-    title: Theming & Audio Packs
+  - title: Theming & Audio Packs
     details: Rich custom QSS themes, modular color palettes, custom game banners, and selectable voice announcement packs.
 ---
 
