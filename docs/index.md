@@ -30,28 +30,109 @@ curl -fsSL https://raw.githubusercontent.com/niwia/ASSella/beta/install.sh | bas
 
 Read the full step-by-step setup in the [Installation Guide](/install).
 
+<script setup>
+import { ref, onMounted, onUnmounted } from 'vue'
+
+const ALL_CONTRIBUTORS = [
+  'YesYes', 'Goldberg', 'Detanup01', 'atom0s', 'acidicoala', 'Depotdownloadermod',
+  'drazy', 'ACEsls', 'p.t.r', 'gogovang', 'morrenus', 'da_real_dari',
+  'bleibeidl', 'beastzy', 'Shinji257', 'th3g3ntlem3n', 'tr4nquility',
+  'kaiser_1804', 'feelingkindadizzy', 'aguga', 'shisaya', 'jayo',
+  'ansh2209', 'pduran5', 'MohandL3G'
+]
+
+const SLOT_COUNT = 9
+
+// Initial distribution
+const slots = ref(
+  Array.from({ length: SLOT_COUNT }, (_, i) => ({
+    name: ALL_CONTRIBUTORS[i % ALL_CONTRIBUTORS.length],
+    visible: true,
+    history: [ALL_CONTRIBUTORS[i % ALL_CONTRIBUTORS.length]]
+  }))
+)
+
+let activeTimers = []
+
+function pickRandom(list) {
+  return list[Math.floor(Math.random() * list.length)]
+}
+
+function runSlotLoop(idx, delay) {
+  const step = () => {
+    // 1. Fade out current name
+    if (slots.value[idx]) {
+      slots.value[idx].visible = false
+    }
+
+    // 2. While hidden, select a new randomized name that isn't currently displayed elsewhere
+    // and hasn't been in this specific slot for the last 3 rotations
+    const swapTimer = setTimeout(() => {
+      if (!slots.value[idx]) return
+
+      const currentlyShown = slots.value.map(s => s.name)
+      const slotHistory = slots.value[idx].history || []
+
+      // Candidates not shown anywhere right now AND not in this slot's recent history
+      let available = ALL_CONTRIBUTORS.filter(
+        name => !currentlyShown.includes(name) && !slotHistory.includes(name)
+      )
+
+      // Fallback if pool is constrained
+      if (available.length === 0) {
+        available = ALL_CONTRIBUTORS.filter(name => !currentlyShown.includes(name))
+      }
+      if (available.length === 0) {
+        available = ALL_CONTRIBUTORS.filter(name => name !== slots.value[idx].name)
+      }
+
+      const nextName = pickRandom(available)
+      const updatedHistory = [...slotHistory, nextName].slice(-3)
+
+      slots.value[idx].name = nextName
+      slots.value[idx].history = updatedHistory
+
+      // 3. Fade in new name
+      slots.value[idx].visible = true
+
+      // 4. Stay visible for 4.5s - 7.5s before next swap
+      const dwellTime = 4500 + Math.random() * 3000
+      const nextCycleTimer = setTimeout(step, dwellTime)
+      activeTimers.push(nextCycleTimer)
+    }, 1800) // matches fade-out transition duration
+
+    activeTimers.push(swapTimer)
+  }
+
+  const initialTimer = setTimeout(step, delay)
+  activeTimers.push(initialTimer)
+}
+
+onMounted(() => {
+  // Stagger each slot's swap so they never all change at once
+  slots.value.forEach((_, i) => {
+    const initialStagger = 2500 + i * 1600 + Math.random() * 1200
+    runSlotLoop(i, initialStagger)
+  })
+})
+
+onUnmounted(() => {
+  activeTimers.forEach(id => clearTimeout(id))
+  activeTimers = []
+})
+</script>
+
 <div class="testers-section">
   <p class="testers-title">Special thanks to early testers &amp; contributors</p>
   <div class="testers-cloud">
-    <span class="tester-tag" style="--dur: 15.2s; --delay: -4.3s;">shisaya</span>
-    <span class="tester-tag" style="--dur: 18.0s; --delay: -11.1s;">da_real_dari</span>
-    <span class="tester-tag" style="--dur: 13.5s; --delay: -2.7s;">jayo</span>
-    <span class="tester-tag" style="--dur: 16.4s; --delay: -8.5s;">morrenus</span>
-    <span class="tester-tag" style="--dur: 14.8s; --delay: -1.2s;">aguga</span>
-    <span class="tester-tag" style="--dur: 17.2s; --delay: -9.8s;">kaiser_1804</span>
-    <span class="tester-tag" style="--dur: 13.8s; --delay: -5.4s;">pduran5</span>
-    <span class="tester-tag" style="--dur: 19.5s; --delay: -13.2s;">feelingkindadizzy</span>
-    <span class="tester-tag" style="--dur: 15.6s; --delay: -6.9s;">ACEsls</span>
-    <span class="tester-tag" style="--dur: 14.2s; --delay: -3.8s;">ansh2209</span>
-    <span class="tester-tag" style="--dur: 17.8s; --delay: -10.4s;">drazy</span>
-    <span class="tester-tag" style="--dur: 16.0s; --delay: -7.6s;">MohandL3G</span>
-    <span class="tester-tag" style="--dur: 14.5s; --delay: -2.1s;">Shinji257</span>
-    <span class="tester-tag" style="--dur: 13.2s; --delay: -5.9s;">bleibeidl</span>
-    <span class="tester-tag" style="--dur: 18.2s; --delay: -12.5s;">tr4nquility</span>
-    <span class="tester-tag" style="--dur: 15.0s; --delay: -4.8s;">th3g3ntlem3n</span>
-    <span class="tester-tag" style="--dur: 16.6s; --delay: -9.1s;">gogovang</span>
-    <span class="tester-tag" style="--dur: 17.5s; --delay: -11.7s;">beastzy</span>
-    <span class="tester-tag" style="--dur: 14.0s; --delay: -1.9s;">p.t.r</span>
+    <div
+      v-for="(slot, i) in slots"
+      :key="i"
+      class="tester-slot"
+      :class="{ 'is-visible': slot.visible }"
+    >
+      <span class="tester-name">{{ slot.name }}</span>
+    </div>
   </div>
 </div>
 
@@ -69,51 +150,43 @@ Read the full step-by-step setup in the [Installation Guide](/install).
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--vp-c-text-3);
-  margin-bottom: 1.75rem;
+  margin-bottom: 2rem;
 }
 .testers-cloud {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   align-items: center;
-  gap: 1.5rem 3rem;
+  gap: 2rem 3.5rem;
   max-width: 960px;
   margin: 0 auto;
   padding: 0.5rem 0 1.5rem;
-  min-height: 140px;
+  min-height: 160px;
 }
-.tester-tag {
-  display: inline-block;
+.tester-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 130px;
+  padding: 0.25rem 0.5rem;
+  opacity: 0;
+  transform: translateX(-18px) scale(0.92);
+  filter: blur(1.5px);
+  will-change: transform, opacity;
+  transition: opacity 1.8s ease-in-out, transform 2.4s cubic-bezier(0.25, 1, 0.5, 1), filter 1.8s ease-in-out;
+}
+.tester-slot.is-visible {
+  opacity: 0.95;
+  transform: translateX(12px) scale(1);
+  filter: blur(0px);
+}
+.tester-name {
   font-family: var(--vp-font-family-mono);
   font-size: 0.92rem;
   font-weight: 500;
   color: var(--vp-c-brand-1);
   white-space: nowrap;
   user-select: none;
-  will-change: transform, opacity;
-  animation: slowDrift var(--dur) infinite ease-in-out var(--delay);
-}
-@keyframes slowDrift {
-  0% {
-    opacity: 0;
-    transform: translateX(-15px) scale(0.92);
-    filter: blur(1.5px);
-  }
-  25% {
-    opacity: 0.95;
-    transform: translateX(-3px) scale(1);
-    filter: blur(0px);
-  }
-  75% {
-    opacity: 0.95;
-    transform: translateX(8px) scale(1);
-    filter: blur(0px);
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(20px) scale(0.92);
-    filter: blur(1.5px);
-  }
 }
 </style>
 
