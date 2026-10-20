@@ -53,8 +53,8 @@ export default defineConfig({
       provider: 'local'
     },
     footer: {
-      message: 'ASSella — Advanced Steam Session & Library Assistant',
-      copyright: 'Community-driven open source project'
+      message: 'Assella is a personal passion project, built on top of the Lain project. It was developed over several months by a swarm of AI agents working together, and tested by a small group of human volunteers.',
+      copyright: 'AI agents involved: Google Gemini (3.8, 3.5, 2.5) · Anthropic Claude (Sonnet 5.5, 4.6) · DeepSeek 4.1 · Kimi 2.5 · MiniMax M3.1 · GLM 5.3 · Codex GPT 6 Luna'
     }
   }
 })
