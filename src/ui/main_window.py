@@ -1022,7 +1022,7 @@ class MainWindow(QMainWindow):
         # 1. Hubcap API Stats
         hubcap_api_lbl = QLabel("Hubcap:")
         hubcap_api_lbl.setStyleSheet("color: rgba(255, 255, 255, 0.70); font-size: 11px; background: transparent; border: none;")
-        self.hubcap_api_value = QLabel("API: --/-- | Single: --/--")
+        self.hubcap_api_value = QLabel("API: --/-- | --")
         self.hubcap_api_value.setStyleSheet(row_item_style)
         hubcap_api_item = QHBoxLayout()
         hubcap_api_item.setSpacing(4)
@@ -1803,41 +1803,33 @@ class MainWindow(QMainWindow):
         usage = stats.get("daily_usage", 0)
         limit = stats.get("daily_limit", 55)
 
-        # 2. Single depot generation
-        single_info = gen_usage.get("single", {}) if isinstance(gen_usage, dict) else {}
-        s_usage = single_info.get("usage", 0)
-        s_limit = single_info.get("limit", 1500)
+        # 2. Key Expiry and color-coded status
+        from core.morrenus_api import compute_api_key_expiry_info
 
-        # Key Expiry
-        expires_str = stats.get("api_key_expires_at")
-        if expires_str:
-            if expires_str.endswith('Z'):
-                expires_str = expires_str[:-1] + '+00:00'
-            try:
-                expires_at = datetime.fromisoformat(expires_str)
-                if expires_at.tzinfo is None:
-                    expires_at = expires_at.replace(tzinfo=timezone.utc)
-                now = datetime.now(timezone.utc)
-                delta = expires_at - now
-                days = delta.days
-                if days < 0:
-                    expiry_text = "Expired"
-                elif days == 0:
-                    expiry_text = "Expires today"
-                else:
-                    expiry_text = f"{days}d"
-            except Exception as e:
-                logger.error(f"Failed to parse expiry date '{expires_str}': {e}")
-                expiry_text = "Unknown"
+        api_key = self.settings.value("morrenus_api_key", "", type=str) if self.settings else ""
+        expiry_info = compute_api_key_expiry_info(
+            stats.get("api_key_expires_at"),
+            api_key=api_key,
+            settings=self.settings,
+        )
+
+        time_text = expiry_info["text"]
+        color = expiry_info["color"]
+        quota_str = f'API: {usage}/{limit} | <span style="color: {color}; font-weight: bold;">{time_text}</span>'
+
+        if expiry_info["is_lifetime"]:
+            exp_desc = "Lifetime key (Never expires)"
+        elif expiry_info["is_expired"]:
+            exp_desc = f"{expiry_info['formatted_date']} (Expired)"
+        elif expiry_info["hours"] <= 24:
+            exp_desc = f"{expiry_info['formatted_date']} ({time_text} remaining, {expiry_info['percentage']:.0f}% left)"
         else:
-            expiry_text = "Never"
+            exp_desc = f"{expiry_info['formatted_date']} ({expiry_info['days']}d remaining, {expiry_info['percentage']:.0f}% left)"
 
-        quota_str = f"API: {usage}/{limit} | Single: {s_usage}/{s_limit}"
         tooltip_str = (
-            f"Hubcap API Quotas & Limits:\n"
-            f"• API / Daily Manifests: {usage} / {limit}\n"
-            f"• Single Depot Generations: {s_usage} / {s_limit}\n"
-            f"• API Key Expiry: {expiry_text}"
+            f"Hubcap API:\n"
+            f"• Daily Manifests: {usage} / {limit} (resets at 00:00 UTC)\n"
+            f"• API Key Expiry: {exp_desc}"
         )
 
         if hasattr(self, "hubcap_api_value") and self.hubcap_api_value:

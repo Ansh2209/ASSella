@@ -283,6 +283,140 @@ _last_generate_usage_fetch: float = 0.0
 _STATS_CACHE_TTL: float = 60.0  # 60s minimum interval between API calls to avoid 429
 
 
+def is_stats_cache_from_previous_utc_day(cached_stats: Any) -> bool:
+    """Return True if cached_stats timestamp is from a prior UTC calendar day."""
+    if not isinstance(cached_stats, dict):
+        return False
+    ts_str = cached_stats.get("timestamp")
+    if not ts_str:
+        return False
+    try:
+        if str(ts_str).endswith("Z"):
+            ts_str = str(ts_str)[:-1] + "+00:00"
+        cached_dt = datetime.datetime.fromisoformat(str(ts_str))
+        if cached_dt.tzinfo is None:
+            cached_dt = cached_dt.replace(tzinfo=datetime.timezone.utc)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        return cached_dt.date() < now_utc.date()
+    except Exception as e:
+        logger.debug(f"[Hubcap] Error checking UTC timestamp: {e}")
+        return False
+
+
+def compute_api_key_expiry_info(
+    expires_str: Optional[str],
+    api_key: str = "",
+    settings: Optional[Any] = None,
+    now_utc: Optional[datetime.datetime] = None,
+) -> Dict[str, Any]:
+    """
+    Computes remaining days/hours, percentage, and semantic warning color for API key expiry.
+
+    Rules:
+    - >= 75% remaining: Green (#10b981)
+    - 25% - 74.9% remaining: Orange (#f59e0b)
+    - < 25% remaining: Red (#ef4444)
+    - <= 24 hours remaining: display in hours ('{hours}h')
+    - Expired: '0d' in Red
+    - Never expires / lifetime: '∞' in Green
+    """
+    if now_utc is None:
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+    elif now_utc.tzinfo is None:
+        now_utc = now_utc.replace(tzinfo=datetime.timezone.utc)
+
+    if not expires_str or str(expires_str).strip().lower() in ("", "never", "none", "null"):
+        return {
+            "text": "∞",
+            "color": "#10b981",
+            "percentage": 100.0,
+            "days": 999999,
+            "hours": 999999,
+            "is_expired": False,
+            "is_lifetime": True,
+            "formatted_date": "Never",
+        }
+
+    try:
+        clean_exp = str(expires_str).strip()
+        if clean_exp.endswith("Z"):
+            clean_exp = clean_exp[:-1] + "+00:00"
+        dt = datetime.datetime.fromisoformat(clean_exp)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        formatted_date = dt.strftime("%d/%m/%Y")
+    except Exception as e:
+        logger.debug(f"[Hubcap] Could not parse expiration date '{expires_str}': {e}")
+        return {
+            "text": "Unknown",
+            "color": "rgba(255, 255, 255, 0.75)",
+            "percentage": 0.0,
+            "days": 0,
+            "hours": 0,
+            "is_expired": False,
+            "is_lifetime": False,
+            "formatted_date": "Unknown",
+        }
+
+    delta = dt - now_utc
+    total_seconds = delta.total_seconds()
+
+    if total_seconds <= 0:
+        return {
+            "text": "0d",
+            "color": "#ef4444",
+            "percentage": 0.0,
+            "days": 0,
+            "hours": 0,
+            "is_expired": True,
+            "is_lifetime": False,
+            "formatted_date": formatted_date,
+        }
+
+    # Baseline tracking in QSettings for percentage
+    import hashlib
+    if settings is None:
+        from utils.settings import get_settings
+        settings = get_settings()
+
+    key_hash = hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12] if api_key else "default"
+    stored_hash = str(settings.value("hubcap_key_hash", "", type=str) or "")
+    stored_total = float(settings.value("hubcap_key_total_seconds", 0.0, type=float) or 0.0)
+
+    if stored_hash != key_hash or stored_total <= 0.0 or total_seconds > stored_total:
+        stored_total = total_seconds
+        settings.setValue("hubcap_key_hash", key_hash)
+        settings.setValue("hubcap_key_total_seconds", float(stored_total))
+
+    percentage = min(100.0, max(0.0, (total_seconds / stored_total) * 100.0))
+
+    days = int(total_seconds // 86400)
+    hours = int(total_seconds // 3600)
+
+    if total_seconds <= 86400:
+        display_text = f"{max(1, hours)}h"
+    else:
+        display_text = f"{days}d"
+
+    if percentage >= 75.0:
+        color = "#10b981"  # Emerald green
+    elif percentage >= 25.0:
+        color = "#f59e0b"  # Amber / orange
+    else:
+        color = "#ef4444"  # Red
+
+    return {
+        "text": display_text,
+        "color": color,
+        "percentage": percentage,
+        "days": days,
+        "hours": hours,
+        "is_expired": False,
+        "is_lifetime": False,
+        "formatted_date": formatted_date,
+    }
+
+
 def get_user_stats(force: bool = False) -> Dict:
     """Retrieves user statistics with cached fallback on network timeout or rate limit."""
     global _last_user_stats_fetch
@@ -290,7 +424,8 @@ def get_user_stats(force: bool = False) -> Dict:
     cached = settings.value("last_cached_user_stats", None)
 
     now = time.time()
-    if not force and cached and (now - _last_user_stats_fetch < _STATS_CACHE_TTL):
+    cache_day_expired = is_stats_cache_from_previous_utc_day(cached)
+    if not force and not cache_day_expired and cached and (now - _last_user_stats_fetch < _STATS_CACHE_TTL):
         logger.debug("[Hubcap] Using recently cached user stats (throttled)")
         return cached
 
@@ -306,6 +441,10 @@ def get_user_stats(force: bool = False) -> Dict:
     _last_user_stats_fetch = now + 60.0
     if isinstance(cached, dict) and cached:
         logger.info("Using cached user stats due to network request error / rate limit")
+        if cache_day_expired:
+            fallback_copy = dict(cached)
+            fallback_copy["daily_usage"] = 0
+            return fallback_copy
         return cached
     return res
 
