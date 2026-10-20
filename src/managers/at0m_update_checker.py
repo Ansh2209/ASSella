@@ -383,6 +383,11 @@ class At0mUpdateChecker(QObject):
                 return "up_to_date", {"appid": appid_str, "status": "up_to_date"}
 
         # Step 4: Depot Delta calculation
+        from ui.dialogs.depot_selection.rules import _depot_is_macos, _depot_is_android
+        import platform as _platform
+
+        is_macos_system = _platform.system().lower() == "darwin"
+
         steam_depots: Set[str] = set()
         depots_dict = steam_info.get("depots") or {}
         for did, ddata in depots_dict.items():
@@ -391,6 +396,20 @@ class At0mUpdateChecker(QObject):
                 continue
             # Keep meaningful content depots
             if isinstance(ddata, dict):
+                # Filter out macOS-only depots on non-macOS platforms
+                if not is_macos_system and _depot_is_macos(ddata):
+                    continue
+                # Filter out Android-only depots
+                if _depot_is_android(ddata):
+                    continue
+                # Filter out 0-byte or empty placeholder depots
+                size = ddata.get("size")
+                if size is not None and str(size).strip() == "0":
+                    manifests = ddata.get("manifests") or {}
+                    pub = manifests.get("public") if isinstance(manifests, dict) else {}
+                    if not pub or (isinstance(pub, dict) and pub.get("download") in ("0", 0, None)):
+                        continue
+
                 # If depot has manifest or size, it is a content depot
                 if ddata.get("manifest_id") or ddata.get("manifests") or ddata.get("size") or ddata.get("is_dlc"):
                     steam_depots.add(did_str)
