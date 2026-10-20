@@ -42,54 +42,37 @@ class MigrationMixin:
             return
 
         try:
-            from utils.plugin_games import register_plugin_game
+            from utils.plugin_games import migrate_game_to_atom
             from utils.yaml.dlc import add_dlc_data_batch
             from utils.yaml_config_manager import get_user_config_path
 
             config_path = get_user_config_path()
 
-            # 1. Gather depot names and decryption keys
-            depot_names = {}
-            decryption_keys = {}
-            for did in selected_depots:
-                meta = (self.depots or {}).get(str(did)) or {}
-                d_name = meta.get("desc") or meta.get("name") or ""
-                if d_name:
-                    depot_names[str(did)] = d_name
-                d_key = meta.get("key") or meta.get("decryption_key") or ""
-                if d_key and len(str(d_key).strip()) == 64:
-                    decryption_keys[str(did)] = str(d_key).strip().lower()
+            game_data = {
+                "appid": str(self.app_id),
+                "game_name": self.game_name,
+                "selected_depots": selected_depots,
+                "depots": self.depots or {},
+                "is_dlc_only": is_dlc_only,
+            }
 
-            # 2. Gather DLC AppIDs
-            dlc_appids = list(checked_dlcs.keys()) if checked_dlcs else []
-            for did in selected_depots:
-                meta = (self.depots or {}).get(str(did)) or {}
-                dlc_id = str(meta.get("dlcappid") or "").strip()
-                if dlc_id and dlc_id != str(self.app_id) and dlc_id not in dlc_appids:
-                    dlc_appids.append(dlc_id)
-
-            # 3. Register to plugin games database and sync SLS config
-            success = register_plugin_game(
-                appid=self.app_id,
-                name=self.game_name,
-                depot_ids=selected_depots,
-                decryption_keys=decryption_keys,
-                installdir=self.game_name,
-                depot_names=depot_names,
-                dlc_appids=dlc_appids if is_dlc_only else None,
+            res = migrate_game_to_atom(
+                game_data,
+                auto_revert_goldberg=True,
+                auto_revert_eos=True,
             )
 
-            if not success:
-                # The AT0-M identity was not committed - do not claim it was.
+            if not res.get("success"):
                 ThemedMessageBox.critical(
                     self,
                     "AT0-M Transition Failed",
-                    f"Failed to write the AT0-M configuration for '{self.game_name}'.\n\n"
+                    f"Failed to write the AT0-M configuration for '{self.game_name}':\n\n"
+                    f"{res.get('error', 'Unknown error')}\n\n"
                     "Nothing was changed. See the log for details.",
                 )
                 return
 
-            # 4. If DLC data was selected, ensure DlcData is also injected
+            # If DLC data was selected, ensure DlcData is also injected
             if checked_dlcs and config_path and config_path.exists():
                 add_dlc_data_batch(config_path, self.app_id, checked_dlcs)
 
@@ -105,7 +88,7 @@ class MigrationMixin:
                 self,
                 "AT0-M Registered",
                 f"✓ Successfully transitioned '{self.game_name}' to AT0-M mode!\n\n"
-                f"SLSsteam plugin integration has been configured.",
+                "Please restart Steam now so Steam client can adopt the game files and update your library.",
             )
             super().accept()
         except Exception as exc:

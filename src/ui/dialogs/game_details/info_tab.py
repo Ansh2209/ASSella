@@ -1177,9 +1177,6 @@ def on_manifest_fetch_completed(dialog, error_msg, src_manifest_path_str, manife
 
 
 def do_package_and_submit_manual_job(dialog, src_manifest_path, manifest_filename, depot_id, build_id, manifest_id=None, pin_build: bool = True) -> None:
-    import zipfile
-    import shutil
-
     if isinstance(depot_id, dict):
         depots_map = {str(k): str(v) for k, v in depot_id.items()}
     else:
@@ -2378,314 +2375,63 @@ def on_move_to_vapor_clicked(dialog) -> None:
         if warn_box != ThemedMessageBox.StandardButton.Yes:
             return
 
-    reply = ThemedMessageBox.question(
-        dialog,
-        "Move to plugin AT0-M",
-        f"Are you sure you want to convert '{game_name}' to AT0-M (Steam Native)?\n\n"
-        "• ACCELA marker folders (.ACCELA / .DepotDownloader) will be removed.\n"
-        "• Required AppID, DepotIDs, and DecryptionKeys will be registered in SLSsteam config.\n"
-        "• Updates will be handled natively by Steam client instead of ACCELA.\n\n"
-        "Do you want to proceed?",
-        ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
-        ThemedMessageBox.StandardButton.No,
-    )
-    if reply != ThemedMessageBox.StandardButton.Yes:
-        return
+    # Check for complications before moving
+    from utils.plugin_games import detect_migration_complications, migrate_game_to_atom
 
-    from managers.db_manager import DatabaseManager
-    from utils.plugin_games import register_plugin_game
-    from utils.helpers import get_base_path
+    complications = detect_migration_complications(game_data, dialog.settings)
+    if complications.get("has_complications"):
+        from ui.dialogs.atom_complications_dialog import AtomMigrationComplicationsDialog
+        from PyQt6.QtWidgets import QDialog
 
-    depot_ids = []
-    decryption_keys = {}
-    depot_names = {}
-    installdir = game_data.get("installdir") or game_data.get("game_name") or ""
-
-    # Check DatabaseManager for known depots
-    try:
-        db = DatabaseManager()
-        app_info = db.get_app_info(appid, bypass_expiration=True)
-        if app_info and app_info.get("depots"):
-            for did, dinfo in app_info["depots"].items():
-                did_str = str(did)
-                depot_ids.append(did_str)
-                if isinstance(dinfo, dict) and dinfo.get("name"):
-                    depot_names[did_str] = dinfo["name"]
-    except Exception as e:
-        logger.debug(f"[VaporTransition] DB lookup error: {e}")
-
-    # Check local .depot files
-    depot_file = get_base_path() / "depots" / f"{appid}.depot"
-    if depot_file.exists():
-        try:
-            with open(depot_file, "r", encoding="utf-8", errors="ignore") as f:
-                for line in f:
-                    parts = line.strip().split(":")
-                    if parts and parts[0].strip().isdigit():
-                        did = parts[0].strip()
-                        if did not in depot_ids:
-                            depot_ids.append(did)
-                        if len(parts) > 1 and parts[1].strip() and not parts[1].strip().isdigit():
-                            depot_names[did] = parts[1].strip()
-        except Exception as e:
-            logger.debug(f"[GameDetails] Could not read depot ids from the LUA keys: {e}")
-
-    # Extract keys from cached lua / manifest zip if available
-    lua_file = get_base_path() / "cached_luas" / f"{appid}.lua"
-    zip_file = get_base_path() / "hubcap_manifests" / f"accela_fetch_{appid}.zip"
-
-    # Also query authoritative local SQLite DepotKeyManager
-    try:
-        from managers.depot_key_manager import DepotKeyManager
-        stored_keys = DepotKeyManager.get_instance().get_depot_keys(appid)
-        for did, key in stored_keys.items():
-            if key:
-                decryption_keys[str(did)] = key
-                if str(did) != str(appid) and str(did) not in depot_ids:
-                    depot_ids.append(str(did))
-    except Exception as e:
-        logger.debug(f"[VaporTransition] DepotKeyManager lookup error: {e}")
-
-    def extract_keys_from_lua_text(lua_text: str):
-        for m in iter_live_matches(lua_text, r'addappid\((\d+),\s*\d+,\s*["\']([a-fA-F0-9]{64})["\']\)'):
-            did = m.group(1)
-            key = m.group(2)
-            decryption_keys[did] = key
-            if str(did) != str(appid) and did not in depot_ids:
-                depot_ids.append(did)
-
-    if lua_file.exists():
-        try:
-            with open(lua_file, "r", encoding="utf-8", errors="ignore") as lf:
-                extract_keys_from_lua_text(lf.read())
-        except Exception as e:
-            logger.debug(f"[GameDetails] Could not read the LUA depot keys file: {e}")
-
-    if zip_file.exists():
-        try:
-            with zipfile.ZipFile(zip_file, "r") as zf:
-                for name in zf.namelist():
-                    if name.endswith(".lua"):
-                        extract_keys_from_lua_text(zf.read(name).decode("utf-8", errors="ignore"))
-        except Exception as e:
-            logger.debug(f"[GameDetails] Could not read depot keys from the manifest bundle: {e}")
-
-    # Check if this game is in DLC-only mode
-    from utils.dlc_helpers import is_dlc_only_mode, get_dlc_only_info, filter_dlc_depots_only
-    dlc_appids = []
-    is_dlc = is_dlc_only_mode(appid) or game_data.get("is_dlc_only")
-    if is_dlc:
-        try:
-            d_info = get_dlc_only_info(appid)
-            if d_info:
-                dlc_appids = [str(x["dlc_appid"]) for x in d_info if x.get("dlc_appid")]
-        except Exception as e:
-            logger.debug(f"[GameDetails] DLC AppID lookup failed for {appid}: {e}")
-        if not dlc_appids:
-            depots_meta = (game_data.get("depots") or {})
-            for did in depot_ids:
-                meta = depots_meta.get(str(did)) or {}
-                dlc_id = str(meta.get("dlcappid") or "").strip()
-                if dlc_id and dlc_id != str(appid) and dlc_id not in dlc_appids:
-                    dlc_appids.append(dlc_id)
-
-    # Respect the user's depot scope. The scope is the set the user confirmed
-    # for this game, but it must never drop a depot that is actually
-    # installed - the QSettings value is also rewritten by the update flow as
-    # a pre-selection for the next download.
-    from utils.dlc_helpers import get_saved_depot_selection, resolve_depot_scope
-    scope = get_saved_depot_selection(appid) or game_data.get("selected_depots") or (
-        game_data.get("metadata", {}).get("selected_depots_list")
-    )
-    if scope:
-        depot_ids, scope_dropped = resolve_depot_scope(appid, depot_ids, extra_scope=scope)
-        if scope_dropped:
-            logger.info(
-                f"[VaporTransition] {len(scope_dropped)} depot(s) of {appid} are outside the "
-                f"user's selected scope and will not be mounted: {scope_dropped}"
-            )
-
-    # Clean depot IDs and decryption keys (depot_ids never has AppIDs; decryption_keys retains AppID)
-    if is_dlc:
-        depot_ids = filter_dlc_depots_only(depot_ids, appid, depots_meta=game_data.get("depots"), dlc_appids=dlc_appids)
+        comp_dlg = AtomMigrationComplicationsDialog(dialog, game_name, appid, complications)
+        if comp_dlg.exec() != QDialog.DialogCode.Accepted:
+            return
     else:
-        depot_ids = [d for d in depot_ids if str(d) != str(appid) and str(d) not in dlc_appids]
-    decryption_keys = {d: k for d, k in decryption_keys.items()}
-
-    # If any depot is missing its decryption key, attempt an emergency fetch via Hubcap API
-    missing_key_depots = [d for d in depot_ids if str(d) not in decryption_keys]
-    if missing_key_depots:
-        try:
-            logger.info(f"[VaporTransition] Missing keys for depot(s) {missing_key_depots}. Fetching fresh Hubcap bundle...")
-            from core import morrenus_api
-            zip_res, z_err = morrenus_api.download_manifest(appid, force_update=True)
-            if zip_res and os.path.exists(zip_res):
-                fresh_keys = {}
-                with zipfile.ZipFile(zip_res, "r") as zf:
-                    for name in zf.namelist():
-                        if name.endswith(".lua"):
-                            lua_txt = zf.read(name).decode("utf-8", errors="ignore")
-                            for m in iter_live_matches(lua_txt, r'addappid\((\d+),\s*\d+,\s*["\']([a-fA-F0-9]{64})["\']\)'):
-                                did_found, k_found = m.group(1), m.group(2)
-                                fresh_keys[did_found] = k_found
-                if fresh_keys:
-                    from managers.depot_key_manager import DepotKeyManager
-                    DepotKeyManager.get_instance().save_depot_keys(appid, fresh_keys)
-                    for did_f, k_f in fresh_keys.items():
-                        decryption_keys[did_f] = k_f
-                        if did_f != str(appid) and did_f not in depot_ids:
-                            depot_ids.append(did_f)
-                    logger.info(f"[VaporTransition] Recovered {len(fresh_keys)} fresh key(s) from Hubcap bundle.")
-        except Exception as e:
-            logger.warning(f"[VaporTransition] Failed to fetch missing keys from Hubcap: {e}")
-
-    # Warn and exclude depots with missing decryption keys (e.g. blacklisted/unavailable in Hubcap)
-    from utils.plugin_games import SHARED_REDISTS
-    unkeyed_depots = [d for d in depot_ids if str(d) not in decryption_keys and str(d) not in SHARED_REDISTS]
-    if unkeyed_depots:
-        logger.warning(f"[VaporTransition] Depots missing decryption keys: {unkeyed_depots}. Excluded to prevent Steam download errors.")
-        depot_ids = [d for d in depot_ids if d not in unkeyed_depots]
-        ThemedMessageBox.warning(
+        reply = ThemedMessageBox.question(
             dialog,
-            "Unkeyed Depots Excluded",
-            f"The following depot(s) have no decryption keys available (e.g. blacklisted in Hubcap):\n\n"
-            f"{', '.join(str(d) for d in unkeyed_depots)}\n\n"
-            f"These depots have been excluded so Steam will not fail with DepotWithoutKey.",
+            "Move to AT0-M",
+            f"Are you sure you want to convert '{game_name}' to AT0-M (Steam Native)?\n\n"
+            "• ACCELA marker folders (.DepotDownloader) will be removed.\n"
+            "• Required AppID, DepotIDs, and DecryptionKeys will be registered in SLSsteam config.\n"
+            "• Updates will be handled natively by Steam client instead of ACCELA.\n\n"
+            "Do you want to proceed?",
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.No,
         )
+        if reply != ThemedMessageBox.StandardButton.Yes:
+            return
 
-    # Register into plugin_library and config.yaml
-    registered = register_plugin_game(
-        appid=appid,
-        name=game_name,
-        depot_ids=depot_ids,
-        decryption_keys=decryption_keys,
-        installdir=installdir,
-        depot_names=depot_names,
-        dlc_appids=dlc_appids,
+    res = migrate_game_to_atom(
+        game_data,
+        settings=dialog.settings,
+        auto_revert_goldberg=True,
+        auto_revert_eos=True,
     )
 
-    # The AT0-M identity must exist before the ACCELA marker is retired.
-    # A failed registration leaves the game ASSella-managed, which is
-    # recoverable; removing the marker anyway would leave it with no
-    # identity at all.
-    if not registered:
-        logger.error(f"[VaporTransition] Registration failed for {appid}; ACCELA markers left in place.")
+    if not res.get("success"):
         ThemedMessageBox.critical(
             dialog,
             "Migration Failed",
-            f"'{game_name}' could not be registered in the SLSsteam configuration.\n\n"
+            f"'{game_name}' could not be converted to AT0-M:\n\n"
+            f"{res.get('error', 'Unknown error')}\n\n"
             "The game was left as an ASSella install. See the log for details.",
         )
         return
 
-    # Remove ACCELA markers from install folder
-    install_path = game_data.get("install_path")
-    if install_path and os.path.isdir(install_path):
-        for marker_name in (".assella", ".ASSELLA", ".ACCELA", ".accela", ".DepotDownloader", ".depotdownloader"):
-            m_path = os.path.join(install_path, marker_name)
-            if os.path.exists(m_path):
-                try:
-                    if os.path.isdir(m_path):
-                        shutil.rmtree(m_path, ignore_errors=True)
-                    else:
-                        os.remove(m_path)
-                    logger.info(f"[VaporTransition] Removed marker {m_path}")
-                except Exception as e:
-                    logger.warning(f"[VaporTransition] Could not remove marker {m_path}: {e}")
-
-    # Update settings. The branch is the user's choice; forcing "public" would
-    # silently refresh a beta-pinned game from the public branch. The batch
-    # migration uses the same rule (utils.settings.preserve_branch_selection),
-    # so the two entry points cannot disagree about which branch a game is on.
-    from utils.settings import get_settings, preserve_branch_selection
-
-    settings_obj = dialog.settings or get_settings()
-    settings_obj.setValue(f"exclude_from_update_all/{appid}", True)
-    branch, installed_branch = preserve_branch_selection(settings_obj, appid)
-
-    # Update game data dict
+    # Update in-memory game_data
     game_data["is_vapor"] = True
     game_data["is_atom"] = True
+    game_data["is_plugin_game"] = True
     game_data["source"] = "at0-m"
     game_data["update_status"] = "at0m"
-    game_data["selected_branch"] = branch
-    game_data["installed_branch"] = installed_branch
 
-    # The ACF may only advertise the depots registration actually mounted: a
-    # depot the config editor refused is not served by SLSsteam, and listing it
-    # in the appmanifest would make Steam look for content that has no key.
-    from utils.plugin_games import load_plugin_library
-
-    library_record = load_plugin_library().get(appid) or {}
-    adopted_depots = [str(d) for d in (library_record.get("depots") or depot_ids)]
-    adopted_keys = library_record.get("keys") or decryption_keys
-
-    # Ensure the appmanifest ACF lists the installed depots so Steam adopts the
-    # existing files. StateFlags/AutoUpdateBehavior are intentionally not touched.
-    # If no ACF exists on disk, we log gracefully and fall back to triggering the install API directly without crashing.
-    acf_deferred = False
-    try:
-        acf_path = find_appmanifest_path(game_data, appid)
-        if acf_path:
-            acf_status = ensure_acf_has_installed_depots(acf_path, appid, adopted_depots, game_data)
-            if acf_status == ACF_DEFERRED:
-                # Steam rewrites appmanifest_*.acf from its own state on exit,
-                # so a write made while it runs would be lost.
-                acf_deferred = True
-                logger.info(f"[VaporTransition] Steam is running; deferred appmanifest adoption for {appid}.")
-            elif acf_status == ACF_FAILED:
-                logger.warning(f"[VaporTransition] Appmanifest update failed for {appid}; Steam will re-verify on next launch.")
-        else:
-            logger.info(f"[VaporTransition] No existing ACF found for {appid}; install API will handle clean adoption.")
-    except Exception as _acf_err:
-        logger.warning(f"[VaporTransition] ACF update fallback: {_acf_err}")
-
-    # Fast safeguard: verify manifests are seeded in Steam central depotcache
-    try:
-        from core.native_steam.native_steam_handoff import sync_manifests_to_depotcache
-        dest_lib = game_data.get("library_path") or game_data.get("install_path") or ""
-        sync_manifests_to_depotcache(appid, dest_lib)
-    except Exception as _e:
-        logger.debug(f"[VaporTransition] Manifest depotcache safeguard: {_e}")
-
-    # Trigger Steam install/discovery API after 5 seconds
-    # Allows SLSsteam inotify watcher to reload config.yaml and unlock licenses in memory
-    dest_lib = game_data.get("library_path") or ""
-    try:
-        from core.native_steam.native_steam_handoff import resolve_library_index
-        lib_idx = resolve_library_index(dest_lib)
-    except Exception:
-        lib_idx = 0
-
-    def _delayed_atom_api_worker():
-        time.sleep(5)
-        try:
-            logger.info(f"[VaporTransition] Triggering delayed AT0-M install pipe for '{game_name}' ({appid}) into library index {lib_idx}...")
-            from core.steam_helpers import slssteam_api_send
-            slssteam_api_send(f"install|{appid}|{lib_idx}")
-        except Exception as _api_err:
-            logger.warning(f"[VaporTransition] Error sending delayed AT0-M API command: {_api_err}")
-
-    threading.Thread(target=_delayed_atom_api_worker, daemon=True).start()
-
-    if acf_deferred:
-        ThemedMessageBox.information(
-            dialog,
-            "Moved to plugin AT0-M",
-            f"'{game_name}' has been successfully moved to AT0-M mode.\n"
-            f"Registered {len(adopted_depots)} depot(s) and {len(adopted_keys)} decryption key(s) into SLSsteam.\n\n"
-            "Steam is running, so the appmanifest file was left untouched (Steam rewrites it "
-            "on exit and would discard the change). Close Steam and move the game to AT0-M "
-            "again to let Steam adopt the existing files.",
-        )
-    else:
-        ThemedMessageBox.information(
-            dialog,
-            "Moved to plugin AT0-M",
-            f"'{game_name}' has been successfully moved to AT0-M mode.\n"
-            f"Registered {len(adopted_depots)} depot(s) and {len(adopted_keys)} decryption key(s) into SLSsteam.\n\n"
-            f"Steam will automatically verify and adopt the game files.",
-        )
+    ThemedMessageBox.information(
+        dialog,
+        "Moved to AT0-M",
+        f"'{game_name}' has been successfully moved to AT0-M (Steam Native) mode.\n"
+        f"Registered {res.get('depots_count', 0)} depot(s) and {res.get('keys_count', 0)} decryption key(s) into SLSsteam.\n\n"
+        "Please restart Steam now so Steam client can adopt the game files and update your library.",
+    )
 
     # Close dialog and refresh parent
     dialog.accept()
