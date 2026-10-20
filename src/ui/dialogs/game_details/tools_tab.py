@@ -336,6 +336,25 @@ def init_tools_tab(dialog) -> None:
     cr_layout.addWidget(cr_divider)
     cr_layout.addWidget(reset_btn)
 
+    is_atom = (
+        getattr(dialog, "is_atom", False)
+        or bool(getattr(dialog, "game_data", {}).get("is_atom"))
+        or getattr(dialog, "game_data", {}).get("source") in ("Vapor", "at0-m", "AT0-M")
+    )
+    if is_atom:
+        dialog.choose_depots_btn.setEnabled(False)
+        reset_btn.setEnabled(False)
+        tooltip_msg = "Depot selection is managed automatically by Steam for AT0-M games."
+        dialog.choose_depots_btn.setToolTip(tooltip_msg)
+        reset_btn.setToolTip(tooltip_msg)
+        choose_reset_group.setStyleSheet("""
+            QFrame {
+                background: rgba(255, 255, 255, 0.02);
+                border: 1px solid rgba(255, 255, 255, 0.06);
+                border-radius: 8px;
+            }
+        """)
+
     depots_row.addWidget(choose_reset_group, 1)
 
     # This is temporarily disabled for the time being, do not delete.
@@ -629,6 +648,17 @@ def refresh_drm_emulation_state(dialog, is_applied=None) -> None:
 
 def update_depot_label(dialog) -> None:
     """Updates choose depots button label based on stored selection."""
+    is_atom = (
+        getattr(dialog, "is_atom", False)
+        or bool(getattr(dialog, "game_data", {}).get("is_atom"))
+        or getattr(dialog, "game_data", {}).get("source") in ("Vapor", "at0-m", "AT0-M")
+    )
+    if is_atom:
+        if hasattr(dialog, "choose_depots_btn") and dialog.choose_depots_btn:
+            dialog.choose_depots_btn.setText("Depots: AT0-M")
+            dialog.choose_depots_btn.setEnabled(False)
+        return
+
     btn_text = "Depots: Select"
     if dialog.settings:
         val = dialog.settings.value(f"depot_selection/{dialog.appid}", "", type=str)
