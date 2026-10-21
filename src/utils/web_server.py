@@ -687,11 +687,20 @@ class WebServerManager:
 
             games = self.main_window.game_manager.get_all_games()
             settings = get_settings()
+            from utils.game_modes import is_atom_managed
             updateable = []
             for g in games:
                 if g.get("update_status") == "update_available":
                     appid = str(g.get("appid", ""))
                     if settings and settings.value(f"exclude_from_update_all/{appid}", False, type=bool):
+                        continue
+                    # Steam-managed games are downloaded by Steam. ASSella only
+                    # syncs their decryption keys, which the web UI does not do.
+                    if is_atom_managed(g):
+                        logger.info(
+                            f"Web UI: Skipping {appid} - Steam-managed game, "
+                            f"its keys have to be synced from the desktop UI."
+                        )
                         continue
                     updateable.append(g)
 

@@ -2094,6 +2094,75 @@ class MainWindow(QMainWindow):
         if hasattr(self, "active_hubcap_label") and self.active_hubcap_label:
             self.active_hubcap_label.setText("Hubcap: Error")
 
+    def sync_at0m_keys(self, appid: str) -> None:
+        """Syncs the Hubcap decryption keys of a Steam-managed (AT0-M) game.
+
+        ASSella never downloads an AT0-M game - Steam does. What ASSella does
+        is make sure SLSsteam holds the decryption keys of the depots the game
+        needs, so Steam can actually decrypt them.
+        """
+        import threading
+
+        appid = str(appid)
+        running = getattr(self, "_at0m_key_syncs_running", None)
+        if running is None:
+            running = set()
+            self._at0m_key_syncs_running = running
+        if appid in running:
+            logger.info(f"[AT0-M] A key sync for {appid} is already running.")
+            return
+
+        gm = self.game_manager
+        game = gm.get_game(appid) if gm else None
+        name = (game or {}).get("game_name") or f"App {appid}"
+
+        running.add(appid)
+        self._refresh_at0m_sync_rows()
+
+        def _worker():
+            try:
+                from managers.at0m_update_checker import At0mUpdateChecker
+                ok, message = At0mUpdateChecker.get_instance().sync_keys(appid)
+            except Exception as e:
+                logger.error(f"[AT0-M] Key sync failed for {appid}: {e}", exc_info=True)
+                ok, message = False, str(e)
+            self._main_thread_callable.emit(
+                lambda: self._on_at0m_key_sync_finished(appid, ok, message, name)
+            )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _refresh_at0m_sync_rows(self) -> None:
+        """Repaints the pending-updates list so a running sync shows as busy."""
+        if hasattr(self, "simplified_terminal") and self.simplified_terminal:
+            self.simplified_terminal.update_stats(immediate=True)
+
+    def _on_at0m_key_sync_finished(self, appid: str, ok: bool, message: str, name: str) -> None:
+        """Reports the outcome of a key sync to the user."""
+        running = getattr(self, "_at0m_key_syncs_running", None)
+        if running is not None:
+            running.discard(str(appid))
+
+        if ok:
+            if hasattr(self, "status_pager") and self.status_pager:
+                self.status_pager.set_status(f"KEYS SYNCED · {name}")
+            ThemedMessageBox.information(self, "Keys Synced", message)
+        else:
+            logger.warning(f"[AT0-M] Key sync failed for {name}: {message}")
+            ThemedMessageBox.warning(self, "Key Sync Failed", message)
+
+        self._refresh_at0m_sync_rows()
+
+    @pyqtSlot(str)
+    def _show_key_sync_notice(self, names_text: str) -> None:
+        """Tells the user that the keys are in place but Steam does the download."""
+        ThemedMessageBox.information(
+            self,
+            "Keys Synced",
+            f"Keys synced for:\n{names_text}\n\n"
+            f"Launch or update the game(s) in Steam to finish.",
+        )
+
     def run_update_all_flow(self) -> None:
         """Flow for updating all games that have update_available status."""
         # Guard: prevent re-entrancy if a cycle is already running
@@ -2112,19 +2181,23 @@ class MainWindow(QMainWindow):
 
         games = self.game_manager.get_all_games()
         updateable_games = []
+        at0m_key_games = []
+        from utils.game_modes import is_atom_managed
         for g in games:
             if g.get("update_status") == "update_available":
-                # AT0-M / Vapor games are managed by Steam and must not be queued for DDM
-                if g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game"):
-                    continue
                 appid = str(g.get("appid", ""))
                 if self.settings.value(f"exclude_from_update_all/{appid}", False, type=bool):
                     continue
                 if self.settings.value(f"pin_build/{appid}", False, type=bool):
                     continue
-                updateable_games.append(g)
+                if is_atom_managed(g):
+                    # Steam-managed games are downloaded by Steam, never by
+                    # DepotDownloader. All ASSella does is sync the keys.
+                    at0m_key_games.append(g)
+                else:
+                    updateable_games.append(g)
 
-        if not updateable_games:
+        if not updateable_games and not at0m_key_games:
             self._update_all_running = False
             ThemedMessageBox.information(
                 self,
@@ -2133,7 +2206,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        total = len(updateable_games)
+        total = len(updateable_games) + len(at0m_key_games)
 
         # --- Immediate feedback: update button before the thread even starts ---
         self._set_update_all_btn_preparing(0, total)
@@ -2152,12 +2225,40 @@ class MainWindow(QMainWindow):
             settings = get_settings()
             queued = 0
             skipped_names = []
+            synced_names = []
+            key_processed = 0
+
+            # --- Phase 1: sync the keys of the Steam-managed games ---
+            # Steam downloads those games itself, so all ASSella can do is
+            # make sure SLSsteam holds the decryption keys.
+            if at0m_key_games:
+                from managers.at0m_update_checker import At0mUpdateChecker
+                checker = At0mUpdateChecker.get_instance()
+                for key_game in at0m_key_games:
+                    key_appid = str(key_game.get("appid", "0"))
+                    key_name = format_game_display_name(key_game)
+                    self._set_update_all_btn_preparing(
+                        key_processed, total, current_name=key_name
+                    )
+                    logger.info(f"[Update All] Syncing keys for {key_name} ({key_appid})...")
+                    try:
+                        ok, message = checker.sync_keys(key_appid)
+                    except Exception as e:
+                        logger.error(f"[Update All] Key sync failed for {key_name}: {e}")
+                        ok, message = False, str(e)
+                    key_processed += 1
+                    if ok:
+                        synced_names.append(key_name)
+                        logger.info(f"[Update All] Keys synced for {key_name}")
+                    else:
+                        logger.warning(f"[Update All] Key sync failed for {key_name}: {message}")
+                        skipped_names.append(key_name)
 
             for idx, game_data in enumerate(updateable_games):
                 appid = str(game_data.get("appid", "0"))
                 name = format_game_display_name(game_data)
                 update_status = game_data.get("update_status")
-                self._set_update_all_btn_preparing(idx, total, current_name=name)
+                self._set_update_all_btn_preparing(key_processed + idx, total, current_name=name)
                 logger.info(f"[Update All] Preparing {name} ({idx + 1}/{total})...")
                 try:
                     local_path = None
@@ -2355,19 +2456,28 @@ class MainWindow(QMainWindow):
                     logger.info(f"Update All queued: {name}")
 
                     # Update button progress after each successful queue
-                    self._set_update_all_btn_preparing(queued, total)
+                    self._set_update_all_btn_preparing(key_processed + queued, total)
 
                 except Exception as e:
                     logger.error(f"Update All failed for {name}: {e}", exc_info=True)
                     skipped_names.append(name)
 
-            logger.info(f"Update All: queued {queued} of {total} games.")
+            logger.info(f"[Update All]: queued {queued} of {total} games.")
 
             # Release guard and refresh UI
             self._update_all_running = False
             from PyQt6.QtCore import QMetaObject, Qt
             from PyQt6.QtCore import Q_ARG
             QMetaObject.invokeMethod(self, "update_dashboard_elements", Qt.ConnectionType.QueuedConnection)
+
+            # Tell the user that the keys are in place but Steam does the download
+            if synced_names:
+                QMetaObject.invokeMethod(
+                    self,
+                    "_show_key_sync_notice",
+                    Qt.ConnectionType.QueuedConnection,
+                    Q_ARG(str, "\n".join(f"• {n}" for n in synced_names)),
+                )
 
             # Notify user about any skipped games
             if skipped_names and queued == 0:
@@ -2377,6 +2487,7 @@ class MainWindow(QMainWindow):
                     Qt.ConnectionType.QueuedConnection,
                     Q_ARG(str, "\n".join(f"• {n}" for n in skipped_names)),
                     Q_ARG(bool, True),
+                    Q_ARG(bool, bool(at0m_key_games) and not updateable_games),
                 )
             elif skipped_names:
                 QMetaObject.invokeMethod(
@@ -2384,6 +2495,7 @@ class MainWindow(QMainWindow):
                     "_show_update_all_skip_notice",
                     Qt.ConnectionType.QueuedConnection,
                     Q_ARG(str, "\n".join(f"• {n}" for n in skipped_names)),
+                    Q_ARG(bool, False),
                     Q_ARG(bool, False),
                 )
 
@@ -2417,8 +2529,9 @@ class MainWindow(QMainWindow):
     def _set_update_all_btn_preparing_slot(self, done: int, total: int, current_name: str = "") -> None:
         """Main-thread slot: update the Update All button text to show preparation progress."""
         try:
-            ui = getattr(self, "ui_state", None)
-            btn = getattr(ui, "update_all_btn", None) if ui else None
+            # The button lives on the dashboard widget, not on the ui_state.
+            term = getattr(self, "simplified_terminal", None)
+            btn = getattr(term, "update_all_btn", None) if term else None
             if btn:
                 if done < total:
                     if current_name:
@@ -2434,9 +2547,17 @@ class MainWindow(QMainWindow):
             pass
 
     @pyqtSlot(str, bool)
-    def _show_update_all_skip_notice(self, names_text: str, all_skipped: bool) -> None:
+    @pyqtSlot(str, bool, bool)
+    def _show_update_all_skip_notice(self, names_text: str, all_skipped: bool, key_sync_only: bool = False) -> None:
         """Show a non-blocking notice when some games were skipped in Update All."""
-        if all_skipped:
+        if key_sync_only:
+            ThemedMessageBox.warning(
+                self,
+                "Update All — Keys Not Synced",
+                f"The decryption keys could not be synced for:\n{names_text}\n\n"
+                f"Open the game individually to retry.",
+            )
+        elif all_skipped:
             ThemedMessageBox.warning(
                 self,
                 "Update All — Manual Action Required",

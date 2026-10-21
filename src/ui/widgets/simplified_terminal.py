@@ -315,19 +315,37 @@ class SimplifiedTerminalWidget(QWidget):
             self.updates_scroll_layout.addWidget(lbl)
             return
 
-        # Only include updates for games NOT excluded from "Update All" and NOT pinned (AT0-M games are managed by Steam)
-        games_with_updates = [
-            g for g in games
-            if g.get("update_status") == "update_available"
-            and not (g.get("is_atom") or g.get("is_vapor") or g.get("is_plugin_game"))
-            and not settings.value(
-                f"exclude_from_update_all/{g.get('appid', '')}", False, type=bool
-            )
-            and not settings.value(
-                f"pin_build/{g.get('appid', '')}", False, type=bool
-            )
-        ]
-        total_updates = len(games_with_updates)
+        # Split the pending work by who owns it:
+        #  - ASSella-managed games are downloaded by DepotDownloader.
+        #  - Steam-managed (AT0-M) games are downloaded by Steam; ASSella only
+        #    syncs the decryption keys SLSsteam needs.
+        from utils.game_modes import is_atom_managed
+
+        download_games = []
+        at0m_key_ready = []
+        at0m_awaiting = []
+        for g in games:
+            status = g.get("update_status")
+            if status not in ("update_available", "key_pending"):
+                continue
+            appid = str(g.get("appid", ""))
+            if settings.value(
+                f"exclude_from_update_all/{appid}", False, type=bool
+            ):
+                continue
+            if settings.value(f"pin_build/{appid}", False, type=bool):
+                continue
+            if is_atom_managed(g):
+                if status == "update_available":
+                    at0m_key_ready.append(g)
+                else:
+                    at0m_awaiting.append(g)
+            elif status == "update_available":
+                download_games.append(g)
+
+        total_downloads = len(download_games)
+        total_key_syncs = len(at0m_key_ready)
+        total_updates = total_downloads + total_key_syncs
 
         # Show/Hide/Configure the Floating Update All Action Button
         accent = getattr(self.main_window, "accent_color", "#C06C84") or "#C06C84"
@@ -341,7 +359,14 @@ class SimplifiedTerminalWidget(QWidget):
 
         if hasattr(self, "update_all_btn") and self.update_all_btn:
             if total_updates > 0:
-                self.update_all_btn.setText(f" Update All ({total_updates})")
+                if total_key_syncs and total_downloads:
+                    self.update_all_btn.setText(
+                        f" Update All ({total_downloads} games + {total_key_syncs} keys)"
+                    )
+                elif total_key_syncs:
+                    self.update_all_btn.setText(f" Update All ({total_key_syncs} keys)")
+                else:
+                    self.update_all_btn.setText(f" Update All ({total_downloads})")
                 icon_cloud = make_svg_icon(Paths.icon("dl_cloud.svg"), fg, size=18)
                 self.update_all_btn.setIcon(icon_cloud)
                 self.update_all_btn.setIconSize(QSize(18, 18))
@@ -350,6 +375,16 @@ class SimplifiedTerminalWidget(QWidget):
                 self.update_all_btn.setEnabled(not is_all_running)
                 if is_all_running:
                     self.update_all_btn.setToolTip("Queueing updates...")
+                elif total_key_syncs and total_downloads:
+                    self.update_all_btn.setToolTip(
+                        f"Queue updates for {total_downloads} game(s) and sync the "
+                        f"decryption keys for {total_key_syncs} AT0-M game(s)"
+                    )
+                elif total_key_syncs:
+                    self.update_all_btn.setToolTip(
+                        f"Sync the decryption keys for {total_key_syncs} AT0-M game(s). "
+                        f"Steam downloads the game itself."
+                    )
                 else:
                     self.update_all_btn.setToolTip("Queue updates for all pending games")
 
@@ -431,22 +466,60 @@ class SimplifiedTerminalWidget(QWidget):
         if hasattr(self, "panel_mid") and self.panel_mid:
             self.panel_mid.update()
 
-        if total_updates == 0:
+        if total_downloads + total_key_syncs + len(at0m_awaiting) == 0:
             lbl = QLabel("All games up-to-date")
             lbl.setStyleSheet("color: #888888; font-style: italic; font-size: 9pt;")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.updates_scroll_layout.addWidget(lbl)
         else:
-            for g in games_with_updates:
+            accent = getattr(self.main_window, "accent_color", "#C06C84") or "#C06C84"
+
+            def _row_label(g):
                 name = g.get("game_name", "Unknown Game")
                 appid = str(g.get("appid", ""))
                 from utils.dlc_helpers import is_dlc_only_mode
                 if appid and is_dlc_only_mode(appid):
                     name = f"{name} [DLC MODE]"
+                return name
 
-                accent = getattr(self.main_window, "accent_color", "#C06C84") or "#C06C84"
-                row = UpdateItemWidget(appid, name, accent, self)
+            def _make_row(g, badge_text, badge_color, action_text="", action_callback=None):
+                return UpdateItemWidget(
+                    str(g.get("appid", "")),
+                    _row_label(g),
+                    accent,
+                    self,
+                    badge_text=badge_text,
+                    badge_color=badge_color,
+                    action_text=action_text,
+                    action_callback=action_callback,
+                    action_tooltip=(
+                        "Fetch the decryption keys from Hubcap and add them to "
+                        "SLSsteam. Steam downloads the game itself."
+                        if action_text else ""
+                    ),
+                )
+
+            for g in download_games:
+                self.updates_scroll_layout.addWidget(_make_row(g, "", "#CE93D8"))
+
+            for g in at0m_key_ready:
+                row = _make_row(
+                    g,
+                    "AT0-M",
+                    "#CE93D8",
+                    action_text="Sync Keys",
+                    action_callback=getattr(self.main_window, "sync_at0m_keys", None),
+                )
+                running = getattr(self.main_window, "_at0m_key_syncs_running", None) or set()
+                if str(g.get("appid", "")) in running:
+                    row.action_btn.setEnabled(False)
+                    row.action_btn.setText("Syncing…")
                 self.updates_scroll_layout.addWidget(row)
+
+            for g in at0m_awaiting:
+                self.updates_scroll_layout.addWidget(
+                    _make_row(g, "Awaiting Hubcap Key", "#888888")
+                )
         self.updates_scroll_layout.addStretch()
 
     def add_history_entry(self, entry):

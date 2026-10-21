@@ -360,7 +360,7 @@ class GameItemWidget(QWidget):
                 if is_at0m_game and update_status == "update_available":
                     text = "AT0-M: Keys Ready"
                 elif is_at0m_game and update_status == "key_pending":
-                    text = "AT0-M: Keys Pending"
+                    text = "AT0-M: Awaiting Hubcap Key"
                 self.status_label.setText(text)
                 self.status_label.setStyleSheet(
                     f"color: {color}; "
@@ -536,7 +536,7 @@ class GameItemWidget(QWidget):
             if is_at0m_game and update_status == "update_available":
                 text = "AT0-M: Keys Ready"
             elif is_at0m_game and update_status == "key_pending":
-                text = "AT0-M: Keys Pending"
+                text = "AT0-M: Awaiting Hubcap Key"
 
             if hasattr(self, "status_label") and self.status_label:
                 self.status_label.setText(text)

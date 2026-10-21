@@ -2102,7 +2102,7 @@ class LibraryActionsMixin:
                 from managers.db_manager import DatabaseManager
                 db_missing = DatabaseManager().get_missing_hubcap_depots(app_id)
                 if db_missing:
-                    hubcap_keys = morrenus_api.get_hubcap_depot_keys()
+                    hubcap_keys = morrenus_api.get_hubcap_depot_keys(allow_network=True)
                     existing_keys = hubcap_keys.get("existing_depot_ids", set()) if isinstance(hubcap_keys, dict) else set()
                     contents_data = morrenus_api.get_manifest_contents(app_id, branch=branch)
                     hubcap_manifests = contents_data.get("depot_ids", set()) if isinstance(contents_data, dict) else set()

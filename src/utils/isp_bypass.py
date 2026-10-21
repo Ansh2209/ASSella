@@ -285,6 +285,11 @@ def is_html_or_blocked_payload(resp: Optional[requests.Response]) -> bool:
     if resp is None:
         return True
     try:
+        # A 304 legitimately has no body, so the empty-payload rule below
+        # must not turn a conditional request into a false "blocked" report.
+        if getattr(resp, "status_code", None) == 304:
+            return False
+
         ctype = (resp.headers.get("content-type") or "").lower()
         if "text/html" in ctype:
             return True

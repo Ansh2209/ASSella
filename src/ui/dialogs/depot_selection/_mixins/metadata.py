@@ -191,7 +191,7 @@ class DepotMetadataMixin:
 
                     from managers.depot_key_manager import DepotKeyManager
                     cached_keys = DepotKeyManager().get_depot_keys(app_id_str) or {}
-                    hubcap_key_index = morrenus_api.get_hubcap_depot_keys()
+                    hubcap_key_index = morrenus_api.get_hubcap_depot_keys(allow_network=True)
                     existing_key_dids = hubcap_key_index.get("existing_depot_ids", set()) if isinstance(hubcap_key_index, dict) else set()
 
                     # 1. Check if any missing depots lacking keys now have keys in Hubcap
