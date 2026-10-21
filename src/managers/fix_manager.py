@@ -45,35 +45,90 @@ class FixManager:
 
     @classmethod
     def _get_fix_dir(cls, game_path: Path) -> Path:
-        """Get the .lfix directory, checking legacy path first."""
-        fix_dir = game_path / FIX_DIR
-        if fix_dir.exists():
-            return fix_dir
-        # Check legacy
-        legacy_dir = game_path / LEGACY_FIX_DIR
-        if legacy_dir.exists():
-            logger.info(f"[FixManager] Migrating legacy backup dir: {LEGACY_FIX_DIR} -> {FIX_DIR}")
+        """Get the .lfix directory, checking and migrating legacy path/receipt first."""
+        target_dir = Path(game_path)
+        fix_dir = target_dir / FIX_DIR
+        legacy_dir = target_dir / LEGACY_FIX_DIR
+        legacy_receipt = target_dir / RECEIPT_FILE
+
+        if legacy_dir.exists() or legacy_receipt.exists():
+            logger.info(f"[FixManager] Migrating legacy fix data to {FIX_DIR}")
             fix_dir.mkdir(parents=True, exist_ok=True)
-            cls._migrate_legacy_backup(legacy_dir, fix_dir)
+            cls._migrate_legacy_backup(target_dir, fix_dir)
             return fix_dir
+
         fix_dir.mkdir(parents=True, exist_ok=True)
         return fix_dir
 
     @classmethod
-    def _migrate_legacy_backup(cls, legacy_dir: Path, new_dir: Path) -> None:
-        """Migrate legacy .luafix_backup structure to .lfix."""
-        # Legacy structure: .luafix_backup/<relative_path>
-        # New structure: .lfix/<fixkey>/<relative_path>.bak
-        for bak_file in legacy_dir.rglob("*"):
-            if bak_file.is_file():
-                rel_path = bak_file.relative_to(legacy_dir)
-                # We can't determine the fixkey from legacy structure,
-                # so we preserve the path under a generic key
-                dest_file = new_dir / "legacy" / str(rel_path) + ".bak"
-                dest_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(bak_file, dest_file)
-        # Remove legacy dir after migration
-        shutil.rmtree(legacy_dir, ignore_errors=True)
+    def _migrate_legacy_backup(cls, target_dir: Path, new_dir: Path) -> None:
+        """Migrate legacy .luafix_backup and .luafix_receipt.json structure to .lfix."""
+        legacy_dir = target_dir / LEGACY_FIX_DIR
+        legacy_receipt_path = target_dir / RECEIPT_FILE
+
+        rec = {}
+        if legacy_receipt_path.is_file():
+            try:
+                with open(legacy_receipt_path, "r", encoding="utf-8") as f:
+                    rec = json.load(f)
+            except Exception as e:
+                logger.warning(f"[FixManager] Error reading legacy receipt: {e}")
+
+        fix_id = rec.get("fix_id") or "legacy"
+        fix_key = cls._safe_fix_key(fix_id)
+        fix_subdir = new_dir / fix_key
+        fix_subdir.mkdir(parents=True, exist_ok=True)
+
+        # Migrate backed up files
+        if legacy_dir.is_dir():
+            for bak_file in legacy_dir.rglob("*"):
+                if bak_file.is_file():
+                    rel_path = bak_file.relative_to(legacy_dir)
+                    dest_file = fix_subdir / f"{rel_path}.bak"
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(bak_file, dest_file)
+            shutil.rmtree(legacy_dir, ignore_errors=True)
+
+        # Build converted record
+        files_list = []
+        backed_up = rec.get("backed_up_files", [])
+        extracted = rec.get("extracted_files", [])
+        for rel_str in backed_up:
+            files_list.append({
+                "relative_path": str(rel_str),
+                "action": "modified",
+                "backup_path": f"{fix_key}/{rel_str}.bak",
+                "hash_before": None,
+                "hash_after": None,
+            })
+        backed_up_set = set(backed_up)
+        for rel_str in extracted:
+            if rel_str not in backed_up_set:
+                files_list.append({
+                    "relative_path": str(rel_str),
+                    "action": "added",
+                    "backup_path": None,
+                    "hash_before": None,
+                    "hash_after": None,
+                })
+
+        new_rec = {
+            "appid": str(rec.get("appid", "")),
+            "fix_id": fix_id,
+            "fix_title": rec.get("fix_title", "Legacy Fix"),
+            "applied_at": rec.get("applied_at", time.strftime("%Y-%m-%d %H:%M:%S")),
+            "files": files_list,
+            "status": "completed",
+            "failed_count": 0,
+        }
+        record_path = new_dir / f"{fix_key}.json"
+        try:
+            with open(record_path, "w", encoding="utf-8") as f:
+                json.dump(new_rec, f, indent=2)
+            if legacy_receipt_path.is_file():
+                legacy_receipt_path.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"[FixManager] Failed to write migrated record: {e}")
 
     @classmethod
     def _safe_fix_key(cls, fix_id: str) -> str:
@@ -134,7 +189,7 @@ class FixManager:
 
                 # Guard against path traversal / zip slip attacks
                 member_path = Path(member.filename)
-                if member_path.is_absolute() or any(part.startswith("..") for part in member_path.parts):
+                if member_path.is_absolute() or any(part.startswith("..") or part == ".." for part in member_path.parts):
                     logger.warning(f"[FixManager] Skipping malicious path: {member.filename}")
                     continue
 
@@ -150,7 +205,7 @@ class FixManager:
                     continue
 
                 # Check if user wants to skip this file
-                if selected_files and member.filename not in selected_files:
+                if selected_files is not None and member.filename not in selected_files:
                     continue
 
                 is_existing = dest_file.exists()
@@ -225,6 +280,7 @@ class FixManager:
     def _apply_files(
         cls,
         game_path: Path,
+        fix_id: str,
         plan_entries: List[Dict[str, Any]],
         zip_path: Path,
         progress_cb: Optional[Callable[[str], None]] = None,
@@ -236,28 +292,31 @@ class FixManager:
             (applied_entries, failed_count)
         """
         fix_dir = cls._get_fix_dir(game_path)
-        fix_key = cls._safe_fix_key("placeholder")  # Will be updated later
+        fix_key = cls._safe_fix_key(fix_id)
+        fix_subdir = fix_dir / fix_key
         applied_entries = []
         failed_count = 0
 
         with zipfile.ZipFile(zip_path, "r") as zf:
             for i, entry in enumerate(plan_entries):
+                rel_path = entry["relative_path"]
+                dest_file = Path(entry["dest_path"])
+                zip_member = entry["zip_entry"]
+
                 try:
-                    rel_path = entry["relative_path"]
-                    dest_file = Path(entry["dest_path"])
-                    zip_member = entry["zip_entry"]
+                    hash_before = None
+                    backup_rel = None
 
                     # Backup existing file if modified
                     if entry["action"] == "modified":
-                        backup_file = fix_dir / rel_path + ".bak"
+                        backup_file = fix_subdir / f"{rel_path}.bak"
                         backup_file.parent.mkdir(parents=True, exist_ok=True)
                         if not backup_file.exists():
                             shutil.copy2(dest_file, backup_file)
+                        backup_rel = f"{fix_key}/{rel_path}.bak"
                         
                         # Hash the original before overwrite
                         hash_before = cls._sha256_file(dest_file)
-                    else:
-                        hash_before = None
 
                     # Extract file
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
@@ -276,7 +335,7 @@ class FixManager:
                     applied_entries.append({
                         "relative_path": rel_path,
                         "action": entry["action"],
-                        "backup_path": f"{rel_path}.bak" if entry["action"] == "modified" else None,
+                        "backup_path": backup_rel,
                         "hash_before": hash_before,
                         "hash_after": hash_after,
                     })
@@ -307,26 +366,15 @@ class FixManager:
         """
         Phase 4: Rewrite record with actual results.
         """
-        fix_key = cls._safe_fix_key(fix_id)
-        
         record = {
             "appid": str(appid),
             "fix_id": fix_id,
             "fix_title": fix_title,
             "applied_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "files": [],
+            "files": applied_entries,
             "status": "completed",
             "failed_count": failed_count,
         }
-
-        for entry in applied_entries:
-            record["files"].append({
-                "relative_path": entry["relative_path"],
-                "action": entry["action"],
-                "backup_path": f"{fix_key}/{entry['relative_path']}.bak" if entry["action"] == "modified" else None,
-                "hash_before": entry.get("hash_before"),
-                "hash_after": entry.get("hash_after"),
-            })
 
         try:
             with open(record_path, "w", encoding="utf-8") as f:
@@ -357,7 +405,7 @@ class FixManager:
         Args:
             game_path: Path to game directory
             appid: Steam AppID
-            fix_id: Fix identifier from lua.tools
+            fix_id: Fix identifier
             fix_title: Human-readable fix title
             zip_path: Path to downloaded fix ZIP
             selected_files: Optional set of relative paths to apply (None = all)
@@ -396,42 +444,24 @@ class FixManager:
         if progress_cb:
             progress_cb("Writing provisional record...")
 
-        fix_key = cls._safe_fix_key(fix_id)
-        fix_dir = cls._get_fix_dir(target_dir)
-        record_path = fix_dir / f"{fix_key}.json"
-
-        # Build and write provisional record
-        record = {
-            "appid": str(appid),
-            "fix_id": fix_id,
-            "fix_title": fix_title,
-            "applied_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "files": [],
-            "status": "provisional",
-        }
-
-        for entry in plan_entries:
-            record["files"].append({
-                "relative_path": entry["relative_path"],
-                "action": entry["action"],
-                "backup_path": None,  # Placeholder
-                "hash_before": None,
-                "hash_after": None,
-            })
-
-        try:
-            with open(record_path, "w", encoding="utf-8") as f:
-                json.dump(record, f, indent=2)
-        except Exception as e:
-            return False, f"Failed to write fix record: {e}"
+        record_path = cls._commit_provisional_record(
+            target_dir, appid, fix_id, fix_title, plan_entries
+        )
+        if not record_path:
+            return False, "Failed to initialize fix record."
 
         # ── Phase 3: APPLY ──
         if progress_cb:
             progress_cb(f"Applying {len(plan_entries)} files...")
 
         applied_entries, failed_count = cls._apply_files(
-            target_dir, plan_entries, archive, progress_cb
+            target_dir, fix_id, plan_entries, archive, progress_cb
         )
+
+        if not applied_entries:
+            if record_path.exists():
+                record_path.unlink()
+            return False, f"Failed to apply any files from fix ({failed_count} errors)."
 
         # ── Phase 4: SETTLE ──
         if progress_cb:
@@ -470,49 +500,47 @@ class FixManager:
             Receipt dict or None
         """
         target_dir = Path(game_path)
-        
-        # Try .lfix directory first, then legacy
-        for fix_dir_name in [FIX_DIR, LEGACY_FIX_DIR]:
-            fix_dir = target_dir / fix_dir_name
-            if not fix_dir.is_dir():
-                continue
-            
-            # Look for receipt files
-            for record_file in fix_dir.glob("*.json"):
-                try:
-                    with open(record_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    
-                    if isinstance(data, dict) and data.get("fix_id"):
-                        # If specific fix_id requested, check match
-                        if fix_id and data.get("fix_id") != fix_id:
-                            continue
-                        return data
-                except Exception as e:
-                    logger.warning(f"[FixManager] Error reading receipt {record_file}: {e}")
+        if not target_dir.is_dir():
+            return None
 
-        return None
+        receipts = cls.get_all_receipts(target_dir)
+        if not receipts:
+            return None
+
+        if fix_id:
+            for r in receipts:
+                if r.get("fix_id") == fix_id:
+                    return r
+            return None
+
+        receipts.sort(key=lambda r: str(r.get("applied_at", "")), reverse=True)
+        return receipts[0]
 
     @classmethod
     def get_all_receipts(cls, game_path: str | Path) -> List[Dict[str, Any]]:
         """Get all fix receipts for a game directory."""
         target_dir = Path(game_path)
+        if not target_dir.is_dir():
+            return []
+
+        # Check and migrate legacy directory / receipt if found
+        if (target_dir / LEGACY_FIX_DIR).is_dir() or (target_dir / RECEIPT_FILE).is_file():
+            cls._get_fix_dir(target_dir)
+
+        fix_dir = target_dir / FIX_DIR
+        if not fix_dir.is_dir():
+            return []
+
         receipts = []
-        
-        for fix_dir_name in [FIX_DIR, LEGACY_FIX_DIR]:
-            fix_dir = target_dir / fix_dir_name
-            if not fix_dir.is_dir():
-                continue
-            
-            for record_file in fix_dir.glob("*.json"):
-                try:
-                    with open(record_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    if isinstance(data, dict) and data.get("fix_id"):
-                        receipts.append(data)
-                except Exception:
-                    pass
-        
+        for record_file in fix_dir.glob("*.json"):
+            try:
+                with open(record_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and data.get("fix_id"):
+                    receipts.append(data)
+            except Exception as e:
+                logger.warning(f"[FixManager] Error reading receipt {record_file}: {e}")
+
         return receipts
 
     # ──────────────────────────────────────────────────────────────
@@ -531,28 +559,24 @@ class FixManager:
         Uses SHA-256 hashes for conflict detection.
         """
         target_dir = Path(game_path)
-        
+        if not target_dir.is_dir():
+            return False, f"Game directory not found: {target_dir}"
+
         # Find the receipt
         receipt = cls.get_receipt(target_dir, fix_id)
         if not receipt:
             return False, "No active fix receipt found in game directory."
 
-        # If fix_id not specified but multiple receipts exist, pick the most recent
-        if not fix_id and receipt.get("fix_id") != receipt.get("fix_id"):
-            all_receipts = cls.get_all_receipts(target_dir)
-            if len(all_receipts) > 1:
-                all_receipts.sort(key=lambda r: r.get("applied_at", ""), reverse=True)
-                receipt = all_receipts[0]
-
         fix_id = receipt.get("fix_id")
         fix_dir = cls._get_fix_dir(target_dir)
         fix_key = cls._safe_fix_key(fix_id)
+        fix_subdir = fix_dir / fix_key
         
         restored_count = 0
         deleted_count = 0
         conflicts = 0
         errors = 0
-        conflict_file = None
+        conflict_files = []
 
         try:
             for entry in receipt.get("files", []):
@@ -560,9 +584,17 @@ class FixManager:
                 action = entry.get("action")
                 hash_after = entry.get("hash_after")
                 hash_before = entry.get("hash_before")
+                backup_path = entry.get("backup_path")
                 
                 dest_file = target_dir / rel_path
                 if not dest_file.exists():
+                    # If modified file was missing, try restoring from backup
+                    if action == "modified" and backup_path:
+                        backup_file = fix_dir / backup_path
+                        if backup_file.is_file():
+                            dest_file.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(backup_file, dest_file)
+                            restored_count += 1
                     continue
 
                 try:
@@ -572,12 +604,16 @@ class FixManager:
                             current_hash = cls._sha256_file(dest_file)
                             if current_hash not in (hash_after, hash_before):
                                 conflicts += 1
-                                conflict_file = rel_path
+                                conflict_files.append(rel_path)
                                 continue
                         
                         # Restore from backup
-                        backup_file = fix_dir / rel_path + ".bak"
-                        if backup_file.exists():
+                        if backup_path:
+                            backup_file = fix_dir / backup_path
+                        else:
+                            backup_file = fix_subdir / f"{rel_path}.bak"
+
+                        if backup_file.is_file():
                             dest_file.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(backup_file, dest_file)
                             restored_count += 1
@@ -587,7 +623,7 @@ class FixManager:
                             errors += 1
 
                     elif action == "added":
-                        # Only delete if we wrote it (hash match)
+                        # Only delete if we wrote it (hash match) or if no hash info recorded
                         if hash_after:
                             current_hash = cls._sha256_file(dest_file)
                             if current_hash == hash_after:
@@ -597,18 +633,22 @@ class FixManager:
                                     progress_cb(f"Removing: {Path(rel_path).name}")
                             else:
                                 conflicts += 1
-                                conflict_file = rel_path
+                                conflict_files.append(rel_path)
                         else:
-                            # No hash info (old record format), delete blindly
                             dest_file.unlink()
                             deleted_count += 1
+                            if progress_cb:
+                                progress_cb(f"Removing: {Path(rel_path).name}")
 
                 except Exception as e:
                     logger.warning(f"[FixManager] Error handling {rel_path}: {e}")
                     errors += 1
 
+            if conflicts > 0:
+                # IMPORTANT: DO NOT delete backups or record on conflict!
+                return False, f"Conflict detected on {len(conflict_files)} file(s) (e.g. '{conflict_files[0]}'). Another fix or update changed the file. Backups were preserved."
+
             # Clean up backup directory and record
-            fix_subdir = fix_dir / fix_key
             if fix_subdir.is_dir():
                 shutil.rmtree(fix_subdir, ignore_errors=True)
             
@@ -616,16 +656,18 @@ class FixManager:
             if record_path.exists():
                 record_path.unlink()
 
+            # Clean up .lfix directory if empty
+            try:
+                if fix_dir.is_dir() and not any(fix_dir.iterdir()):
+                    fix_dir.rmdir()
+            except Exception:
+                pass
+
             # Build result message
-            msg_parts = [f"Fix removed: {restored_count} restored, {deleted_count} deleted"]
-            if conflicts > 0:
-                msg_parts.append(f"({conflicts} conflicts skipped)")
+            msg_parts = [f"Fix restored: {restored_count} restored, {deleted_count} deleted"]
             if errors > 0:
                 msg_parts.append(f"({errors} errors)")
             msg = " ".join(msg_parts)
-
-            if conflicts > 0:
-                return False, f"Conflict detected on '{conflict_file}'. Another fix or update changed the file."
             
             return True, msg
 

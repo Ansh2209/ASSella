@@ -329,6 +329,7 @@ def init_luafix_tab(dialog) -> None:
             return
 
         # Download the fix
+        orig_title = dialog.windowTitle()
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             zip_path, err = LuaToolsAPI.download_fix_zip(fix_id, dialog.appid)
@@ -339,7 +340,7 @@ def init_luafix_tab(dialog) -> None:
             # Show preview dialog to let user select files
             game_name = dialog.game_data.get("game_name", "Unknown Game")
             selected_files = show_fix_preview_dialog(
-                dialog, zip_path, fix_title, game_name
+                dialog, zip_path, fix_title, game_name, game_path=game_path
             )
 
             # User cancelled preview
@@ -358,11 +359,9 @@ def init_luafix_tab(dialog) -> None:
 
             # Apply the fix with selected files
             def progress_cb(msg):
-                # Update status message if the dialog has this method
                 if hasattr(dialog, 'setStatusMessage'):
                     dialog.setStatusMessage(msg)
                 else:
-                    # Use a simple status update
                     dialog.setWindowTitle(f"Applying Fix - {msg}")
 
             ok, msg = FixManager.apply_fix(
@@ -375,30 +374,22 @@ def init_luafix_tab(dialog) -> None:
                 progress_cb=progress_cb,
             )
 
+            # Clean up downloaded zip
+            try:
+                Path(zip_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+
             if ok:
-                # Clean up downloaded zip
-                try:
-                    Path(zip_path).unlink(missing_ok=True)
-                except Exception:
-                    pass
-
-                # Reset window title
-                if hasattr(dialog, 'setStatusMessage'):
-                    dialog.setStatusMessage("")
-                else:
-                    dialog.setWindowTitle("Apply Fix")
-
                 ThemedMessageBox.information(dialog, "Success", msg)
                 load_fixes()
             else:
-                # Reset window title
-                if hasattr(dialog, 'setStatusMessage'):
-                    dialog.setStatusMessage("")
-                else:
-                    dialog.setWindowTitle("Apply Fix")
-
                 ThemedMessageBox.critical(dialog, "Application Failed", msg)
         finally:
+            if hasattr(dialog, 'setStatusMessage'):
+                dialog.setStatusMessage("")
+            else:
+                dialog.setWindowTitle(orig_title)
             QApplication.restoreOverrideCursor()
 
     def on_restore_fix_clicked(game_path, fix_id=None):

@@ -69,6 +69,7 @@ def show_fix_preview_dialog(
     zip_path: str | Path,
     fix_title: str,
     game_name: str,
+    game_path: Optional[str | Path] = None,
 ) -> Optional[Set[str]]:
     """
     Show a dialog previewing all files in a fix archive.
@@ -79,11 +80,12 @@ def show_fix_preview_dialog(
         zip_path: Path to the fix ZIP file
         fix_title: Title of the fix
         game_name: Name of the game
+        game_path: Optional path to game directory
     
     Returns:
         Set of relative paths to apply, or None if cancelled
     """
-    dialog = FixPreviewDialog(parent, zip_path, fix_title, game_name)
+    dialog = FixPreviewDialog(parent, zip_path, fix_title, game_name, game_path=game_path)
     result = dialog.exec()
     
     if result == QDialog.DialogCode.Accepted:
@@ -100,11 +102,13 @@ class FixPreviewDialog(QDialog):
         zip_path: str | Path,
         fix_title: str,
         game_name: str,
+        game_path: Optional[str | Path] = None,
     ):
         super().__init__(parent)
         self.zip_path = Path(zip_path)
         self.fix_title = fix_title
         self.game_name = game_name
+        self.game_path = Path(game_path) if game_path else None
         self.selected_files: Set[str] = set()
         
         self.setWindowTitle(f"Apply Fix: {fix_title}")
@@ -173,6 +177,22 @@ class FixPreviewDialog(QDialog):
         """)
         self.deselect_all_btn.clicked.connect(self._on_deselect_all)
         controls.addWidget(self.deselect_all_btn)
+
+        self.show_all_btn = QPushButton("Show All")
+        self.show_all_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.show_all_btn.setStyleSheet("""
+            QPushButton {
+                background: rgba(255, 255, 255, 0.08);
+                border: 1px solid rgba(255, 255, 255, 0.15);
+                border-radius: 4px;
+                color: #d1d5db;
+                font-size: 8pt;
+                padding: 4px 10px;
+            }
+            QPushButton:hover { background: rgba(255, 255, 255, 0.16); }
+        """)
+        self.show_all_btn.clicked.connect(lambda: self._filter_files(None))
+        controls.addWidget(self.show_all_btn)
 
         self.only_modified_btn = QPushButton("Show Modified Only")
         self.only_modified_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -274,20 +294,20 @@ class FixPreviewDialog(QDialog):
             with zipfile.ZipFile(self.zip_path, "r") as zf:
                 entries = zf.infolist()
             
-            # Group by directory for tree-like display
             self._all_files = []
             for member in entries:
                 if member.is_dir():
                     continue
                 
-                # Check if file exists in game directory
-                # This is a preview, so we can't check without game path
-                # For now, mark all as "unknown" until we get game path
                 size = member.file_size
+                action = "added"
+                if self.game_path and (self.game_path / member.filename).exists():
+                    action = "modified"
+
                 self._all_files.append({
                     "relative_path": member.filename,
                     "size": size,
-                    "action": "unknown",  # Will be determined when game path is known
+                    "action": action,
                 })
 
             self._render_file_list()
@@ -299,12 +319,12 @@ class FixPreviewDialog(QDialog):
 
     def set_game_path(self, game_path: str | Path):
         """Set the game path to determine modified vs added files."""
-        game_dir = Path(game_path)
-        if not game_dir.is_dir():
+        self.game_path = Path(game_path) if game_path else None
+        if not self.game_path or not self.game_path.is_dir():
             return
         
         for file_info in self._all_files:
-            file_path = game_dir / file_info["relative_path"]
+            file_path = self.game_path / file_info["relative_path"]
             file_info["action"] = "modified" if file_path.exists() else "added"
         
         self._render_file_list()
@@ -328,6 +348,7 @@ class FixPreviewDialog(QDialog):
     def _create_file_widget(self, file_info: Dict[str, Any]) -> QWidget:
         """Create a widget for a single file entry."""
         container = QFrame()
+        container._file_info = file_info
         container.setStyleSheet("""
             QFrame {
                 background: transparent;
@@ -343,6 +364,7 @@ class FixPreviewDialog(QDialog):
         cb.setChecked(True)
         cb.setCursor(Qt.CursorShape.PointingHandCursor)
         cb.stateChanged.connect(self._update_status)
+        container._cb = cb
         lay.addWidget(cb)
 
         # Type badge
@@ -390,32 +412,33 @@ class FixPreviewDialog(QDialog):
 
     def _update_status(self):
         """Update the status label with selection info."""
-        checked = sum(1 for w in self._list_widgets if w.findChild(QCheckBox).isChecked())
+        checked = sum(1 for w in self._list_widgets if getattr(w, "_cb", None) and w._cb.isChecked())
         total = len(self._list_widgets)
         self.status_label.setText(f"{checked} of {total} files selected")
 
     def _on_select_all(self):
-        """Select all files."""
+        """Select all visible files."""
         for w in self._list_widgets:
-            w.findChild(QCheckBox).setChecked(True)
+            if not w.isHidden() and hasattr(w, "_cb"):
+                w._cb.setChecked(True)
         self._update_status()
 
     def _on_deselect_all(self):
-        """Deselect all files."""
+        """Deselect all visible files."""
         for w in self._list_widgets:
-            w.findChild(QCheckBox).setChecked(False)
+            if not w.isHidden() and hasattr(w, "_cb"):
+                w._cb.setChecked(False)
         self._update_status()
 
-    def _filter_files(self, action_filter: str):
-        """Show only files of a specific action type."""
+    def _filter_files(self, action_filter: Optional[str]):
+        """Show only files of a specific action type, or all if None."""
         for w in self._list_widgets:
-            file_info = next(f for f in self._all_files if f["relative_path"] == w.findChild(QLabel).text())
-            cb = w.findChild(QCheckBox)
-            if action_filter == file_info["action"]:
-                cb.setVisible(True)
+            file_info = getattr(w, "_file_info", None)
+            if not file_info:
+                continue
+            if action_filter is None or file_info.get("action") == action_filter:
                 w.setVisible(True)
             else:
-                cb.setVisible(False)
                 w.setVisible(False)
         self._update_status()
 
@@ -423,10 +446,7 @@ class FixPreviewDialog(QDialog):
         """Collect selected files and accept dialog."""
         self.selected_files = set()
         for w in self._list_widgets:
-            if w.isVisible():
-                cb = w.findChild(QCheckBox)
-                if cb.isChecked():
-                    path_lbl = w.findChildren(QLabel)[1]  # Second label is path
-                    self.selected_files.add(path_lbl.text())
+            if hasattr(w, "_cb") and w._cb.isChecked() and hasattr(w, "_file_info"):
+                self.selected_files.add(w._file_info["relative_path"])
         
         self.accept()
