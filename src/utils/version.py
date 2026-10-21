@@ -50,6 +50,43 @@ def extract_semver(raw_version: str) -> str:
     return v
 
 
+def _normalize_build_num(num_str: str) -> int:
+    """
+    Normalize build numbers or date-based build stamps into a monotonic comparable integer.
+    Handles:
+      - 9-digit DDMMYYNNN stamps (e.g. '051026003' -> 20261005003, '010127001' -> 20270101001)
+      - 8-digit YYYYMMDD stamps (e.g. '20261021' -> 20261021)
+      - Standard sequential integers (e.g. '1', '2')
+    """
+    if not num_str or not num_str.isdigit():
+        return 0
+
+    s = num_str.strip()
+    # 9-digit DDMMYYNNN stamp used in ASSella Canary / testing / RC builds
+    if len(s) == 9:
+        try:
+            dd, mm, yy, nnn = int(s[0:2]), int(s[2:4]), int(s[4:6]), int(s[6:9])
+            if 1 <= dd <= 31 and 1 <= mm <= 12:
+                year = 2000 + yy if yy < 100 else yy
+                return year * 10000000 + mm * 100000 + dd * 1000 + nnn
+        except (ValueError, IndexError):
+            pass
+
+    # 8-digit DDMMYYYY (e.g. 05102026)
+    if len(s) == 8 and not s.startswith("20"):
+        try:
+            dd, mm, yyyy = int(s[0:2]), int(s[2:4]), int(s[4:8])
+            if 1 <= dd <= 31 and 1 <= mm <= 12 and yyyy >= 2020:
+                return yyyy * 10000 + mm * 100 + dd
+        except (ValueError, IndexError):
+            pass
+
+    try:
+        return int(s)
+    except ValueError:
+        return 0
+
+
 def parse_version(v_str: str) -> Tuple[int, int, int, int, int]:
     """
     Parse a version string into a comparable 5-element tuple:
@@ -94,11 +131,11 @@ def parse_version(v_str: str) -> Tuple[int, int, int, int, int]:
 
         if pre_type in pre_weights:
             pre_val = pre_weights[pre_type]
-            pre_num = int(pre_num_str) if pre_num_str else 1
+            pre_num = _normalize_build_num(pre_num_str) if pre_num_str else 1
         elif "hotfix" in pre_type or "hotfix" in pre_extra:
             pre_val = 1
             hm = re.search(r'\d+', pre_type + pre_extra)
-            pre_num = int(hm.group(0)) if hm else 1
+            pre_num = _normalize_build_num(hm.group(0)) if hm else 1
         elif pre_type or pre_extra:
             if any(x in pre_extra for x in ("canary", "testing", "alpha", "test", "devtest")):
                 pre_val = -4
@@ -111,7 +148,7 @@ def parse_version(v_str: str) -> Tuple[int, int, int, int, int]:
             else:
                 pre_val = -5
             hm = re.search(r'\d+', pre_extra)
-            pre_num = int(hm.group(0)) if hm else 0
+            pre_num = _normalize_build_num(hm.group(0)) if hm else 0
         else:
             pre_val = 0
             pre_num = 0

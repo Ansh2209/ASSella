@@ -450,6 +450,12 @@ class TestVersionHelpers(unittest.TestCase):
         self.assertGreater(parse_version("3.0.0-beta.1"), parse_version("3.0.0-canary.1"))
         self.assertGreater(parse_version("3.0.1"), parse_version("3.0.0"))
         self.assertGreater(parse_version("3.0.0testing051026004"), parse_version("3.0.0testing051026003"))
+        # Month rollover: Oct 02 2026 > Sep 30 2026
+        self.assertGreater(parse_version("3.0.0testing021026001"), parse_version("3.0.0testing300926012"))
+        # Year rollover: Jan 01 2027 > Oct 05 2026
+        self.assertGreater(parse_version("3.0.0testing010127001"), parse_version("3.0.0testing051026003"))
+        # RC date progression: Oct 11 2026 > Oct 10 2026
+        self.assertGreater(parse_version("3.0Release_candidate111026001"), parse_version("3.0Release_candidate101026001"))
 
         # Channel resolution
         self.assertEqual(get_effective_update_channel("stable", "3.0.0"), "stable")
