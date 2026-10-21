@@ -304,17 +304,12 @@ def update_log_filters():
             # when asking for help. Both are display concerns.
             is_file = isinstance(handler, LineRotatingFileHandler)
 
-            # Ensure SensitiveDataFilter is attached. The file handler is
-            # excluded on purpose: its formatter already redacts the rendered
-            # line, so the filter would only repeat the same five regex passes
-            # over every record - twice as much work per line, for no extra
-            # redaction.
-            if not is_file:
-                has_sensitive_filter = any(
-                    isinstance(f, SensitiveDataFilter) for f in handler.filters
-                )
-                if not has_sensitive_filter:
-                    handler.addFilter(SensitiveDataFilter())
+            # Ensure SensitiveDataFilter is attached to all handlers
+            has_sensitive_filter = any(
+                isinstance(f, SensitiveDataFilter) for f in handler.filters
+            )
+            if not has_sensitive_filter:
+                handler.addFilter(SensitiveDataFilter())
 
             if not is_file:
                 handler.addFilter(LogCategoryFilter(level_str, category_str))
@@ -352,10 +347,7 @@ def _create_file_handler(log_path: Path) -> Optional[LineRotatingFileHandler]:
         )
         handler.setLevel(logging.DEBUG)
         handler.setFormatter(formatter)
-        # No SensitiveDataFilter here: the formatter already redacts the
-        # rendered line, so a filter would run the same five regex passes a
-        # second time over every record. A library scan emits about a thousand
-        # records in two seconds, which made the duplicate pass measurable.
+        handler.addFilter(SensitiveDataFilter())
         print(f"Log file created: {log_path}", file=sys.stderr)
         return handler
     except (PermissionError, OSError) as e:
