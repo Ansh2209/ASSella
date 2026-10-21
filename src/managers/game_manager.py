@@ -54,6 +54,11 @@ class GameManager(QObject):
     scan_complete = pyqtSignal(int)  # Emits number of games found
     game_update_status_changed = pyqtSignal(str, str)  # (appid, update_status)
     all_updates_checked = pyqtSignal()  # Emitted when a full batch check finishes
+    # Emitted when the whole update check is over: the manifest batch AND the
+    # AT0-M / DLC stage that follows it. Routine work (ratings prefetch,
+    # solver warm-up) waits for this so the machine handles one thing at a
+    # time instead of everything at once.
+    update_checks_finished = pyqtSignal()
     update_check_started = pyqtSignal()  # Emitted when a batch update check starts
     game_hubcap_status_checked = pyqtSignal(str, bool, bool)  # (appid, needs_update, update_in_progress)
     update_check_progress = pyqtSignal(int, int)  # (current, total)
@@ -291,21 +296,8 @@ class GameManager(QObject):
             logger.info("No games need an update check at this time")
             self.all_updates_checked.emit()
             # Still run At0mUpdateChecker in case AT0-M games need a check
-            try:
-                from managers.at0m_update_checker import At0mUpdateChecker
-                at0m_checker = At0mUpdateChecker.get_instance()
-                try:
-                    at0m_checker.game_checked.disconnect(self._on_at0m_game_checked)
-                except TypeError:
-                    logger.debug("AT0-M update signal was not connected")
-                at0m_checker.game_checked.connect(self._on_at0m_game_checked)
-                try:
-                    at0m_checker.check_all_games_async(force_refresh=force_refresh,
-                                                      live_games=list(self.games))
-                except TypeError:
-                    at0m_checker.check_all_games_async(force_refresh=force_refresh)
-            except Exception as e:
-                logger.debug(f"Error launching At0mUpdateChecker: {e}")
+            self._update_checks_finished_emitted = False
+            self._start_at0m_update_check(force_refresh=force_refresh)
             return
 
         logger.info(
@@ -315,22 +307,12 @@ class GameManager(QObject):
 
         self.update_check_started.emit()
 
-        # Also trigger smart AT0-M / DLC update checking in the background
-        try:
-            from managers.at0m_update_checker import At0mUpdateChecker
-            at0m_checker = At0mUpdateChecker.get_instance()
-            try:
-                at0m_checker.game_checked.disconnect(self._on_at0m_game_checked)
-            except TypeError:
-                logger.debug("AT0-M update signal was not connected")
-            at0m_checker.game_checked.connect(self._on_at0m_game_checked)
-            try:
-                at0m_checker.check_all_games_async(force_refresh=force_refresh,
-                                                  live_games=list(self.games))
-            except TypeError:
-                at0m_checker.check_all_games_async(force_refresh=force_refresh)
-        except Exception as e:
-            logger.debug(f"Error launching At0mUpdateChecker: {e}")
+        # AT0-M / DLC checking is queued behind the manifest check instead of
+        # running next to it. Both talk to the same Steam endpoints, so running
+        # them together doubled the concurrent request load during boot and was
+        # part of why the machine felt busy right after start-up.
+        self._pending_at0m_check = force_refresh
+        self._update_checks_finished_emitted = False
 
         # Create new task with trigger provenance
         from core.tasks.manifest_check_task import ManifestCheckTask
@@ -354,6 +336,34 @@ class GameManager(QObject):
             self._on_manifest_check_runner_cleanup
         )
         self.manifest_check_runner.run(self.manifest_check_task.run)
+
+    def _start_at0m_update_check(self, force_refresh: bool = False) -> None:
+        """Launch the AT0-M / DLC update checker (it runs in its own thread)."""
+        try:
+            from managers.at0m_update_checker import At0mUpdateChecker
+            at0m_checker = At0mUpdateChecker.get_instance()
+            try:
+                at0m_checker.game_checked.disconnect(self._on_at0m_game_checked)
+            except TypeError:
+                logger.debug("AT0-M update signal was not connected")
+            at0m_checker.game_checked.connect(self._on_at0m_game_checked)
+            try:
+                at0m_checker.all_checked.disconnect(self._on_at0m_stage_finished)
+            except TypeError:
+                logger.debug("AT0-M completion signal was not connected")
+            at0m_checker.all_checked.connect(self._on_at0m_stage_finished)
+            try:
+                at0m_checker.check_all_games_async(force_refresh=force_refresh,
+                                                  live_games=list(self.games))
+            except TypeError:
+                at0m_checker.check_all_games_async(force_refresh=force_refresh)
+            if not at0m_checker.is_checking:
+                # The scan did not start (a scan was already running and
+                # finished before we could hook it, or it had nothing to do).
+                # Nothing else will report completion, so report it here.
+                self._on_at0m_stage_finished()
+        except Exception as e:
+            logger.debug(f"Error launching At0mUpdateChecker: {e}")
 
     def _on_at0m_game_checked(self, appid: str, status: str, details: dict):
         """Handle results from At0mUpdateChecker for an AT0-M / DLC game."""
@@ -604,7 +614,25 @@ class GameManager(QObject):
         self.manifest_check_task = None
         self.manifest_check_runner = None
         self._games_to_check = []
+        self._run_pending_at0m_check()
         self.all_updates_checked.emit()
+
+    def _run_pending_at0m_check(self) -> None:
+        """Start the AT0-M check that was queued behind the manifest check."""
+        pending = getattr(self, "_pending_at0m_check", None)
+        if pending is None:
+            # No AT0-M stage will run, so the whole check is already over.
+            self._on_at0m_stage_finished()
+            return
+        self._pending_at0m_check = None
+        self._start_at0m_update_check(force_refresh=bool(pending))
+
+    def _on_at0m_stage_finished(self) -> None:
+        """The AT0-M stage is done: the whole update check is over."""
+        if getattr(self, "_update_checks_finished_emitted", False):
+            return
+        self._update_checks_finished_emitted = True
+        self.update_checks_finished.emit()
 
     def _on_update_check_error(self, error_info):
         """Handle update check error"""
@@ -613,6 +641,7 @@ class GameManager(QObject):
             f"Error during update check: {exc_msg}",
             exc_info=(exc_type, exc_msg, exc_traceback),
         )
+        self._run_pending_at0m_check()
         self.manifest_check_task = None
         self.manifest_check_runner = None
         self._games_to_check = []
@@ -1760,6 +1789,12 @@ class GameManager(QObject):
         self.manifest_check_task = None
         self.manifest_check_runner = None
         self._games_to_check = []
+        # A cancelled check drops its queued AT0-M follow-up; the next check
+        # queues a fresh one.
+        self._pending_at0m_check = None
+        # Release whatever waits for the check to end, otherwise the queued
+        # routine work would never run.
+        self._on_at0m_stage_finished()
 
     def get_uninstall_confirmation_message(
         self, game_data, remove_compatdata=False, remove_saves=False

@@ -164,7 +164,9 @@ class ByparrManager:
             else:
                 cmd = ["python3", target_script]
 
-            # Set Linux kernel PR_SET_PDEATHSIG so the kernel terminates Byparr if ASSELLA dies
+            # Set Linux kernel PR_SET_PDEATHSIG so the kernel terminates Byparr if ASSELLA dies.
+            # The helper also starts at a lower priority: it spins up a headless
+            # Chromium, and that warm-up must not take CPU away from the window.
             def _preexec():
                 try:
                     import ctypes
@@ -172,6 +174,10 @@ class ByparrManager:
                     libc.prctl(1, signal.SIGTERM)  # 1 = PR_SET_PDEATHSIG
                 except Exception:
                     pass
+                try:
+                    os.setpriority(os.PRIO_PROCESS, 0, 10)
+                except OSError as e:
+                    logger.debug(f"[SteamDB] Could not lower the helper priority: {e}")
 
             logger.info(f"[SteamDB] Starting background Byparr process in {byparr_dir} (ASSELLA PID={os.getpid()})...")
             log_dir = get_base_path() / "logs"

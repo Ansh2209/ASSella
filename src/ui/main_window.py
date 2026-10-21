@@ -272,6 +272,8 @@ class MainWindow(QMainWindow):
         self._setup_key_sequence_detector()
         self._setup_exit_shortcut()
         self._setup_update_timer()
+        self._setup_system_status_timer()
+        self._setup_gui_stall_watchdog()
         self.check_tool_updates()
 
         # Start Web Server on startup if enabled
@@ -287,11 +289,12 @@ class MainWindow(QMainWindow):
         from utils.assfixer import run_boot_config_check
         from ui.dialogs.settings_sls import run_boot_update_check
 
-        # Warm up Byparr and verify SteamDB Cloudflare bypass in the background
-        try:
-            self.check_steamdb_status()
-        except Exception:
-            pass
+        # Warm up Byparr and verify SteamDB Cloudflare bypass in the background.
+        # Deferred on purpose: Byparr spawns a headless Chromium, which costs
+        # seconds of CPU and RAM. Doing that while the library scan and the
+        # update check are still running is what made the window feel stuck
+        # right after boot.
+        self._schedule_steamdb_warmup()
         
         def run_boot_checks():
             try:
@@ -302,20 +305,10 @@ class MainWindow(QMainWindow):
             run_boot_update_check()
             run_boot_config_check()
 
-            # Queue ProtonDB prefetch for all installed games, just before Denuvo sync.
-            # This runs in background (worker threads) so it never blocks startup.
-            try:
-                from core.ratings import prefetch_protondb_for_appids
-                if self.game_manager:
-                    all_appids = [
-                        str(g.get("appid", "0"))
-                        for g in self.game_manager.get_all_games()
-                        if g.get("appid") and str(g.get("appid")) not in ("0", "N/A", "unknown")
-                    ]
-                    if all_appids:
-                        prefetch_protondb_for_appids(all_appids)
-            except Exception as e:
-                logger.debug(f"ProtonDB boot prefetch failed: {e}")
+            # The ProtonDB prefetch is queued behind the update check instead
+            # of running here: it issues one HTTP request per installed game,
+            # and doing that while the manifest check is still hammering Steam
+            # is what made the first minute after boot feel crowded.
 
             # Run Denuvo cache prefetch and clean SLS config of any accidental blocklists (runs ONCE on v2.5.5 launch)
             try:
@@ -722,16 +715,87 @@ class MainWindow(QMainWindow):
         except TypeError:
             pass  # Already disconnected or not connected
 
+        # Routine network work that used to run next to the update check is
+        # queued behind it, so the window settles first and the network is used
+        # by one thing at a time.
+        self._queue_after_update_check(self._run_boot_protondb_prefetch)
+
         if self.settings.value("check_updates_on_boot", True, type=bool):
             logger.info(f"Initial game library scan completed ({games_found} games found). Triggering staggered game updates check.")
             if self.game_manager:
                 # Stagger by 2 seconds so the UI finishes rendering before Steam API storms begin
+                self._gui_phase = "boot update check"
                 QTimer.singleShot(2000, lambda: self.game_manager.check_game_updates_async())
         else:
             logger.info(f"Initial game library scan completed ({games_found} games found). Background boot updates check is disabled.")
+            # No update check will run, so nothing will drain the queue.
+            self._drain_after_update_check_queue()
 
         # Run depot key migration in the background (populates depot_keys.db from cached zips)
         self._run_depot_key_migration()
+
+    def _queue_after_update_check(self, callback) -> None:
+        """Run `callback` once, after the running (or next) update check ends.
+
+        Work that is routine but network bound - the ProtonDB prefetch, the
+        SteamDB warm-up - used to start in parallel with the boot update check.
+        One thing at a time keeps the machine quiet while the window is still
+        settling, which is the whole point of the calm boot.
+        """
+        queue = getattr(self, "_after_update_check_queue", None)
+        if queue is None:
+            queue = []
+            self._after_update_check_queue = queue
+        queue.append(callback)
+        logger.debug(f"Queued {len(queue)} task(s) to run after the update check.")
+
+        if getattr(self, "_after_update_check_connected", False):
+            return
+        self._after_update_check_connected = True
+        try:
+            # update_checks_finished covers the AT0-M stage too, so the queued
+            # work really starts after every check of this cycle is over.
+            self.game_manager.update_checks_finished.connect(
+                self._drain_after_update_check_queue,
+                Qt.ConnectionType.QueuedConnection,
+            )
+        except Exception as e:
+            logger.debug(f"Could not connect the post-update-check queue: {e}")
+            self._after_update_check_connected = False
+
+    def _drain_after_update_check_queue(self) -> None:
+        """Run everything that was waiting for the update check to finish."""
+        queue = getattr(self, "_after_update_check_queue", None) or []
+        self._after_update_check_queue = []
+        if queue:
+            logger.info(f"Running {len(queue)} routine task(s) queued behind the update check.")
+        for callback in queue:
+            try:
+                callback()
+            except Exception as e:
+                logger.debug(f"Queued post-update-check task failed: {e}")
+
+    def _run_boot_protondb_prefetch(self) -> None:
+        """Queue ProtonDB ratings fetches for every installed game.
+
+        Enqueue only: the fetches themselves run in a sequential worker thread,
+        so this returns immediately.
+        """
+        try:
+            from core.ratings import prefetch_protondb_for_appids
+
+            if not self.game_manager:
+                return
+            all_appids = [
+                str(g.get("appid", "0"))
+                for g in self.game_manager.get_all_games()
+                if g.get("appid") and str(g.get("appid")) not in ("0", "N/A", "unknown")
+            ]
+            if all_appids:
+                prefetch_protondb_for_appids(all_appids)
+                logger.debug(f"ProtonDB ratings prefetch queued for {len(all_appids)} game(s).")
+        except Exception as e:
+            logger.debug(f"ProtonDB boot prefetch failed: {e}")
 
     def _run_depot_key_migration(self) -> None:
         """
@@ -761,6 +825,106 @@ class MainWindow(QMainWindow):
             )
 
 
+
+    def _setup_system_status_timer(self) -> None:
+        """Coalesce status-panel refreshes into one GUI pass per second.
+
+        The dashboard rebuilds itself hundreds of times during a bulk update
+        check, and every rebuild used to re-probe the filesystem and re-style
+        every status label. One pass per second is indistinguishable to the eye
+        and leaves the event loop free for actual input.
+        """
+        self._system_status_timer = QTimer(self)
+        self._system_status_timer.setSingleShot(True)
+        self._system_status_timer.setInterval(1000)
+        self._system_status_timer.timeout.connect(self._apply_system_status_refresh)
+        self._gui_phase = "startup"
+
+    def _setup_gui_stall_watchdog(self) -> None:
+        """Report event-loop stalls in the log.
+
+        A 250 ms heartbeat on the Qt event loop. If the loop cannot run for
+        more than half a second the elapsed time is logged together with the
+        phase the UI was in, which turns "the UI felt stuck" into a number.
+        """
+        self._gui_watchdog_timer = QTimer(self)
+        self._gui_watchdog_timer.setInterval(250)
+        self._gui_watchdog_timer.timeout.connect(self._on_gui_heartbeat)
+        self._gui_watchdog_timer.start()
+        self._gui_last_heartbeat = time.monotonic()
+
+    def _on_gui_heartbeat(self) -> None:
+        """Watchdog tick: report a long event-loop stall."""
+        now = time.monotonic()
+        last = getattr(self, "_gui_last_heartbeat", None)
+        if last is not None:
+            gap = now - last
+            if gap > 0.5:
+                logger.warning(
+                    f"[GUI] Main thread stalled for {gap:.2f}s "
+                    f"(phase: {getattr(self, '_gui_phase', 'unknown')})"
+                )
+                if gap > 1.0:
+                    self._log_gui_stall_stack(gap)
+        self._gui_last_heartbeat = now
+
+    def _log_gui_stall_stack(self, gap: float) -> None:
+        """Print where the GUI thread was while the window was unresponsive."""
+        import threading
+        import traceback
+
+        try:
+            frame = sys._current_frames().get(threading.get_ident())
+            if frame is None:
+                return
+            stack = "".join(traceback.format_stack(frame))
+            logger.warning(
+                f"[GUI] Stall of {gap:.2f}s - main thread stack:\n{stack}"
+            )
+        except Exception as e:
+            logger.debug(f"[GUI] Could not capture the stall stack: {e}")
+
+    def _schedule_steamdb_warmup(self) -> None:
+        """Start the Byparr/Chromium solver once the boot update storm settles."""
+        if getattr(self, "_steamdb_warmup_scheduled", False):
+            return
+        self._steamdb_warmup_scheduled = True
+
+        def _start() -> None:
+            if getattr(self, "_steamdb_warmup_started", False):
+                return
+            self._steamdb_warmup_started = True
+            try:
+                self.check_steamdb_status()
+            except Exception as e:
+                logger.debug(f"[SteamDB] Warm-up failed: {e}")
+
+        def _begin() -> None:
+            """Let the window settle before the solver warms up.
+
+            Byparr starts a headless Chromium, and that warm-up wants every
+            core it can get. Starting it a few seconds after the update check
+            keeps it away from the first render and the first interactions.
+            """
+            self._steamdb_warmup_settle = QTimer(self)
+            self._steamdb_warmup_settle.setSingleShot(True)
+            self._steamdb_warmup_settle.setInterval(3000)
+            self._steamdb_warmup_settle.timeout.connect(_start)
+            self._steamdb_warmup_settle.start()
+
+        self._steamdb_warmup_fallback = QTimer(self)
+        self._steamdb_warmup_fallback.setSingleShot(True)
+        self._steamdb_warmup_fallback.setInterval(20000)
+        self._steamdb_warmup_fallback.timeout.connect(_start)
+
+        # Fire as soon as every check of the boot cycle is done.
+        try:
+            self.game_manager.update_checks_finished.connect(
+                _begin, Qt.ConnectionType.QueuedConnection
+            )
+        except Exception as e:
+            logger.debug(f"[SteamDB] Could not schedule the warm-up: {e}")
+        self._steamdb_warmup_fallback.start()
 
     def _setup_update_timer(self) -> None:
         """Setup a timer to check for game updates periodically."""
@@ -1412,20 +1576,53 @@ class MainWindow(QMainWindow):
         if hasattr(self, "active_game_card") and self.active_game_card:
             self.active_game_card.set_sub_status(warning_msg, is_warning=True)
 
-        self.refresh_system_status()
+        self.refresh_system_status_now()
 
     @pyqtSlot()
     def refresh_system_status(self) -> None:
-        """Refresh local Steam updates, SLS, and ASSella status labels."""
+        """Schedule a refresh of the local Steam/SLS/ASSella status labels.
+
+        The actual work runs in _apply_system_status_refresh(), coalesced to at
+        most one pass per second. A bulk update check rebuilds the dashboard
+        hundreds of times and every rebuild re-probed the filesystem, which
+        starved the event loop exactly when the user is most likely to click
+        something.
+        """
         import threading
         if threading.current_thread() is not threading.main_thread():
             if hasattr(self, "refresh_system_status_signal"):
                 self.refresh_system_status_signal.emit()
             return
 
+        timer = getattr(self, "_system_status_timer", None)
+        if timer is None:
+            self._apply_system_status_refresh()
+            return
+        timer.start()
+
+    def refresh_system_status_now(self) -> None:
+        """Refresh the status labels right away, cancelling any pending pass."""
+        timer = getattr(self, "_system_status_timer", None)
+        if timer is not None:
+            timer.stop()
+        self._apply_system_status_refresh()
+
+    def _apply_system_status_refresh(self) -> None:
+        """Refresh local Steam updates, SLS, and ASSella status labels."""
         if not hasattr(self, "steam_updates_value") or not self.steam_updates_value:
             return
-            
+
+        self._gui_phase = "status refresh"
+        try:
+            self._collect_system_status()
+        finally:
+            self._gui_phase = "idle"
+
+    def _collect_system_status(self) -> None:
+        """Collect and render the Steam/SLS/ASSella status labels."""
+        if not hasattr(self, "steam_updates_value") or not self.steam_updates_value:
+            return
+
         blocked = self.check_steam_updates_blocked()
         if blocked:
             self.steam_updates_value.setText("Blocked")
@@ -1505,7 +1702,9 @@ class MainWindow(QMainWindow):
                 from utils.slssteam_integration import check_slssteam_binary_is_latest
 
                 sls_detected = sls_paths.get("detected", False)
-                ver_res = check_slssteam_binary_is_latest()
+                # cached_only: this runs on the GUI thread and must never wait
+                # on the network. The background boot check fills the cache.
+                ver_res = check_slssteam_binary_is_latest(cached_only=True)
                 ver_status = ver_res.get("status", "error")
                 version_ok = (ver_status == "up_to_date")
 
