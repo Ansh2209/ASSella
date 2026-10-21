@@ -91,6 +91,26 @@ class TestAtomMoveComplications(unittest.TestCase):
         self.assertEqual(res["pinned"]["build_id"], "500")
         self.assertEqual(res["pinned"]["manifest_map"], {"12346": "999888777"})
 
+    def test_resolve_pinned_manifests_aggregates_multiple_depots(self):
+        """resolve_pinned_manifests aggregates manifest IDs from overrides and depots dictionary."""
+        from core.native_steam.steam_manifest_pinning import resolve_pinned_manifests
+
+        game_data = {
+            "appid": "70000",
+            "pin_build": True,
+            "manifest_overrides": {
+                "70001": "111111111",
+            },
+            "depots": {
+                "70002": {"manifest_id": "222222222"},
+                "70003": {"gid": "333333333"},
+            },
+        }
+        res = resolve_pinned_manifests(game_data, "70000")
+        self.assertEqual(res.get("70001"), "111111111")
+        self.assertEqual(res.get("70002"), "222222222")
+        self.assertEqual(res.get("70003"), "333333333")
+
     def test_detect_dlc_only_game(self):
         """DLC-only game should report dlc_only info and list DLC AppIDs."""
         game_data = {
@@ -212,6 +232,44 @@ class TestAtomMoveComplications(unittest.TestCase):
         self.assertIn("ManifestIds:", cfg_text)
         self.assertIn("55556: 123456789012345678", cfg_text)
         self.assertIn("55555", cfg_text)  # Base AppID in AdditionalApps
+
+    def test_migrate_game_to_atom_pinned_build_multiple_manifests(self):
+        """Pinned build with multiple depots/manifests writes all of them to ManifestIds."""
+        game_data = {
+            "appid": "66666",
+            "game_name": "Multi Manifest Game",
+            "install_path": str(self.game_dir),
+            "pin_build": True,
+            "pinned_buildid": 8888,
+            "buildid": 8888,
+            "depots": ["66667", "66668", "66669"],
+            "keys": {
+                "66667": "1" * 64,
+                "66668": "2" * 64,
+                "66669": "3" * 64,
+            },
+        }
+
+        multi_manifests = {
+            "66667": "100000000000000001",
+            "66668": "200000000000000002",
+            "66669": "300000000000000003",
+        }
+
+        with patch("utils.plugin_games.get_user_config_path", return_value=self.config_path), \
+             patch("utils.plugin_games.collect_game_depots_and_keys", return_value=(["66667", "66668", "66669"], game_data["keys"], {})), \
+             patch("core.native_steam.steam_manifest_pinning.resolve_pinned_manifests", return_value=multi_manifests), \
+             patch("utils.steam_acf.find_appmanifest_path", return_value=None), \
+             patch("utils.plugin_games.save_plugin_library", return_value=True):
+            res = migrate_game_to_atom(game_data)
+            self.assertTrue(res.get("success"), f"Migration failed: {res.get('error')}")
+
+        cfg_text = self.config_path.read_text(encoding="utf-8")
+        self.assertIn("ManifestIds:", cfg_text)
+        self.assertIn("66667: 100000000000000001", cfg_text)
+        self.assertIn("66668: 200000000000000002", cfg_text)
+        self.assertIn("66669: 300000000000000003", cfg_text)
+        self.assertIn("66666", cfg_text)
 
     # -------------------------------------------------------------------------
     # 5. DLC-Only Migration Invariants
