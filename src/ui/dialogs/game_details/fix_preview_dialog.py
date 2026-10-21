@@ -71,11 +71,15 @@ def show_restore_preview_dialog(
     fix_title: str,
     game_name: str,
     preview_data: Optional[Dict[str, Any]] = None,
-) -> bool:
+) -> Optional[str]:
     """
     Show a dialog previewing the actions that will be performed during fix restoration.
-    Displays backup reversions, file removals, and conflict warnings.
-    Returns True if user confirmed restore, False if cancelled.
+    Displays backup reversions, file removals, conflict warnings, and escape hatches.
+    Returns:
+      - 'restore': Normal restore confirmed
+      - 'force': Force restore confirmed (overwrites conflicts)
+      - 'discard': Discard fix record without touching game files
+      - None: User cancelled
     """
     dialog = FixPreviewDialog(
         parent=parent,
@@ -87,7 +91,9 @@ def show_restore_preview_dialog(
         preview_data=preview_data,
     )
     result = dialog.exec()
-    return result == QDialog.DialogCode.Accepted
+    if result == QDialog.DialogCode.Accepted:
+        return dialog.action_result or "restore"
+    return None
 
 
 class _FileRowFrame(QFrame):
@@ -127,6 +133,7 @@ class FixPreviewDialog(QDialog):
         self._list_widgets: List[QFrame] = []
         self._filter_buttons: Dict[Optional[str], QPushButton] = {}
         self._active_filter: Optional[str] = None
+        self.action_result: Optional[str] = None
 
         action_title = "Apply Fix" if self.mode == "apply" else "Restore Fix"
         self.setWindowTitle(f"{action_title}: {fix_title}")
@@ -177,13 +184,16 @@ class FixPreviewDialog(QDialog):
         else:
             legend_lbl = QLabel(
                 '<span style="color: #60a5fa; font-weight: 600;">●</span> '
-                '<span style="color: rgba(255, 255, 255, 0.7); font-size: 8.5pt;">Blue files will be restored from backup</span>'
+                '<span style="color: rgba(255, 255, 255, 0.7); font-size: 8.5pt;">Blue: restore</span>'
                 '&nbsp;&nbsp;&nbsp;&nbsp;'
                 '<span style="color: #f87171; font-weight: 600;">●</span> '
-                '<span style="color: rgba(255, 255, 255, 0.7); font-size: 8.5pt;">Red files will be deleted</span>'
+                '<span style="color: rgba(255, 255, 255, 0.7); font-size: 8.5pt;">Red: delete</span>'
+                '&nbsp;&nbsp;&nbsp;&nbsp;'
+                '<span style="color: #a78bfa; font-weight: 600;">●</span> '
+                '<span style="color: rgba(255, 255, 255, 0.7); font-size: 8.5pt;">Purple: other fix</span>'
                 '&nbsp;&nbsp;&nbsp;&nbsp;'
                 '<span style="color: #fbbf24; font-weight: 600;">●</span> '
-                '<span style="color: rgba(255, 255, 255, 0.7); font-size: 8.5pt;">Amber indicates conflict</span>'
+                '<span style="color: rgba(255, 255, 255, 0.7); font-size: 8.5pt;">Amber: conflict</span>'
             )
         legend_lbl.setStyleSheet("margin-top: 2px;")
         header_vbox.addWidget(legend_lbl)
@@ -194,8 +204,8 @@ class FixPreviewDialog(QDialog):
             if conflicts:
                 conflict_banner = QLabel(
                     f"⚠️ Conflict detected on {len(conflicts)} file(s). "
-                    "Game files were modified externally after applying the fix. "
-                    "Restoration is blocked to prevent file corruption."
+                    "Game files were modified externally after applying this fix. "
+                    "Use 'Restore Anyway' to force overwrite from backups, or 'Discard Record' to safely unregister."
                 )
                 conflict_banner.setWordWrap(True)
                 conflict_banner.setStyleSheet("""
@@ -283,6 +293,8 @@ class FixPreviewDialog(QDialog):
             filter_options.extend([("Modified", "modified"), ("New", "added")])
         else:
             filter_options.extend([("Restore", "revert"), ("Delete", "delete")])
+            if any(f.get("status") == "managed_by_other_fix" for f in self.preview_data.get("files", [])):
+                filter_options.append(("Other Fix", "managed_by_other_fix"))
             if self.preview_data.get("conflicts"):
                 filter_options.append(("Conflicts", "conflict"))
 
@@ -323,13 +335,35 @@ class FixPreviewDialog(QDialog):
         list_container_lay.addWidget(scroll)
         layout.addWidget(list_container, 1)
 
-        # Bottom section: status on left, cancel / action button on right
+        # Bottom section: status on left, discard / cancel / action button on right
         bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(12)
+        bottom_row.setSpacing(10)
 
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: rgba(255, 255, 255, 0.6); font-size: 8.5pt;")
         bottom_row.addWidget(self.status_label, 1)
+
+        if self.mode == "restore":
+            self.discard_btn = QPushButton("Discard Record")
+            self.discard_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            self.discard_btn.setToolTip("Unregister this fix without modifying any files on disk")
+            self.discard_btn.setStyleSheet("""
+                QPushButton {
+                    background: rgba(239, 68, 68, 0.12);
+                    border: 1px solid rgba(239, 68, 68, 0.35);
+                    border-radius: 6px;
+                    color: #fca5a5;
+                    font-size: 8.5pt;
+                    font-weight: 500;
+                    padding: 8px 14px;
+                }
+                QPushButton:hover {
+                    background: rgba(239, 68, 68, 0.22);
+                    border-color: rgba(239, 68, 68, 0.5);
+                }
+            """)
+            self.discard_btn.clicked.connect(self._on_discard_record)
+            bottom_row.addWidget(self.discard_btn)
 
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -540,6 +574,10 @@ class FixPreviewDialog(QDialog):
             if status == "conflict":
                 badge_lbl.setText("⚠️")
                 badge_lbl.setToolTip(file_info.get("conflict_reason") or "File conflict")
+            elif status == "managed_by_other_fix":
+                badge_lbl.setText("🔗")
+                badge_lbl.setStyleSheet("color: #a78bfa; font-weight: bold; font-size: 10pt;")
+                badge_lbl.setToolTip(file_info.get("conflict_reason") or "Managed by another active fix")
             elif action == "revert":
                 badge_lbl.setText("↩")
                 badge_lbl.setStyleSheet("color: #60a5fa; font-weight: bold; font-size: 10pt;")
@@ -568,6 +606,10 @@ class FixPreviewDialog(QDialog):
             if status == "conflict":
                 path_lbl.setStyleSheet("color: #fbbf24; font-size: 9pt; font-weight: bold; background: transparent; border: none;")
                 path_lbl.setToolTip(file_info.get("conflict_reason") or "Conflict detected")
+            elif status == "managed_by_other_fix":
+                path_lbl.setStyleSheet("color: #c4b5fd; font-size: 9pt; font-weight: 500; background: transparent; border: none;")
+                managing_title = file_info.get("managing_fix_title") or file_info.get("managing_fix_id") or "another fix"
+                path_lbl.setToolTip(f"Active fix '{managing_title}' currently controls this file; it will be kept intact.")
             elif action == "revert":
                 path_lbl.setStyleSheet("color: #93c5fd; font-size: 9pt; font-weight: 500; background: transparent; border: none;")
                 path_lbl.setToolTip(f"Restored from backup: {rel_path}")
@@ -580,19 +622,33 @@ class FixPreviewDialog(QDialog):
 
         lay.addWidget(path_lbl, 1)
 
-        # Extra badge for conflicts in restore mode
-        if self.mode == "restore" and status == "conflict":
-            c_tag = QLabel("CONFLICT")
-            c_tag.setStyleSheet("""
-                background: rgba(239, 68, 68, 0.2);
-                border: 1px solid rgba(239, 68, 68, 0.4);
-                border-radius: 3px;
-                color: #fca5a5;
-                font-size: 7pt;
-                font-weight: bold;
-                padding: 1px 4px;
-            """)
-            lay.addWidget(c_tag)
+        # Extra badge for conflicts or managed files in restore mode
+        if self.mode == "restore":
+            if status == "conflict":
+                c_tag = QLabel("CONFLICT")
+                c_tag.setStyleSheet("""
+                    background: rgba(239, 68, 68, 0.2);
+                    border: 1px solid rgba(239, 68, 68, 0.4);
+                    border-radius: 3px;
+                    color: #fca5a5;
+                    font-size: 7pt;
+                    font-weight: bold;
+                    padding: 1px 4px;
+                """)
+                lay.addWidget(c_tag)
+            elif status == "managed_by_other_fix":
+                m_tag = QLabel("OTHER FIX")
+                m_tag.setStyleSheet("""
+                    background: rgba(139, 92, 246, 0.2);
+                    border: 1px solid rgba(139, 92, 246, 0.4);
+                    border-radius: 3px;
+                    color: #c4b5fd;
+                    font-size: 7pt;
+                    font-weight: bold;
+                    padding: 1px 4px;
+                """)
+                m_tag.setToolTip("Controlled by another active fix")
+                lay.addWidget(m_tag)
 
         # File size label
         size_lbl = QLabel(_format_size(file_info.get("size", 0)))
@@ -633,14 +689,49 @@ class FixPreviewDialog(QDialog):
             conflicts = self.preview_data.get("conflicts", [])
             revert_count = self.preview_data.get("revert_count", 0)
             delete_count = self.preview_data.get("delete_count", 0)
+            managed_count = sum(
+                1 for f in self._all_files if f.get("status") == "managed_by_other_fix"
+            )
 
             if conflicts:
-                self.status_label.setText(f"❌ {len(conflicts)} conflict(s) prevent safe restoration")
-                self.status_label.setStyleSheet("color: #f87171; font-weight: bold; font-size: 8.5pt;")
-                self.action_btn.setEnabled(False)
+                self.status_label.setText(f"⚠️ {len(conflicts)} conflict(s) detected. Choose an action:")
+                self.status_label.setStyleSheet("color: #fbbf24; font-weight: bold; font-size: 8.5pt;")
+                self.action_btn.setText("Restore Anyway")
+                self.action_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #b45309;
+                        border: 1px solid #d97706;
+                        border-radius: 6px;
+                        color: #FFFFFF;
+                        font-size: 9pt;
+                        font-weight: 600;
+                        padding: 8px 16px;
+                    }
+                    QPushButton:hover {
+                        background: #92400e;
+                    }
+                """)
+                self.action_btn.setEnabled(True)
             else:
-                self.status_label.setText(f"Ready to restore: {revert_count} file(s) restored, {delete_count} file(s) removed")
+                extra = f" ({managed_count} preserved for another fix)" if managed_count else ""
+                self.status_label.setText(f"Ready: {revert_count} restored, {delete_count} removed{extra}")
                 self.status_label.setStyleSheet("color: #4ade80; font-size: 8.5pt;")
+                self.action_btn.setText("Restore Fix")
+                self.action_btn.setStyleSheet("""
+                    QPushButton {
+                        background: #d97706;
+                        border: 1px solid #b45309;
+                        border-radius: 6px;
+                        color: #FFFFFF;
+                        font-size: 9pt;
+                        font-weight: 600;
+                        padding: 8px 20px;
+                    }
+                    QPushButton:hover {
+                        background: #b45309;
+                        border-color: #92400e;
+                    }
+                """)
                 self.action_btn.setEnabled(True)
 
     def _on_select_all(self):
@@ -668,6 +759,8 @@ class FixPreviewDialog(QDialog):
                 w.setVisible(True)
             elif action_filter == "conflict":
                 w.setVisible(file_info.get("status") == "conflict")
+            elif action_filter == "managed_by_other_fix":
+                w.setVisible(file_info.get("status") == "managed_by_other_fix")
             elif file_info.get("action") == action_filter:
                 w.setVisible(True)
             else:
@@ -681,8 +774,39 @@ class FixPreviewDialog(QDialog):
         for w in self._list_widgets:
             if getattr(w, "_cb", None) and w._cb.isChecked() and hasattr(w, "_file_info"):
                 self.selected_files.add(w._file_info["relative_path"])
+        self.action_result = "apply"
         self.accept()
 
     def _on_restore_confirm(self):
-        """Accept dialog in restore mode."""
+        """Confirm and accept dialog in restore mode."""
+        conflicts = self.preview_data.get("conflicts", [])
+        if conflicts:
+            reply = ThemedMessageBox.question(
+                self,
+                "Force Restore Despite Conflicts?",
+                f"Conflict detected on {len(conflicts)} file(s).\n\n"
+                "Restoring anyway will overwrite existing files with backups and remove added files.\n\n"
+                "Are you sure you want to proceed with Force Restore?",
+                ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+                ThemedMessageBox.StandardButton.No,
+            )
+            if reply != ThemedMessageBox.StandardButton.Yes:
+                return
+            self.action_result = "force"
+        else:
+            self.action_result = "restore"
         self.accept()
+
+    def _on_discard_record(self):
+        """Prompt to discard fix record without touching files."""
+        reply = ThemedMessageBox.question(
+            self,
+            "Discard Fix Record?",
+            f"Are you sure you want to discard the record and backups for '{self.fix_title}'?\n\n"
+            "This will remove the fix from ASSella's installed fixes list WITHOUT modifying any game files on disk.",
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.No,
+        )
+        if reply == ThemedMessageBox.StandardButton.Yes:
+            self.action_result = "discard"
+            self.accept()

@@ -1,7 +1,5 @@
 import logging
-import urllib.request
 import threading
-import re
 
 from PyQt6.QtWidgets import (
     QDialog,

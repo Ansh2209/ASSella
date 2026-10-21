@@ -451,7 +451,7 @@ def init_luafix_tab(dialog) -> None:
             return
 
         # Show restore preview dialog detailing actions, backups, and any conflicts
-        confirmed = show_restore_preview_dialog(
+        action = show_restore_preview_dialog(
             dialog,
             game_path=game_path,
             fix_id=str(fix_id),
@@ -459,14 +459,21 @@ def init_luafix_tab(dialog) -> None:
             game_name=game_name,
             preview_data=preview_data,
         )
-        if not confirmed:
+        if not action:
             return
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            ok, msg = FixManager.remove_fix(game_path, fix_id=fix_id)
+            if action == "discard":
+                ok, msg = FixManager.remove_fix(game_path, fix_id=fix_id, discard_only=True)
+            elif action == "force":
+                ok, msg = FixManager.remove_fix(game_path, fix_id=fix_id, force=True)
+            else:
+                ok, msg = FixManager.remove_fix(game_path, fix_id=fix_id)
+
             if ok:
-                ThemedMessageBox.information(dialog, "Fix Restored", msg)
+                success_title = "Fix Record Discarded" if action == "discard" else "Fix Restored"
+                ThemedMessageBox.information(dialog, success_title, msg)
                 load_fixes(force_refresh=True)
             else:
                 ThemedMessageBox.critical(dialog, "Restore Failed", msg)

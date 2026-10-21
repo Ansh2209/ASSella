@@ -45,7 +45,7 @@ from utils.web_server import WebServerManager, get_local_ip
 from utils.settings import get_settings
 from utils.task_runner import TaskRunner
 from datetime import datetime, timezone
-from utils.version import app_version, check_for_updates, extract_semver
+from utils.version import app_version, check_for_updates
 
 logger = logging.getLogger(__name__)
 

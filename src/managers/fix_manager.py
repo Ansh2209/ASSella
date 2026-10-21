@@ -553,6 +553,7 @@ class FixManager:
         """
         Pre-flight analysis for restoring a fix without modifying files on disk.
         Checks for conflicts (external modifications) and missing backups.
+        Distinguishes files managed by another active fix from external conflicts.
         """
         target_dir = Path(game_path)
         if not target_dir.is_dir():
@@ -593,6 +594,9 @@ class FixManager:
         fix_key = cls._safe_fix_key(rec_fix_id)
         fix_subdir = fix_dir / fix_key
 
+        all_receipts = cls.get_all_receipts(target_dir)
+        other_receipts = [r for r in all_receipts if str(r.get("fix_id")) != rec_fix_id]
+
         planned_files = []
         conflicts = []
         revert_count = 0
@@ -613,6 +617,7 @@ class FixManager:
             file_size = 0
             file_status = "ok"
             conflict_reason = None
+            managing_fix = None
             display_action = "revert" if action == "modified" else "delete"
 
             if action == "modified":
@@ -631,10 +636,25 @@ class FixManager:
                     if hash_after or hash_before:
                         current_hash = cls._sha256_file(dest_file)
                         if current_hash not in (hash_after, hash_before):
-                            file_status = "conflict"
-                            conflict_reason = "File modified externally since fix was applied"
-                            conflicts.append(rel_path)
-                    if file_status != "conflict" and not backup_file.is_file():
+                            # Check if another active fix owns this file
+                            for other_r in other_receipts:
+                                for other_f in other_r.get("files", []):
+                                    if other_f.get("relative_path") == rel_path and other_f.get("hash_after") == current_hash:
+                                        managing_fix = other_r
+                                        break
+                                if managing_fix:
+                                    break
+
+                            if managing_fix:
+                                file_status = "managed_by_other_fix"
+                                managing_title = managing_fix.get("fix_title") or managing_fix.get("fix_id")
+                                conflict_reason = f"Managed by active fix '{managing_title}'"
+                            else:
+                                file_status = "conflict"
+                                conflict_reason = "File modified externally since fix was applied"
+                                conflicts.append(rel_path)
+
+                    if file_status not in ("conflict", "managed_by_other_fix") and not backup_file.is_file():
                         file_status = "missing_backup"
                         conflict_reason = "Backup file not found in .lfix directory"
                         conflicts.append(rel_path)
@@ -651,9 +671,23 @@ class FixManager:
                     if hash_after:
                         current_hash = cls._sha256_file(dest_file)
                         if current_hash != hash_after:
-                            file_status = "conflict"
-                            conflict_reason = "Added file was modified since fix was applied"
-                            conflicts.append(rel_path)
+                            # Check if another active fix owns this added file
+                            for other_r in other_receipts:
+                                for other_f in other_r.get("files", []):
+                                    if other_f.get("relative_path") == rel_path and other_f.get("hash_after") == current_hash:
+                                        managing_fix = other_r
+                                        break
+                                if managing_fix:
+                                    break
+
+                            if managing_fix:
+                                file_status = "managed_by_other_fix"
+                                managing_title = managing_fix.get("fix_title") or managing_fix.get("fix_id")
+                                conflict_reason = f"Managed by active fix '{managing_title}'"
+                            else:
+                                file_status = "conflict"
+                                conflict_reason = "Added file was modified externally since fix was applied"
+                                conflicts.append(rel_path)
                 else:
                     display_action = "already_removed"
 
@@ -664,6 +698,8 @@ class FixManager:
                 "conflict_reason": conflict_reason,
                 "size": file_size,
                 "has_hash": hash_after is not None,
+                "managing_fix_id": str(managing_fix.get("fix_id")) if managing_fix else None,
+                "managing_fix_title": str(managing_fix.get("fix_title")) if managing_fix else None,
             })
 
         return {
@@ -687,21 +723,52 @@ class FixManager:
         game_path: str | Path,
         fix_id: Optional[str] = None,
         progress_cb: Optional[Callable[[str], None]] = None,
+        force: bool = False,
+        discard_only: bool = False,
     ) -> Tuple[bool, str]:
         """
         Remove an applied fix, restoring original files and cleaning up.
         Performs pre-flight verification before modifying ANY file on disk.
+        
+        Args:
+            game_path: Path to game root directory
+            fix_id: Specific fix identifier to remove
+            progress_cb: Optional progress reporting callback
+            force: If True, overwrite conflicts with backup files anyway
+            discard_only: If True, delete fix record and backups without modifying disk files
         """
         target_dir = Path(game_path)
         if not target_dir.is_dir():
             return False, f"Game directory not found: {target_dir}"
 
-        # 1. Pre-flight check: dry-run conflict and backup verification
+        receipt = cls.get_receipt(target_dir, fix_id)
+        if not receipt:
+            return False, "No active fix receipt found in game directory."
+
+        rec_fix_id = str(receipt.get("fix_id") or fix_id or "unknown")
+        fix_dir = cls._get_fix_dir(target_dir)
+        fix_key = cls._safe_fix_key(rec_fix_id)
+        fix_subdir = fix_dir / fix_key
+
+        if discard_only:
+            # Escape hatch: remove fix record and backups without touching game files on disk
+            if fix_subdir.is_dir():
+                shutil.rmtree(fix_subdir, ignore_errors=True)
+            record_path = fix_dir / f"{fix_key}.json"
+            if record_path.exists():
+                record_path.unlink()
+            try:
+                if fix_dir.is_dir() and not any(fix_dir.iterdir()):
+                    fix_dir.rmdir()
+            except Exception as e:
+                logger.debug(f"[FixManager] Could not remove empty fix directory {fix_dir}: {e}")
+            return True, "Fix record and backups discarded. Game files were left unchanged."
+
         preflight = cls.preview_restore(target_dir, fix_id)
         if not preflight.get("receipt"):
             return False, preflight.get("error") or "No active fix receipt found in game directory."
 
-        if not preflight.get("can_restore"):
+        if not preflight.get("can_restore") and not force:
             conflicts = preflight.get("conflicts", [])
             total = preflight.get("total_files", 0)
             sample = conflicts[0] if conflicts else "unknown"
@@ -717,15 +784,13 @@ class FixManager:
                 f"restoring files directly from backup."
             )
 
-        rec_fix_id = preflight["fix_id"]
-        fix_dir = cls._get_fix_dir(target_dir)
-        fix_key = cls._safe_fix_key(rec_fix_id)
-        fix_subdir = fix_dir / fix_key
-        receipt = preflight["receipt"]
-
         restored_count = 0
         deleted_count = 0
+        preserved_count = 0
         errors = 0
+
+        # Map planned files by relative_path to easily check status
+        planned_map = {f["relative_path"]: f for f in preflight.get("files", [])}
 
         try:
             for entry in receipt.get("files", []):
@@ -734,7 +799,34 @@ class FixManager:
                 backup_path = entry.get("backup_path")
                 dest_file = target_dir / rel_path
 
+                file_info = planned_map.get(rel_path, {})
+                is_managed_by_other = (file_info.get("status") == "managed_by_other_fix")
+
                 try:
+                    if is_managed_by_other and not force:
+                        # Another active fix currently controls this file; leave disk file intact!
+                        preserved_count += 1
+
+                        # Transfer original backup to managing fix's backup if chained
+                        managing_fid = file_info.get("managing_fix_id")
+                        if managing_fid and backup_path:
+                            our_bak = fix_dir / backup_path
+                            managing_rec = cls.get_receipt(target_dir, managing_fid)
+                            if our_bak.is_file() and managing_rec:
+                                for mf in managing_rec.get("files", []):
+                                    if mf.get("relative_path") == rel_path and mf.get("backup_path"):
+                                        other_bak = fix_dir / mf["backup_path"]
+                                        if other_bak.is_file():
+                                            try:
+                                                shutil.copy2(our_bak, other_bak)
+                                                logger.info(
+                                                    f"[FixManager] Transferred genuine backup of {rel_path} "
+                                                    f"to managing fix '{managing_fid}'"
+                                                )
+                                            except Exception as e:
+                                                logger.debug(f"[FixManager] Failed to forward chained backup: {e}")
+                        continue
+
                     if action == "modified":
                         if backup_path:
                             backup_file = fix_dir / backup_path
@@ -778,6 +870,8 @@ class FixManager:
 
             # Build result message
             msg_parts = [f"Fix restored: {restored_count} file(s) restored, {deleted_count} file(s) removed"]
+            if preserved_count > 0:
+                msg_parts.append(f"({preserved_count} managed by another fix kept intact)")
             if errors > 0:
                 msg_parts.append(f"({errors} warnings)")
             return True, " ".join(msg_parts)

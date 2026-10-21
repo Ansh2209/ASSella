@@ -345,34 +345,127 @@ class TestFixManagerWorkflow(unittest.TestCase):
             preview_data=preview_data,
         )
         self.assertEqual(len(dlg._all_files), 3)
-        # Action button should be disabled due to conflict
-        self.assertFalse(dlg.action_btn.isEnabled())
+        # In restore mode with conflicts, escape hatch button should be enabled as 'Restore Anyway'
+        self.assertTrue(dlg.action_btn.isEnabled())
+        self.assertEqual(dlg.action_btn.text(), "Restore Anyway")
+        self.assertTrue(hasattr(dlg, "discard_btn") and dlg.discard_btn is not None)
 
         # Test filter pill click
         dlg._on_filter_pill_clicked("delete")
         visible_paths = [w._file_info["relative_path"] for w in dlg._list_widgets if not w.isHidden()]
         self.assertEqual(visible_paths, ["extra.dll"])
 
+    def test_multi_fix_shared_file_deadlock_prevention(self):
+        """Test that two fixes modifying the same file do not deadlock each other on restore."""
+        zip1 = self._create_fix_zip({"bin/game.exe": b"FIX1_BINARY_V2"}, "fix1.zip")
+        zip2 = self._create_fix_zip({"bin/game.exe": b"FIX2_BINARY_V3"}, "fix2.zip")
+
+        ok1, msg1 = FixManager.apply_fix(self.game_dir, "1000", "fix_one", "Fix 1", zip1)
+        ok2, msg2 = FixManager.apply_fix(self.game_dir, "1000", "fix_two", "Fix 2", zip2)
+        self.assertTrue(ok1, f"apply fix 1 failed: {msg1}")
+        self.assertTrue(ok2, f"apply fix 2 failed: {msg2}")
+
+        # Current disk has fix 2
+        self.assertEqual(self.orig_bin.read_bytes(), b"FIX2_BINARY_V3")
+
+        # Preview restoring fix 1 - it should NOT deadlock or conflict!
+        pre = FixManager.preview_restore(self.game_dir, "fix_one")
+        self.assertTrue(pre["can_restore"], "Fix 1 should be restorable even if Fix 2 owns file!")
+        self.assertEqual(len(pre["conflicts"]), 0)
+        self.assertEqual(pre["files"][0]["status"], "managed_by_other_fix")
+        self.assertEqual(pre["files"][0]["managing_fix_id"], "fix_two")
+
+        # Restore Fix 1
+        ok_rem1, msg_rem1 = FixManager.remove_fix(self.game_dir, fix_id="fix_one")
+        self.assertTrue(ok_rem1, f"remove fix 1 failed: {msg_rem1}")
+        # Fix 2's file on disk must NOT have been clobbered
+        self.assertEqual(self.orig_bin.read_bytes(), b"FIX2_BINARY_V3")
+
+        # Verify Fix 2's backup now holds the genuine original V1 (chain of custody)
+        fix_two_bak = self.game_dir / FIX_DIR / "fix_two" / "bin" / "game.exe.bak"
+        self.assertTrue(fix_two_bak.is_file())
+        self.assertEqual(fix_two_bak.read_bytes(), b"ORIGINAL_EXE_V1")
+
+        # Now restore Fix 2 - should restore genuine V1 to disk
+        ok_rem2, msg_rem2 = FixManager.remove_fix(self.game_dir, fix_id="fix_two")
+        self.assertTrue(ok_rem2, f"remove fix 2 failed: {msg_rem2}")
+        self.assertEqual(self.orig_bin.read_bytes(), b"ORIGINAL_EXE_V1")
+
+    def test_restore_escape_hatch_discard_only(self):
+        """Test discard_only=True cleans up fix record without modifying game files."""
+        zip_path = self._create_fix_zip({"bin/game.exe": b"FIX_BINARY"})
+        ok, _ = FixManager.apply_fix(self.game_dir, "1000", "discard_fix", "Discard Fix", zip_path)
+        self.assertTrue(ok)
+
+        # Alter file externally to cause conflict
+        self.orig_bin.write_bytes(b"EXTERNALLY_EDITED")
+
+        # Normal remove_fix fails
+        ok_rem, _ = FixManager.remove_fix(self.game_dir, "discard_fix")
+        self.assertFalse(ok_rem)
+
+        # Discard only succeeds
+        ok_disc, msg_disc = FixManager.remove_fix(self.game_dir, "discard_fix", discard_only=True)
+        self.assertTrue(ok_disc, f"discard_only failed: {msg_disc}")
+        # Record is gone
+        self.assertIsNone(FixManager.get_receipt(self.game_dir, "discard_fix"))
+        # Disk file remains unchanged
+        self.assertEqual(self.orig_bin.read_bytes(), b"EXTERNALLY_EDITED")
+
+    def test_restore_escape_hatch_force(self):
+        """Test force=True restores backup even when external conflicts exist."""
+        zip_path = self._create_fix_zip({"bin/game.exe": b"FIX_BINARY"})
+        ok, _ = FixManager.apply_fix(self.game_dir, "1000", "force_fix", "Force Fix", zip_path)
+        self.assertTrue(ok)
+
+        # Alter file externally
+        self.orig_bin.write_bytes(b"EXTERNALLY_EDITED")
+
+        # Force restore succeeds and restores original backup
+        ok_force, msg_force = FixManager.remove_fix(self.game_dir, "force_fix", force=True)
+        self.assertTrue(ok_force, f"force restore failed: {msg_force}")
+        self.assertEqual(self.orig_bin.read_bytes(), b"ORIGINAL_EXE_V1")
+        self.assertIsNone(FixManager.get_receipt(self.game_dir, "force_fix"))
+
 
 class TestVersionHelpers(unittest.TestCase):
     def test_version_parsing_and_comparison(self):
-        from utils.version import parse_version, extract_semver, get_effective_update_channel
+        from utils.version import parse_version, extract_semver, get_effective_update_channel, get_branch_from_version
 
+        # Clean SemVer and prefixes
         self.assertEqual(extract_semver("v3.0.0"), "3.0.0")
         self.assertEqual(extract_semver("20261021+ASSella-3.0.0"), "3.0.0")
         self.assertEqual(extract_semver("v3.1.0-beta.1"), "3.1.0-beta.1")
 
-        # Stable release > RC > Beta > Canary
+        # Bare suffixes preserved without losing markers
+        self.assertEqual(extract_semver("3.0.0testing051026003"), "3.0.0testing051026003")
+        self.assertEqual(extract_semver("3.0Release_candidate111026001"), "3.0Release_candidate111026001")
+        self.assertEqual(extract_semver("v2.7.0beta"), "2.7.0beta")
+        self.assertEqual(extract_semver("2.6.2-hotfix1"), "2.6.2-hotfix1")
+
+        # Hotfix > Clean Release > RC > Beta > Canary
+        self.assertGreater(parse_version("2.6.2-hotfix1"), parse_version("2.6.2"))
         self.assertGreater(parse_version("3.0.0"), parse_version("3.0.0-rc1"))
         self.assertGreater(parse_version("3.0.0-rc1"), parse_version("3.0.0-beta.1"))
         self.assertGreater(parse_version("3.0.0-beta.1"), parse_version("3.0.0-canary.1"))
         self.assertGreater(parse_version("3.0.1"), parse_version("3.0.0"))
+        self.assertGreater(parse_version("3.0.0testing051026004"), parse_version("3.0.0testing051026003"))
 
         # Channel resolution
         self.assertEqual(get_effective_update_channel("stable", "3.0.0"), "stable")
         self.assertEqual(get_effective_update_channel("", "3.0.0-canary.1"), "canary")
-        self.assertEqual(get_effective_update_channel("", "3.0.0-beta.2"), "beta")
+        self.assertEqual(get_effective_update_channel("", "3.0.0testing051026003"), "canary")
+        self.assertEqual(get_effective_update_channel("", "3.0Release_candidate111026001"), "beta")
+        self.assertEqual(get_effective_update_channel("", "v2.7.0beta"), "beta")
+        self.assertEqual(get_effective_update_channel("", "2.6.2-hotfix1"), "stable")
         self.assertEqual(get_effective_update_channel("", "3.0.0"), "stable")
+
+        # Branch resolution
+        self.assertEqual(get_branch_from_version("3.0.0testing051026003"), "canary")
+        self.assertEqual(get_branch_from_version("3.0Release_candidate111026001"), "beta")
+        self.assertEqual(get_branch_from_version("v2.7.0beta"), "beta")
+        self.assertEqual(get_branch_from_version("2.6.2-hotfix1"), "main")
+        self.assertEqual(get_branch_from_version("v3.0.0"), "main")
 
 
 if __name__ == "__main__":

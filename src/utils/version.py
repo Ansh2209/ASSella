@@ -29,14 +29,25 @@ app_version = _load_version()
 
 
 def extract_semver(raw_version: str) -> str:
-    """Extract a clean semver string from a raw version string (e.g. 'v3.0.0-beta.1' -> '3.0.0-beta.1')."""
+    """
+    Extract version string by stripping build stamp prefix (e.g. '20261021+ASSella-3.0.0' -> '3.0.0')
+    and leading 'v' followed by a digit, while preserving all channel markers and bare suffixes
+    (e.g. '3.0.0testing051026003', '3.0Release_candidate111026001', 'v2.7.0beta').
+    """
     if not raw_version:
         return ""
     v = raw_version.strip()
-    m = re.search(r'v?(\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)', v, re.IGNORECASE)
+    m = re.match(r'^\d{8}\+[a-zA-Z0-9_-]+-(.+)$', v, re.IGNORECASE)
     if m:
-        return m.group(1)
-    return v.lstrip("vV")
+        v = m.group(1).strip()
+    elif "+ASSella-" in v:
+        v = v.split("+ASSella-", 1)[1].strip()
+    elif "+assella-" in v:
+        v = v.split("+assella-", 1)[1].strip()
+
+    # Strip leading 'v' or 'V' only if followed by a digit
+    v = re.sub(r'^[vV](?=\d)', '', v)
+    return v
 
 
 def parse_version(v_str: str) -> Tuple[int, int, int, int, int]:
@@ -44,56 +55,77 @@ def parse_version(v_str: str) -> Tuple[int, int, int, int, int]:
     Parse a version string into a comparable 5-element tuple:
     (major, minor, patch, pre_tag_weight, pre_num)
     Weights:
-      canary / testing: -4
-      dev / alpha: -3
-      beta: -2
-      rc: -1
+      hotfix: 1 (newer than base stable release)
       clean release: 0
-      hotfix / post: 1
+      rc / release_candidate: -1
+      beta: -2
+      dev: -3
+      canary / testing / alpha / test: -4
+      other/unknown pre-release: -5
     """
     if not v_str:
         return (0, 0, 0, 0, 0)
-    m = re.match(r'^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-?([a-zA-Z]+)(?:\.?(\d+))?)?(?:-(.*))?$', v_str.strip())
+    v = extract_semver(v_str).strip()
+    m = re.match(
+        r"^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[._-]?(dev|alpha|beta|rc|release[_-]?candidate|hotfix|testing|canary|test)(\d*)|\-([a-zA-Z0-9.]+))?$",
+        v,
+        re.IGNORECASE,
+    )
     if m:
-        major = int(m.group(1))
-        minor = int(m.group(2))
-        patch = int(m.group(3)) if m.group(3) else 0
-        pre_tag = (m.group(4) or "").lower()
-        pre_num = int(m.group(5)) if m.group(5) else 0
-        pre_extra = m.group(6) or ""
+        major = int(m.group(1) or 0)
+        minor = int(m.group(2) or 0)
+        patch = int(m.group(3) or 0)
+        pre_type = (m.group(4) or "").lower().replace("-", "_")
+        pre_num_str = m.group(5) or ""
+        pre_extra = (m.group(6) or "").lower()
 
-        if pre_tag:
-            if "canary" in pre_tag or "testing" in pre_tag or "alpha" in pre_tag:
+        pre_weights = {
+            "hotfix": 1,
+            "rc": -1,
+            "release_candidate": -1,
+            "releasecandidate": -1,
+            "beta": -2,
+            "dev": -3,
+            "canary": -4,
+            "testing": -4,
+            "alpha": -4,
+            "test": -4,
+        }
+
+        if pre_type in pre_weights:
+            pre_val = pre_weights[pre_type]
+            pre_num = int(pre_num_str) if pre_num_str else 1
+        elif "hotfix" in pre_type or "hotfix" in pre_extra:
+            pre_val = 1
+            hm = re.search(r'\d+', pre_type + pre_extra)
+            pre_num = int(hm.group(0)) if hm else 1
+        elif pre_type or pre_extra:
+            if any(x in pre_extra for x in ("canary", "testing", "alpha", "test", "devtest")):
                 pre_val = -4
-            elif "dev" in pre_tag:
+            elif "dev" in pre_extra:
                 pre_val = -3
-            elif "beta" in pre_tag:
+            elif "beta" in pre_extra:
                 pre_val = -2
-            elif "rc" in pre_tag:
+            elif "rc" in pre_extra or "release_candidate" in pre_extra:
                 pre_val = -1
             else:
                 pre_val = -5
-        elif pre_extra:
-            if "hotfix" in pre_extra.lower():
-                hm = re.search(r'\d+', pre_extra)
-                pre_val = 1
-                pre_num = int(hm.group(0)) if hm else 1
-            else:
-                pre_val = -5
-                pre_num = 0
+            hm = re.search(r'\d+', pre_extra)
+            pre_num = int(hm.group(0)) if hm else 0
         else:
             pre_val = 0
             pre_num = 0
+
         return (major, minor, patch, pre_val, pre_num)
     return (0, 0, 0, 0, 0)
 
 
 def get_branch_from_version(ver_str: str) -> str:
     """Determine the release branch label from a version string."""
-    v = ver_str.lower()
-    if any(x in v for x in ("canary", "testing")):
+    v = extract_semver(ver_str).lower()
+    if any(x in v for x in ("canary", "testing", "alpha", "test", "devtest")):
         return "canary"
-    elif any(x in v for x in ("beta", "dev", "rc")):
+    elif any(x in v for x in ("beta", "dev", "rc", "candidate")):
         return "beta"
     return "main"
 
@@ -104,13 +136,8 @@ def get_effective_update_channel(configured_channel: Optional[str] = None, curre
     if ch in ("stable", "beta", "canary"):
         return ch
 
-    cur = current_version or app_version
-    cur_clean = extract_semver(cur).lower()
-    if any(x in cur_clean for x in ("canary", "testing", "alpha")):
-        return "canary"
-    elif any(x in cur_clean for x in ("beta", "dev", "rc")):
-        return "beta"
-    return "stable"
+    branch = get_branch_from_version(current_version or app_version)
+    return "stable" if branch == "main" else branch
 
 
 def check_for_updates(
@@ -151,13 +178,15 @@ def check_for_updates(
                 tag = str(r.get("tag_name", "")).strip()
                 tag_lower = tag.lower()
 
-                is_canary = any(x in tag_lower for x in ("canary", "testing"))
-                is_beta = any(x in tag_lower for x in ("beta", "dev", "rc")) and not is_canary
+                is_canary = any(x in tag_lower for x in ("canary", "testing", "alpha", "test", "devtest"))
+                is_beta = any(x in tag_lower for x in ("beta", "dev", "rc", "candidate")) and not is_canary
 
-                # Decouple stable release detection from GitHub's manual 'prerelease' flag
+                # Decouple stable release detection from GitHub's manual 'prerelease' flag,
+                # while allowing hotfixes on the stable channel.
                 clean_tag = tag.lstrip("vV")
                 is_clean_semver = bool(re.match(r"^\d+\.\d+(\.\d+)?$", clean_tag))
-                is_stable = is_clean_semver and not is_canary and not is_beta
+                is_hotfix = bool(re.search(r"\bhotfix\b|[-._]hotfix\d*", tag_lower))
+                is_stable = (is_clean_semver or is_hotfix) and not is_canary and not is_beta
 
                 # Channel filtering
                 if channel == "stable" and not is_stable:

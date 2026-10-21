@@ -297,6 +297,7 @@ class TestAtomMoveComplications(unittest.TestCase):
         with patch("utils.plugin_games.get_user_config_path", return_value=self.config_path), \
              patch("utils.plugin_games.collect_game_depots_and_keys", return_value=([dlc_depot], {dlc_depot: depot_key}, {dlc_depot: "DLC Depot 1"})), \
              patch("utils.dlc_helpers.resolve_dlc_mapping_for_selection", return_value=({dlc_appid: "DLC 4575720"}, {dlc_depot})), \
+             patch("utils.dlc_helpers.build_app_to_depots_map", return_value={dlc_appid: {dlc_depot}}), \
              patch("utils.steam_acf.find_appmanifest_path", return_value=None), \
              patch("utils.plugin_games.save_plugin_library", return_value=True):
             res = migrate_game_to_atom(game_data)
