@@ -1761,7 +1761,9 @@ class GameManager(QObject):
         self.manifest_check_runner = None
         self._games_to_check = []
 
-    def get_uninstall_confirmation_message(self, game_data):
+    def get_uninstall_confirmation_message(
+        self, game_data, remove_compatdata=False, remove_saves=False
+    ):
         """
         Build a confirmation message for uninstalling a game.
         Returns a string with the confirmation message.
@@ -1788,7 +1790,19 @@ class GameManager(QObject):
         is_dlc_only = False
         if appid and appid not in ("0", "N/A", "unknown"):
             from utils.dlc_helpers import is_dlc_only_mode
-            is_dlc_only = is_dlc_only_mode(str(appid))
+            is_dlc_only = (
+                is_dlc_only_mode(str(appid))
+                or bool(game_data.get("dlc_only"))
+                or bool(game_data.get("is_dlc_only"))
+            )
+            if not is_dlc_only:
+                try:
+                    from utils.plugin_games import get_plugin_game
+                    prec = get_plugin_game(str(appid), active_only=False)
+                    if prec and prec.get("dlc_only"):
+                        is_dlc_only = True
+                except Exception:
+                    pass
 
         if is_dlc_only:
             from utils.dlc_helpers import get_dlc_uninstall_message
@@ -1826,14 +1840,14 @@ class GameManager(QObject):
                 )
                 userdata_path = os.path.join(steam_dir, "userdata")
 
-                # Check if compatdata exists
-                if os.path.exists(compatdata_path):
+                # Only show compatdata if explicitly selected for removal
+                if remove_compatdata and os.path.exists(compatdata_path):
                     confirm_msg += (
-                        f"• Proton/Wine compatibility data: {compatdata_path}\n"
+                        f"• Proton/Wine compatibility data (includes Windows saves): {compatdata_path}\n"
                     )
 
-                # Check if userdata exists
-                if os.path.exists(userdata_path):
+                # Only show Steam Cloud saves if explicitly selected for removal
+                if remove_saves and os.path.exists(userdata_path):
                     has_saves = False
                     try:
                         for user_dir in os.listdir(userdata_path):
@@ -1848,6 +1862,10 @@ class GameManager(QObject):
 
                     if has_saves:
                         confirm_msg += "• Steam Cloud saves from userdata folders\n"
+
+                # Reassure user if neither prefix nor saves are being removed
+                if not remove_compatdata and not remove_saves:
+                    confirm_msg += "\nNote: Proton prefix, game saves, and Steam Cloud data will NOT be deleted.\n"
         elif (
             platform.system() == "Windows"
             and is_accela_install
@@ -2050,7 +2068,19 @@ class GameManager(QObject):
             is_dlc_only = False
             if appid and appid not in ("0", "N/A", "unknown"):
                 from utils.dlc_helpers import is_dlc_only_mode
-                is_dlc_only = is_dlc_only_mode(str(appid))
+                is_dlc_only = (
+                    is_dlc_only_mode(str(appid))
+                    or bool(game_data.get("dlc_only"))
+                    or bool(game_data.get("is_dlc_only"))
+                )
+                if not is_dlc_only:
+                    try:
+                        from utils.plugin_games import get_plugin_game
+                        prec = get_plugin_game(str(appid), active_only=False)
+                        if prec and prec.get("dlc_only"):
+                            is_dlc_only = True
+                    except Exception:
+                        pass
 
             if is_dlc_only:
                 # 1. Delete only files belonging to the DLC depots

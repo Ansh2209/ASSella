@@ -1396,7 +1396,23 @@ class LibraryActionsMixin:
         appid = str(game_data.get("appid", "0"))
         if appid and appid not in ("0", "N/A", "unknown"):
             from utils.dlc_helpers import is_dlc_only_mode
-            is_dlc_only = is_dlc_only_mode(appid)
+            is_dlc_only = (
+                is_dlc_only_mode(appid)
+                or bool(game_data.get("dlc_only"))
+                or bool(game_data.get("is_dlc_only"))
+            )
+            if not is_dlc_only:
+                try:
+                    from utils.plugin_games import get_plugin_game
+                    prec = get_plugin_game(appid, active_only=False)
+                    if prec and prec.get("dlc_only"):
+                        is_dlc_only = True
+                except Exception:
+                    pass
+
+        c_data = opts.get("compat", False)
+        c_saves = opts.get("saves", False)
+        c_wipe_sls = opts.get("wipe_sls", False)
 
         if c_wipe_sls_only:
             confirm_title = "Take away my sins"
@@ -1409,7 +1425,9 @@ class LibraryActionsMixin:
             progress_title = "Removing integrations..."
         else:
             confirm_title = "Confirm Uninstall"
-            confirm_msg = self.game_manager.get_uninstall_confirmation_message(game_data)
+            confirm_msg = self.game_manager.get_uninstall_confirmation_message(
+                game_data, remove_compatdata=c_data, remove_saves=c_saves
+            )
             progress_title = "Uninstalling DLC..." if is_dlc_only else "Uninstalling game..."
 
         reply = ThemedMessageBox.question(
@@ -1420,9 +1438,6 @@ class LibraryActionsMixin:
         )
         if reply != ThemedMessageBox.StandardButton.Yes:
             return
-
-        c_data = opts.get("compat", False)
-        c_saves = opts.get("saves", False)
         c_wipe_sls = opts.get("wipe_sls", False)
 
         self._uninstall_progress_dialog = ThemedProgressDialog(

@@ -1330,15 +1330,30 @@ def build_uninstall_panel(dialog) -> None:
         dialog._uninstall_content.addWidget(warn)
 
         dialog._uninstall_opts = {}
-        options = [("wipe_sls_only", "I bought the game")]
+        options = [
+            (
+                "wipe_sls_only",
+                "I bought the game",
+                "Removes SLSsteam integrations while keeping game files, saves, and prefix intact.",
+            )
+        ]
         if platform.system() == "Linux":
             options.extend([
-                ("compat", "Remove Proton/Wine prefix"),
-                ("saves", "Remove local cloud saves"),
+                (
+                    "compat",
+                    "Remove Proton/Wine prefix (Warning: Contains Windows saves)",
+                    "Permanently deletes the entire Proton prefix directory, including any local Windows save games stored in AppData, Documents, and Saved Games.",
+                ),
+                (
+                    "saves",
+                    "Remove local cloud saves",
+                    "Permanently deletes local copies of Steam Cloud saves stored in the Steam userdata directory.",
+                ),
             ])
 
-        for key, text in options:
+        for key, text, tooltip in options:
             cb = QCheckBox(text)
+            cb.setToolTip(tooltip)
             cb.setStyleSheet("color: #ffd0c8; font-size: 9.5pt; background: transparent;")
             dialog._uninstall_opts[key] = cb
             dialog._uninstall_content.addWidget(cb)
