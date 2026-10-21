@@ -2090,7 +2090,8 @@ def on_pin_build_toggled(dialog, pinned: bool) -> None:
                 cp = get_user_config_path()
                 if cp.exists():
                     current_pins = get_manifest_ids(cp)
-                    game_depots = set(str(d) for d in (dialog.game_data.get("depots") or {}).keys())
+                    raw_deps = dialog.game_data.get("depots")
+                    game_depots = set(str(d) for d in (raw_deps.keys() if isinstance(raw_deps, dict) else (raw_deps or [])))
                     game_depots.add(str(dialog.appid))
                     to_remove = [d for d in current_pins if d in game_depots]
                     if to_remove:

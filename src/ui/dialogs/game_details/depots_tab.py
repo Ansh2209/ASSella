@@ -699,19 +699,36 @@ def init_depots_tab(dialog) -> None:
 
         # 4. Merge game_data metadata
         gd = dialog.game_data or {}
-        gd_dlcs = gd.get("dlcs") or {}
+        gd_dlcs_raw = gd.get("dlcs") or {}
+        if isinstance(gd_dlcs_raw, dict):
+            gd_dlcs = {str(k): str(v) for k, v in gd_dlcs_raw.items()}
+        elif isinstance(gd_dlcs_raw, (list, set)):
+            gd_dlcs = {str(d): f"DLC {d}" for d in gd_dlcs_raw}
+        else:
+            gd_dlcs = {}
         for dlc_id, dlc_desc in gd_dlcs.items():
-            lua_dlcs.setdefault(str(dlc_id), str(dlc_desc))
+            lua_dlcs.setdefault(dlc_id, dlc_desc)
 
-        gd_depots = gd.get("depots") or {}
-        for d, dinfo in gd_depots.items():
-            d_str = str(d)
-            if isinstance(dinfo, dict):
-                desc = dinfo.get("desc") or dinfo.get("name") or ""
-                lua_depots.setdefault(d_str, desc)
-                k = dinfo.get("key") or dinfo.get("decryption_key")
+        gd_depots_raw = gd.get("depots") or {}
+        if isinstance(gd_depots_raw, dict):
+            gd_depots = {str(k): (v if isinstance(v, dict) else {"desc": str(v)}) for k, v in gd_depots_raw.items()}
+        elif isinstance(gd_depots_raw, (list, set)):
+            gd_depots = {str(d): {"desc": f"Depot {d}"} for d in gd_depots_raw}
+        else:
+            gd_depots = {}
+
+        for d_str, dinfo in gd_depots.items():
+            desc = dinfo.get("desc") or dinfo.get("name") or ""
+            lua_depots.setdefault(d_str, desc)
+            k = dinfo.get("key") or dinfo.get("decryption_key")
+            if k and len(str(k)) == 64:
+                lua_keys.setdefault(d_str, str(k).lower())
+
+        gd_keys = gd.get("keys") or {}
+        if isinstance(gd_keys, dict):
+            for did, k in gd_keys.items():
                 if k and len(str(k)) == 64:
-                    lua_keys.setdefault(d_str, str(k).lower())
+                    lua_keys.setdefault(str(did), str(k).lower())
 
         # 5. Check config.yaml entries specifically tagged with this game's name or AppID
         tagged_apps_from_config: Dict[str, str] = {}
