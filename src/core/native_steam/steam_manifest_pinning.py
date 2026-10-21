@@ -78,6 +78,7 @@ def set_manifest_ids(
         return True
 
     try:
+        config_path = Path(config_path)
         if not config_path.exists():
             config_path.parent.mkdir(parents=True, exist_ok=True)
             content = "Plugins: yes\nManifestIds:\n"
@@ -120,10 +121,13 @@ def set_manifest_ids(
 
 def remove_manifest_ids(config_path: Path, depot_ids: List[str]) -> bool:
     """Remove specific depot IDs from the ManifestIds section in config.yaml, preserving comments for remaining entries."""
-    if not config_path.exists() or not depot_ids:
+    if not config_path or not depot_ids:
         return True
 
     try:
+        config_path = Path(config_path)
+        if not config_path.exists():
+            return True
         content = config_path.read_text(encoding="utf-8", errors="ignore")
         bounds = _get_section_bounds(content, "ManifestIds")
         if not bounds:

@@ -822,7 +822,13 @@ def collect_game_depots_and_keys(
 
 
 def _resolve_install_path(game_data: Dict[str, Any]) -> Optional[str]:
-    """Resolve the on-disk install folder of a game."""
+    """Resolve the on-disk install folder of a game.
+
+    Callers may not know where the game lives (the depot selection dialog only
+    has an appid), and the migration engine owns marker retirement and emulator
+    reversion, so the lookup falls back to the Steam libraries by appid instead
+    of silently skipping those steps.
+    """
     install_path = game_data.get("install_path")
     if install_path and os.path.isdir(install_path):
         return str(install_path)
@@ -832,6 +838,14 @@ def _resolve_install_path(game_data: Dict[str, Any]) -> Optional[str]:
             cand = Path(game_data["library_path"]) / "steamapps" / "common" / folder_name
             if cand.is_dir():
                 return str(cand)
+    appid_str = str(game_data.get("appid", "")).strip()
+    if appid_str.isdigit():
+        try:
+            info = get_atom_game_install_info(appid_str)
+            if info and info.get("install_path"):
+                return str(info["install_path"])
+        except Exception as e:
+            logger.debug(f"[PluginGames] Install path lookup for {appid_str} failed: {e}")
     return None
 
 
@@ -868,39 +882,55 @@ def _remove_accela_markers(install_path: Optional[str]) -> List[str]:
 def revert_goldberg_if_applied(install_path: Optional[str]) -> bool:
     """If Goldberg emulator was applied, restore original .dll.valve / .so.valve backups and clean steam_settings."""
     if not install_path or not os.path.isdir(install_path):
-        return False
+        return True
     try:
         from ui.dialogs.library.actions import LibraryActionsMixin
 
         if not LibraryActionsMixin._is_goldberg_applied(install_path):
-            return False
+            return True
+        restore_failures: List[str] = []
+        restored_roots: Set[str] = set()
+        failed_roots: Set[str] = set()
         for root, _, files in os.walk(install_path):
             if any(f.lower().endswith((".dll.valve", ".so.valve")) for f in files):
-                st_dir = os.path.join(root, "steam_settings")
-                if os.path.isdir(st_dir):
-                    shutil.rmtree(st_dir, ignore_errors=True)
-                aid_txt = os.path.join(root, "steam_appid.txt")
-                if os.path.exists(aid_txt):
-                    try:
-                        os.remove(aid_txt)
-                    except Exception as e:
-                        logger.debug(f"[GoldbergRevert] Could not remove {aid_txt}: {e}")
                 for fname in files:
                     if fname.lower().endswith((".dll.valve", ".so.valve")):
                         orig_name = fname[:-6]
                         bak_path = os.path.join(root, fname)
                         orig_path = os.path.join(root, orig_name)
-                        if os.path.exists(orig_path):
-                            try:
-                                os.remove(orig_path)
-                            except Exception as e:
-                                logger.debug(f"[GoldbergRevert] Could not remove {orig_path}: {e}")
+                        # os.replace overwrites the (emulated) original in one
+                        # step: deleting it first would leave the game with no
+                        # binary at all if the restore then failed.
                         try:
-                            os.rename(bak_path, orig_path)
+                            os.replace(bak_path, orig_path)
+                            restored_roots.add(root)
                             logger.info(f"[GoldbergRevert] Restored Goldberg backup {orig_name} in {root}")
                         except Exception as r_err:
+                            restore_failures.append(bak_path)
+                            failed_roots.add(root)
                             logger.warning(f"[GoldbergRevert] Failed to restore {bak_path}: {r_err}")
-        return True
+
+        # Only remove Goldberg settings after every binary backup was restored.
+        # If a restore fails, retaining these files makes a retry diagnosable.
+        cleanup_failures: List[str] = []
+        for root in restored_roots - failed_roots:
+            st_dir = os.path.join(root, "steam_settings")
+            if os.path.isdir(st_dir):
+                try:
+                    shutil.rmtree(st_dir)
+                except Exception as e:
+                    cleanup_failures.append(st_dir)
+                    logger.warning(f"[GoldbergRevert] Could not remove {st_dir}: {e}")
+            aid_txt = os.path.join(root, "steam_appid.txt")
+            if os.path.exists(aid_txt):
+                try:
+                    os.remove(aid_txt)
+                except Exception as e:
+                    cleanup_failures.append(aid_txt)
+                    logger.warning(f"[GoldbergRevert] Could not remove {aid_txt}: {e}")
+        if restore_failures:
+            logger.warning(f"[GoldbergRevert] {len(restore_failures)} backup(s) could not be restored.")
+        return not restore_failures and not cleanup_failures
     except Exception as e:
         logger.warning(f"[GoldbergRevert] Error restoring Goldberg backups: {e}")
         return False
@@ -1021,14 +1051,12 @@ def migrate_game_to_atom(
     Core single-game migration engine: converts an ASSella-managed game to AT0-M (Steam Native) mode.
     Handles:
     - DLC-only mapped entitlements (only user-selected DLC depots, DLC AppIDs, DLC keys)
-    - Pinned build manifest overrides written into SLSsteam ManifestIds
     - Reverting Goldberg emulator to genuine Steam binaries
     - Reverting EOS proxy to genuine DLL
     - In-place atomic config.yaml updates (preserving inode)
     - Removal of .DepotDownloader / .ACCELA markers
     - Steam ACF adoption with deferral tracking
     - Depotcache manifest pre-seeding
-    - Preserving branch selection in settings
     """
     from utils.settings import get_settings
 
@@ -1044,7 +1072,11 @@ def migrate_game_to_atom(
 
     # 1. Goldberg & EOS Reversion (undo before Steam inspects/adopts files)
     if auto_revert_goldberg and install_path:
-        revert_goldberg_if_applied(install_path)
+        if not revert_goldberg_if_applied(install_path):
+            return {
+                "success": False,
+                "error": "Goldberg files could not be fully restored; the AT0-M migration was stopped and ASSella markers were kept.",
+            }
     if auto_revert_eos and install_path:
         revert_eos_proxy_if_applied(install_path)
 
@@ -1054,8 +1086,10 @@ def migrate_game_to_atom(
     is_dlc = is_dlc_only_mode(appid_str) or bool(game_data.get("is_dlc_only"))
 
     if is_dlc:
-        scope = get_saved_depot_selection(appid_str) or game_data.get("selected_depots") or (
-            game_data.get("metadata", {}).get("selected_depots_list")
+        explicit_scope = game_data.get("selected_depots")
+        scope = explicit_scope if explicit_scope is not None else (
+            get_saved_depot_selection(appid_str)
+            or game_data.get("metadata", {}).get("selected_depots_list")
         )
         selected_dlc_apps, selected_dlc_depots = resolve_dlc_mapping_for_selection(
             appid_str, selected_items=scope, game_data=game_data
@@ -1105,11 +1139,12 @@ def migrate_game_to_atom(
         )
         from utils.dlc_helpers import resolve_depot_scope
 
-        scope = get_saved_depot_selection(appid_str) or (
-            game_data.get("selected_depots")
-            or (game_data.get("metadata", {}).get("selected_depots_list"))
+        explicit_scope = game_data.get("selected_depots")
+        scope = explicit_scope if explicit_scope is not None else (
+            get_saved_depot_selection(appid_str)
+            or game_data.get("metadata", {}).get("selected_depots_list")
         )
-        if scope:
+        if scope is not None:
             depot_ids, _ = resolve_depot_scope(appid_str, depot_ids, extra_scope=scope)
 
     # 3. Guard against unkeyed depots (prevent DepotWithoutKey)
@@ -1153,9 +1188,7 @@ def migrate_game_to_atom(
             "error": "Failed to write SLSsteam config.yaml - migration aborted, nothing was changed",
         }
 
-    # 5. Pinned build manifest overrides
-    from core.native_steam.steam_manifest_pinning import resolve_pinned_manifests, set_manifest_ids
-
+    # 4b. Write pinned build manifest overrides if applicable
     is_pinned = bool(
         game_data.get("pin_build")
         or game_data.get("_pin_build")
@@ -1163,34 +1196,64 @@ def migrate_game_to_atom(
         or (settings_obj and settings_obj.value(f"pin_build/{appid_str}", False, type=bool))
     )
     if is_pinned:
-        manifest_map = resolve_pinned_manifests(game_data, appid_str)
-        if manifest_map:
-            build_id = str(
-                game_data.get("buildid")
-                or (settings_obj.value(f"installed_buildid/{appid_str}", "") if settings_obj else "")
-            ).strip()
-            comment = (
-                f"{game_name} ({appid_str}) [Build {build_id}]"
-                if build_id
-                else f"{game_name} ({appid_str}) Pinned Build"
-            )
-            set_manifest_ids(cfg_path, manifest_map, comment=comment)
+        from core.native_steam.steam_manifest_pinning import resolve_pinned_manifests, set_manifest_ids
 
-    # 6. Update QSettings
+        pinned_manifests = resolve_pinned_manifests(game_data, appid_str)
+        if pinned_manifests:
+            try:
+                set_manifest_ids(cfg_path, pinned_manifests, comment=f"{game_name} Pinned Build")
+            except Exception as e:
+                logger.warning(f"[PluginGames] Failed to write pinned manifest IDs for {appid_str}: {e}")
+
+    # 5. Update QSettings
     settings_obj.setValue(f"exclude_from_update_all/{appid_str}", True)
-    _preserve_branch_settings(appid_str, settings_obj)
 
     # 7. Adopt Steam appmanifest ACF
     from utils.steam_acf import find_appmanifest_path, ensure_acf_has_installed_depots, ACF_DEFERRED
 
+    # The ACF may only advertise the depots registration actually mounted: a
+    # depot the config editor refused is not served by SLSsteam, and listing it
+    # in the appmanifest would make Steam look for content that has no key.
+    record = load_plugin_library().get(appid_str) or {}
+    candidate_depots = (
+        record.get("depots", depot_ids) if "depots" in record else depot_ids
+    )
+    candidate_keys = (
+        record.get("keys", decryption_keys) if "keys" in record else decryption_keys
+    )
+    registered_dlc_apps = {str(d) for d in record.get("dlc_appids", [])}
+    allowed_key_ids = (
+        {str(d) for d in candidate_depots}
+        | registered_dlc_apps
+        | {appid_str}
+        | SHARED_REDISTS
+    )
+    try:
+        with batch_config_edit(cfg_path) as editor:
+            adopted_depots = [
+                str(d) for d in candidate_depots if editor.contains_depot(d)
+            ]
+            adopted_keys = {
+                str(d): key
+                for d, key in candidate_keys.items()
+                if str(d) in allowed_key_ids and editor.contains_key(d)
+            }
+    except Exception:
+        logger.exception(
+            f"[PluginGames] Could not verify mounted depots/keys for {appid_str}; "
+            "the appmanifest will not claim unverified content."
+        )
+        adopted_depots = []
+        adopted_keys = {}
+
     acf_deferred = False
     acf_path = find_appmanifest_path(game_data, appid_str)
     if acf_path:
-        acf_status = ensure_acf_has_installed_depots(acf_path, appid_str, depot_ids, game_data)
+        acf_status = ensure_acf_has_installed_depots(acf_path, appid_str, adopted_depots, game_data)
         if acf_status == ACF_DEFERRED:
             acf_deferred = True
 
-    # 8. Sync manifests to central depotcache
+    # 6. Sync manifests to central depotcache
     try:
         from core.native_steam.native_steam_handoff import sync_manifests_to_depotcache
 
@@ -1199,8 +1262,9 @@ def migrate_game_to_atom(
     except Exception as e:
         logger.warning(f"[PluginGames] Depotcache sync failed for {appid_str}: {e}")
 
-    # 9. Record acf_pending if deferred, and retire ASSella markers
+    # 7. Record acf_pending if deferred, and retire ASSella markers
     marker_retained = False
+    marker_retained_reasons: List[str] = []
     if acf_deferred:
         lib = load_plugin_library()
         record = lib.setdefault(appid_str, {})
@@ -1211,6 +1275,7 @@ def migrate_game_to_atom(
                 "keeping ASSella marker so migration can be retried."
             )
             marker_retained = True
+            marker_retained_reasons.append("plugin library could not save the deferred ACF state")
 
     if not marker_retained:
         _remove_accela_markers(install_path)
@@ -1222,9 +1287,9 @@ def migrate_game_to_atom(
         "name": game_name,
         "acf_deferred": acf_deferred,
         "marker_retained": marker_retained,
-        "pinned": is_pinned,
-        "depots_count": len(depot_ids),
-        "keys_count": len(decryption_keys),
+        "marker_retained_reason": "; ".join(marker_retained_reasons),
+        "depots_count": len(adopted_depots),
+        "keys_count": len(adopted_keys),
         "dlc_only": is_dlc,
     }
 
@@ -1273,7 +1338,6 @@ def batch_convert_games_to_atom(
                 "name": game_name,
                 "depots": res.get("depots_count", 0),
                 "keys": res.get("keys_count", 0),
-                "pinned": res.get("pinned", False),
             })
             if res.get("acf_deferred"):
                 acf_pending.append({"appid": appid_str, "name": game_name})
@@ -1281,7 +1345,8 @@ def batch_convert_games_to_atom(
                 markers_retained.append({
                     "appid": appid_str,
                     "name": game_name,
-                    "reason": "the plugin library could not be saved - marker kept for a retry",
+                    "reason": res.get("marker_retained_reason")
+                    or "migration state could not be fully saved - marker kept for a retry",
                 })
         else:
             failed.append({
@@ -1296,17 +1361,5 @@ def batch_convert_games_to_atom(
     if markers_retained:
         result["markers_retained"] = markers_retained
     return result
-
-
-def _preserve_branch_settings(appid_str: str, settings: Any) -> None:
-    """Keep the branch the user already selected for a game.
-
-    The single-game path uses the same rule (see
-    ``utils.settings.preserve_branch_selection``), so the two migration entry
-    points cannot disagree about which branch a game is on.
-    """
-    from utils.settings import preserve_branch_selection
-
-    preserve_branch_selection(settings, appid_str)
 
 

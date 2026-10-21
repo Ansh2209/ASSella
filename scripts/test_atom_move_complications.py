@@ -161,8 +161,8 @@ class TestAtomMoveComplications(unittest.TestCase):
         self.assertFalse(appid_txt.exists())
 
     def test_revert_goldberg_handles_missing_dir(self):
-        """revert_goldberg_if_applied safely returns False if dir does not exist."""
-        self.assertFalse(revert_goldberg_if_applied("/tmp/nonexistent_folder_abc_123"))
+        """revert_goldberg_if_applied safely returns True (clean no-op) if dir does not exist."""
+        self.assertTrue(revert_goldberg_if_applied("/tmp/nonexistent_folder_abc_123"))
 
     # -------------------------------------------------------------------------
     # 3. EOS Proxy Reversion

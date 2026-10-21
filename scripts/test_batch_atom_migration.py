@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
 Test Suite for Batch AT0-M Migration:
-- Strict exclusion validation (DLC-only mode, pinned manifests/builds, already AT0-M, uninstalled)
+- Strict exclusion validation (DLC-only mode, already AT0-M, uninstalled)
 - Batch conversion engine functionality
 - UI Dialog structure & signal connections
-- Migration safety: config commit verified, markers retired last, branch preserved
+- Migration safety: config commit verified, markers retired last
 - Depot/key publishing: only mounted depots get a key, owner tag is the parent AppID
 """
 
@@ -36,6 +36,7 @@ from utils.plugin_games import (
     build_key_comment,
     collect_game_depots_and_keys,
     comment_has_owner_tag,
+    migrate_game_to_atom,
 )
 from utils.steam_acf import (
     ACF_DEFERRED,
@@ -147,20 +148,14 @@ class TestBatchAtomMigration(unittest.TestCase):
     @patch("utils.dlc_helpers.is_dlc_only_mode")
     @patch("utils.settings.get_settings")
     def test_strict_exclusion_rules(self, mock_settings, mock_is_dlc):
-        """Verify strict exclusion rules for DLC-only and pinned builds."""
-        settings_dict = {
-            "pin_build/200": True,
-            "pin_build/100": False,
-        }
-        mock_settings.return_value.value.side_effect = lambda k, def_v, type=None: settings_dict.get(k, def_v)
-
+        """Verify strict exclusion rules for DLC-only mode."""
         mock_is_dlc.side_effect = lambda aid: str(aid) == "300"
 
         from ui.dialogs.library.filter_sort import game_is_dlc_only
 
         candidates = [
             {"appid": "100", "game_name": "Valid ASSella Game", "is_accela_install": True, "install_path": "/tmp"},
-            {"appid": "200", "game_name": "Pinned Build Game", "is_accela_install": True, "install_path": "/tmp"},
+            {"appid": "200", "game_name": "Game With Pin", "is_accela_install": True, "install_path": "/tmp"},
             {"appid": "300", "game_name": "DLC-Only Game", "is_accela_install": True, "install_path": "/tmp"},
             {"appid": "400", "game_name": "Already AT0-M Game", "is_accela_install": True, "is_atom": True, "install_path": "/tmp"},
             {"appid": "500", "game_name": "Steam Pure Game", "is_accela_install": False, "install_path": "/tmp"},
@@ -183,18 +178,14 @@ class TestBatchAtomMigration(unittest.TestCase):
             if mock_is_dlc(aid) or game_is_dlc_only(g):
                 skipped.append((g, "DLC-Only Mode"))
                 continue
-            # 4. Pinned Build
-            is_pinned = mock_settings.return_value.value(f"pin_build/{aid}", False, type=bool) or bool(g.get("_pin_build"))
-            if is_pinned:
-                skipped.append((g, "Pinned Build / Manifest"))
-                continue
             eligible.append(g)
 
-        self.assertEqual(len(eligible), 1)
-        self.assertEqual(eligible[0]["appid"], "100")
-        self.assertEqual(len(skipped), 4)
+        self.assertEqual(len(eligible), 2)
+        eligible_aids = [g["appid"] for g in eligible]
+        self.assertIn("100", eligible_aids)
+        self.assertIn("200", eligible_aids)
+        self.assertEqual(len(skipped), 3)
         skipped_map = {item[0]["appid"]: item[1] for item in skipped}
-        self.assertEqual(skipped_map["200"], "Pinned Build / Manifest")
         self.assertEqual(skipped_map["300"], "DLC-Only Mode")
         self.assertEqual(skipped_map["400"], "Already in AT0-M")
         self.assertEqual(skipped_map["500"], "Not ASSella Install")
@@ -498,13 +489,15 @@ class TestMigrationOrdering(unittest.TestCase):
         lib_path = Path(tmpdir) / "plugin_library.json"
         lib_path.write_text("{}", encoding="utf-8")
 
+        settings = MagicMock()
+        settings.value.return_value = False
         with patch("utils.plugin_games.get_user_config_path", return_value=cfg), patch(
             "utils.plugin_games.get_plugin_library_path", return_value=lib_path
         ), patch("utils.plugin_games.collect_game_depots_and_keys", return_value=(
             ["555"], {"555": "a" * 64, "111": "b" * 64}, {"555": "Content"}
         )), patch("utils.steam_acf.steam_is_running", return_value=False), patch(
             "utils.sls_bridge.SLSBridge.notify_reload"
-        ), patch("utils.settings.get_settings", return_value=MagicMock()):
+        ), patch("utils.settings.get_settings", return_value=settings):
             return batch_convert_games_to_atom(games)
 
     def test_markers_survive_a_failed_config_commit(self):
@@ -545,6 +538,8 @@ class TestMigrationOrdering(unittest.TestCase):
                 def add_key(self, *a, **kw):
                     return False
 
+            settings = MagicMock()
+            settings.value.return_value = False
             with patch("utils.plugin_games.get_user_config_path", return_value=cfg), patch(
                 "utils.plugin_games.get_plugin_library_path", return_value=lib_path
             ), patch("utils.plugin_games.collect_game_depots_and_keys", return_value=(
@@ -605,6 +600,8 @@ class TestMigrationOrdering(unittest.TestCase):
             cfg.write_text("AdditionalApps:\n", encoding="utf-8")
             lib_path = Path(tmp) / "plugin_library.json"
             lib_path.write_text("{}", encoding="utf-8")
+            settings = MagicMock()
+            settings.value.return_value = False
 
             with patch("utils.plugin_games.get_user_config_path", return_value=cfg), patch(
                 "utils.plugin_games.get_plugin_library_path", return_value=lib_path
@@ -614,7 +611,7 @@ class TestMigrationOrdering(unittest.TestCase):
                 "utils.plugin_games.save_plugin_library", side_effect=[True, False]
             ), patch("utils.steam_acf.steam_is_running", return_value=True), patch(
                 "utils.sls_bridge.SLSBridge.notify_reload"
-            ), patch("utils.settings.get_settings", return_value=MagicMock()):
+            ), patch("utils.settings.get_settings", return_value=settings):
                 results = batch_convert_games_to_atom([game])
 
             self.assertEqual(len(results["migrated"]), 1)
@@ -622,40 +619,83 @@ class TestMigrationOrdering(unittest.TestCase):
             self.assertEqual(len(results["markers_retained"]), 1)
             self.assertEqual(results["markers_retained"][0]["appid"], "111")
 
-    def test_branch_is_not_reset_to_public(self):
-        """A game pinned to a beta branch must stay on it."""
+    def test_acf_and_counts_use_only_config_mounted_depots_and_keys(self):
+        """A stale library overclaim must not reach ACF or migration reporting."""
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
             install = self._install_dir(tmp)
-
-            settings = MagicMock()
-            values = {"selected_branch/111": "beta", "installed_branch/111": "beta"}
-            settings.value.side_effect = lambda k, def_v=None, type=None: values.get(k, def_v)
-            written = {}
-            settings.setValue.side_effect = lambda k, v: written.__setitem__(k, v)
-
             cfg = Path(tmp) / "config.yaml"
-            cfg.write_text("AdditionalApps:\n", encoding="utf-8")
-            lib_path = Path(tmp) / "plugin_library.json"
-            lib_path.write_text("{}", encoding="utf-8")
+            cfg.write_text(
+                "AdditionalApps:\n- 111\nAdditionalDepots:\n- 555\n"
+                "DecryptionKeys:\n  111: " + "b" * 64 + "\n  555: " + "a" * 64 + "\n",
+                encoding="utf-8",
+            )
+            acf = Path(tmp) / "appmanifest_111.acf"
+            acf.write_text('"AppState"\n{\n}\n', encoding="utf-8")
+            game = self._game(install)
+            game["appmanifest_path"] = str(acf)
+            settings = MagicMock()
+            settings.value.return_value = False
+            record = {
+                "depots": ["555", "999"],
+                "keys": {"111": "b" * 64, "555": "a" * 64, "999": "c" * 64},
+                "dlc_appids": [],
+            }
 
             with patch("utils.plugin_games.get_user_config_path", return_value=cfg), patch(
-                "utils.plugin_games.get_plugin_library_path", return_value=lib_path
-            ), patch("utils.plugin_games.collect_game_depots_and_keys", return_value=(
-                ["555"], {"555": "a" * 64}, {"555": "Content"}
-            )), patch("utils.steam_acf.steam_is_running", return_value=False), patch(
-                "utils.sls_bridge.SLSBridge.notify_reload"
-            ), patch("utils.settings.get_settings", return_value=settings):
-                results = batch_convert_games_to_atom([self._game(install)])
+                "utils.plugin_games.collect_game_depots_and_keys",
+                return_value=(["555", "999"], record["keys"], {}),
+            ), patch("utils.plugin_games.register_plugin_game", return_value=True), patch(
+                "utils.plugin_games.load_plugin_library", return_value={"111": record}
+            ), patch("utils.steam_acf.steam_is_running", return_value=False), patch(
+                "utils.steam_acf.ensure_acf_has_installed_depots", return_value=ACF_WRITTEN
+            ) as ensure_acf, patch(
+                "utils.steam_acf.find_appmanifest_path", return_value=acf
+            ), patch("utils.plugin_games._remove_accela_markers"), patch(
+                "core.native_steam.native_steam_handoff.sync_manifests_to_depotcache"
+            ):
+                result = migrate_game_to_atom(game, settings=settings)
+
+            self.assertTrue(result["success"])
+            self.assertEqual(result["depots_count"], 1)
+            self.assertEqual(result["keys_count"], 2)
+            self.assertEqual(ensure_acf.call_args.args[2], ["555"])
+
+    def test_explicit_depot_selection_wins_over_saved_selection(self):
+        """A current dialog selection must not be replaced by stale QSettings."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            install = self._install_dir(tmp)
+            game = self._game(install)
+            game["selected_depots"] = ["555"]
+            with patch("utils.dlc_helpers.get_saved_depot_selection", return_value=["999"]), patch(
+                "utils.dlc_helpers.resolve_depot_scope", return_value=(["555"], ["999"])
+            ) as resolve_scope:
+                results = self._run_batch([game], tmp)
 
             self.assertEqual(len(results["migrated"]), 1)
-            # Preserved means untouched: the migration must not rewrite (or
-            # reset) an existing selection, so no write may reach the store.
-            self.assertEqual(values.get("selected_branch/111"), "beta")
-            self.assertEqual(values.get("installed_branch/111"), "beta")
-            self.assertNotIn("selected_branch/111", written)
-            self.assertNotIn("installed_branch/111", written)
+            resolve_scope.assert_called_once_with("111", ["555"], extra_scope=["555"])
+
+    def test_goldberg_restore_failure_preserves_original_binary(self):
+        """A failed restore must not first delete the installed game binary."""
+        import tempfile
+        from utils.plugin_games import revert_goldberg_if_applied
+
+        with tempfile.TemporaryDirectory() as tmp:
+            install = Path(tmp)
+            original = install / "steam_api64.dll"
+            backup = install / "steam_api64.dll.valve"
+            original.write_bytes(b"emulator")
+            backup.write_bytes(b"original")
+            with patch(
+                "ui.dialogs.library.actions.LibraryActionsMixin._is_goldberg_applied",
+                return_value=True,
+            ), patch("utils.plugin_games.os.replace", side_effect=OSError("locked")):
+                self.assertFalse(revert_goldberg_if_applied(str(install)))
+            self.assertEqual(original.read_bytes(), b"emulator")
+            self.assertEqual(backup.read_bytes(), b"original")
 
 
 if __name__ == "__main__":

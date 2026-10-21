@@ -801,20 +801,6 @@ class LibraryActionsMixin:
                         g["is_plugin_game"] = True
                         g["source"] = "at0-m"
                         g["update_status"] = "at0m"
-                        # The branch is the user's choice - the migration keeps
-                        # whatever was already selected instead of forcing
-                        # "public" (see core.morrenus_api.get_selected_branch).
-                        # selected and installed are separate facts: a game can
-                        # be installed on public while the user selected beta.
-                        selected_b = str(
-                            settings.value(f"selected_branch/{aid}", "", type=str) or ""
-                        ).strip()
-                        installed_b = str(
-                            settings.value(f"installed_branch/{aid}", "", type=str) or ""
-                        ).strip()
-                        branch = selected_b or installed_b or "public"
-                        g["selected_branch"] = branch
-                        g["installed_branch"] = installed_b or branch
                 if hasattr(self.game_manager, "games_cache") and self.game_manager.games_cache:
                     self.game_manager.games_cache.save(self.game_manager.games)
 
@@ -822,14 +808,16 @@ class LibraryActionsMixin:
             self._refresh_game_list()
 
             if failed:
-                failed_str = "\n".join(f"• {f['name']}: {f.get('reason', 'Failed')}" for f in failed[:8])
-                if len(failed) > 8:
-                    failed_str += f"\n• ...and {len(failed) - 8} more."
+                warning_parts = [f"Successfully registered {len(migrated)} game(s) in AT0-M."]
+                if failed:
+                    failed_str = "\n".join(f"• {f['name']}: {f.get('reason', 'Failed')}" for f in failed[:8])
+                    if len(failed) > 8:
+                        failed_str += f"\n• ...and {len(failed) - 8} more."
+                    warning_parts.append(f"Skipped/failed games:\n{failed_str}")
                 ThemedMessageBox.warning(
                     self._dialog_parent(),
                     "AT0-M Migration Completed with Warnings",
-                    f"Successfully moved {len(migrated)} game(s) to AT0-M mode.\n\n"
-                    f"Skipped/failed games:\n{failed_str}",
+                    "\n\n".join(warning_parts),
                 )
             else:
                 ThemedMessageBox.information(
@@ -841,15 +829,17 @@ class LibraryActionsMixin:
 
             markers_retained = result.get("markers_retained", [])
             if markers_retained:
-                retained_str = "\n".join(f"• {m['name']}" for m in markers_retained[:8])
+                retained_str = "\n".join(
+                    f"• {m['name']}: {m.get('reason', 'marker kept for retry')}"
+                    for m in markers_retained[:8]
+                )
                 if len(markers_retained) > 8:
                     retained_str += f"\n• ...and {len(markers_retained) - 8} more."
                 ThemedMessageBox.warning(
                     self._dialog_parent(),
-                    "Migration Saved, Markers Left In Place",
-                    "The SLSsteam configuration was written for these games, but the "
-                    "plugin library could not be saved. Their ASSella markers were "
-                    "left untouched so the migration can be retried:\n\n"
+                    "ASSella Markers Left In Place",
+                    "Markers were retained where the migration did not finish safely, "
+                    "so those games can be retried:\n\n"
                     f"{retained_str}",
                 )
 

@@ -88,7 +88,8 @@ class MigrationMixin:
                 self,
                 "AT0-M Registered",
                 f"✓ Successfully transitioned '{self.game_name}' to AT0-M mode!\n\n"
-                "Please restart Steam now so Steam client can adopt the game files and update your library.",
+                "Please restart Steam now so Steam client can adopt the game files and update your library.\n\n"
+                "After restarting, select your desired branch (Public/Beta/etc.) in Steam's library view.",
             )
             super().accept()
         except Exception as exc:

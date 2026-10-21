@@ -2430,7 +2430,8 @@ def on_move_to_vapor_clicked(dialog) -> None:
         "Moved to AT0-M",
         f"'{game_name}' has been successfully moved to AT0-M (Steam Native) mode.\n"
         f"Registered {res.get('depots_count', 0)} depot(s) and {res.get('keys_count', 0)} decryption key(s) into SLSsteam.\n\n"
-        "Please restart Steam now so Steam client can adopt the game files and update your library.",
+        "Please restart Steam now so Steam client can adopt the game files and update your library.\n\n"
+        "After restarting, select your desired branch (Public/Beta/etc.) in Steam's library view.",
     )
 
     # Close dialog and refresh parent
