@@ -14,6 +14,8 @@ import zipfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+from utils.safe_paths import contained_path, safe_path_component
+
 logger = logging.getLogger(__name__)
 
 # Current backup directory name
@@ -76,7 +78,10 @@ class FixManager:
 
         fix_id = rec.get("fix_id") or "legacy"
         fix_key = cls._safe_fix_key(fix_id)
-        fix_subdir = new_dir / fix_key
+        fix_subdir = contained_path(new_dir, fix_key)
+        if fix_subdir is None:
+            logger.warning("[FixManager] Refusing to migrate legacy fix outside the fix directory")
+            return
         fix_subdir.mkdir(parents=True, exist_ok=True)
 
         # Migrate backed up files
@@ -132,12 +137,34 @@ class FixManager:
 
     @classmethod
     def _safe_fix_key(cls, fix_id: str) -> str:
-        """Sanitize fix_id for use as directory name."""
-        invalid_chars = '<>:"/\\|?*'
-        key = fix_id
-        for ch in invalid_chars:
-            key = key.replace(ch, "_")
-        return key
+        """
+        Sanitize fix_id for use as a single directory name.
+
+        The fix id arrives from the lua.tools API, so it must never be able to
+        point outside the .lfix directory: an id of "." or ".." used to resolve
+        to the .lfix folder itself or to the game folder, and the cleanup step
+        then deleted the whole game install.
+        """
+        return safe_path_component(fix_id, fallback_prefix="fix")
+
+    @classmethod
+    def _fix_paths(cls, game_path: Path, fix_id: str) -> Tuple[Path, str, Path]:
+        """
+        Resolve the directory layout for one fix: (.lfix dir, key, backup dir).
+
+        The backup directory is verified to sit directly inside the .lfix
+        directory, so a record file that was tampered with cannot redirect the
+        cleanup step at the game folder.
+
+        Raises:
+            ValueError: If the resolved path would escape the .lfix directory.
+        """
+        fix_dir = cls._get_fix_dir(game_path)
+        fix_key = cls._safe_fix_key(fix_id)
+        fix_subdir = contained_path(fix_dir, fix_key)
+        if fix_subdir is None:
+            raise ValueError(f"Refusing to use fix directory outside {fix_dir}")
+        return fix_dir, fix_key, fix_subdir
 
     @classmethod
     def _sha256_file(cls, filepath: Path) -> Optional[str]:
@@ -242,7 +269,10 @@ class FixManager:
         """
         fix_dir = cls._get_fix_dir(game_path)
         fix_key = cls._safe_fix_key(fix_id)
-        record_path = fix_dir / f"{fix_key}.json"
+        record_path = contained_path(fix_dir, f"{fix_key}.json")
+        if record_path is None:
+            logger.error(f"[FixManager] Refusing to write fix record outside {fix_dir}")
+            return None
 
         # Build provisional record
         record = {
@@ -293,7 +323,9 @@ class FixManager:
         """
         fix_dir = cls._get_fix_dir(game_path)
         fix_key = cls._safe_fix_key(fix_id)
-        fix_subdir = fix_dir / fix_key
+        fix_subdir = contained_path(fix_dir, fix_key)
+        if fix_subdir is None:
+            raise ValueError(f"Refusing to write fix backups outside {fix_dir}")
         applied_entries = []
         failed_count = 0
 
@@ -414,6 +446,9 @@ class FixManager:
         target_dir = Path(game_path)
         if not target_dir.is_dir():
             return False, f"Game directory not found: {target_dir}"
+
+        if not str(fix_id or "").strip():
+            return False, "Fix identifier is missing."
 
         archive = Path(zip_path)
         if not archive.is_file():
@@ -590,9 +625,23 @@ class FixManager:
             }
 
         rec_fix_id = str(receipt.get("fix_id") or fix_id or "unknown")
-        fix_dir = cls._get_fix_dir(target_dir)
-        fix_key = cls._safe_fix_key(rec_fix_id)
-        fix_subdir = fix_dir / fix_key
+        try:
+            fix_dir, fix_key, fix_subdir = cls._fix_paths(target_dir, rec_fix_id)
+        except ValueError as e:
+            return {
+                "receipt": None,
+                "fix_id": rec_fix_id,
+                "fix_title": "",
+                "applied_at": "",
+                "files": [],
+                "conflicts": [],
+                "can_restore": False,
+                "has_legacy_files": False,
+                "total_files": 0,
+                "revert_count": 0,
+                "delete_count": 0,
+                "error": str(e),
+            }
 
         all_receipts = cls.get_all_receipts(target_dir)
         other_receipts = [r for r in all_receipts if str(r.get("fix_id")) != rec_fix_id]
@@ -613,21 +662,33 @@ class FixManager:
             if hash_after is None:
                 has_legacy_files = True
 
-            dest_file = target_dir / rel_path
+            dest_file = contained_path(target_dir, rel_path)
             file_size = 0
             file_status = "ok"
             conflict_reason = None
             managing_fix = None
             display_action = "revert" if action == "modified" else "delete"
 
-            if action == "modified":
+            if dest_file is None:
+                # A recorded path that leaves the game folder is never touched.
+                file_status = "invalid_path"
+                conflict_reason = "File path is outside the game directory"
+                conflicts.append(rel_path)
+            elif action == "modified":
                 revert_count += 1
                 if backup_path:
-                    backup_file = fix_dir / backup_path
+                    backup_file = contained_path(fix_dir, backup_path)
                 else:
-                    backup_file = fix_subdir / f"{rel_path}.bak"
+                    backup_file = contained_path(fix_subdir, f"{rel_path}.bak")
+                # A record file that points outside the fix directory is not
+                # something we are willing to read a backup from.
+                backup_error = (
+                    None if backup_file is not None
+                    else "Backup path is outside the fix directory"
+                )
+                has_backup = backup_file is not None and backup_file.is_file()
 
-                if backup_file.is_file():
+                if has_backup:
                     file_size = backup_file.stat().st_size
                 elif dest_file.is_file():
                     file_size = dest_file.stat().st_size
@@ -654,14 +715,14 @@ class FixManager:
                                 conflict_reason = "File modified externally since fix was applied"
                                 conflicts.append(rel_path)
 
-                    if file_status not in ("conflict", "managed_by_other_fix") and not backup_file.is_file():
+                    if file_status not in ("conflict", "managed_by_other_fix") and not has_backup:
                         file_status = "missing_backup"
-                        conflict_reason = "Backup file not found in .lfix directory"
+                        conflict_reason = backup_error or "Backup file not found in .lfix directory"
                         conflicts.append(rel_path)
                 else:
-                    if not backup_file.is_file():
+                    if not has_backup:
                         file_status = "missing_backup"
-                        conflict_reason = "Both game file and backup file are missing"
+                        conflict_reason = backup_error or "Both game file and backup file are missing"
                         conflicts.append(rel_path)
 
             elif action == "added":
@@ -746,9 +807,10 @@ class FixManager:
             return False, "No active fix receipt found in game directory."
 
         rec_fix_id = str(receipt.get("fix_id") or fix_id or "unknown")
-        fix_dir = cls._get_fix_dir(target_dir)
-        fix_key = cls._safe_fix_key(rec_fix_id)
-        fix_subdir = fix_dir / fix_key
+        try:
+            fix_dir, fix_key, fix_subdir = cls._fix_paths(target_dir, rec_fix_id)
+        except ValueError as e:
+            return False, str(e)
 
         if discard_only:
             # Escape hatch: remove fix record and backups without touching game files on disk
@@ -797,12 +859,20 @@ class FixManager:
                 rel_path = entry.get("relative_path")
                 action = entry.get("action")
                 backup_path = entry.get("backup_path")
-                dest_file = target_dir / rel_path
+                dest_file = contained_path(target_dir, rel_path)
 
                 file_info = planned_map.get(rel_path, {})
                 is_managed_by_other = (file_info.get("status") == "managed_by_other_fix")
 
                 try:
+                    if dest_file is None:
+                        # A recorded path that leaves the game folder is never written to.
+                        logger.warning(
+                            f"[FixManager] Skipping '{rel_path}': path is outside the game directory"
+                        )
+                        errors += 1
+                        continue
+
                     if is_managed_by_other:
                         # Another active fix currently controls this file. Hand our genuine
                         # pre-fix backup over to it either way, so that restoring that fix
@@ -818,11 +888,11 @@ class FixManager:
 
                     if action == "modified":
                         if backup_path:
-                            backup_file = fix_dir / backup_path
+                            backup_file = contained_path(fix_dir, backup_path)
                         else:
-                            backup_file = fix_subdir / f"{rel_path}.bak"
+                            backup_file = contained_path(fix_subdir, f"{rel_path}.bak")
 
-                        if backup_file.is_file():
+                        if backup_file is not None and backup_file.is_file():
                             dest_file.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(backup_file, dest_file)
                             restored_count += 1
@@ -890,8 +960,8 @@ class FixManager:
         if not managing_fid or not backup_path:
             return
 
-        our_bak = fix_dir / backup_path
-        if not our_bak.is_file():
+        our_bak = contained_path(fix_dir, backup_path)
+        if our_bak is None or not our_bak.is_file():
             return
 
         managing_rec = cls.get_receipt(target_dir, managing_fid)
@@ -901,8 +971,8 @@ class FixManager:
         for mf in managing_rec.get("files", []):
             if mf.get("relative_path") != rel_path or not mf.get("backup_path"):
                 continue
-            other_bak = fix_dir / mf["backup_path"]
-            if not other_bak.is_file():
+            other_bak = contained_path(fix_dir, mf["backup_path"])
+            if other_bak is None or not other_bak.is_file():
                 continue
             try:
                 shutil.copy2(our_bak, other_bak)
@@ -948,8 +1018,8 @@ class FixManager:
             rel_path = entry.get("relative_path")
             hash_after = entry.get("hash_after")
             if hash_after:
-                dest_file = Path(game_path) / rel_path
-                if dest_file.exists():
+                dest_file = contained_path(Path(game_path), rel_path)
+                if dest_file is not None and dest_file.exists():
                     current_hash = cls._sha256_file(dest_file)
                     if current_hash != hash_after:
                         conflicts.append((rel_path, "file_modified_since_apply"))

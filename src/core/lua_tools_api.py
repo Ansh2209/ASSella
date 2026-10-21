@@ -17,10 +17,12 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from utils.helpers import get_base_path
+from utils.safe_paths import safe_path_component
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,10 @@ OAUTH_TIMEOUT = 300  # 5 minutes
 
 
 FIXES_CACHE_TTL = 7 * 86400  # 7 days in seconds
+
+# Cached fix archives are re-fetched on the same schedule as the fix listings,
+# so a fix that was updated in place by its author is picked up eventually.
+FIX_ZIP_CACHE_TTL = FIXES_CACHE_TTL
 
 
 def _get_session_file() -> Path:
@@ -615,6 +621,34 @@ class LuaToolsAPI:
             return None, f"Network error: {e}"
 
     @classmethod
+    def _is_valid_fix_archive(cls, path: Path) -> bool:
+        """Return True when the file is a readable zip holding at least one file."""
+        try:
+            with zipfile.ZipFile(path) as zf:
+                return any(not info.is_dir() for info in zf.infolist())
+        except (OSError, zipfile.BadZipFile) as e:
+            logger.debug(f"[LuaTools] Invalid fix archive {path}: {e}")
+            return False
+
+    @classmethod
+    def _cached_fix_zip(cls, path: Path) -> bool:
+        """Return True when the cached archive exists, is fresh and is readable."""
+        try:
+            if not path.is_file():
+                return False
+            age = time.time() - path.stat().st_mtime
+            if age > FIX_ZIP_CACHE_TTL:
+                logger.info(f"[LuaTools] Cached fix archive expired ({int(age)}s old): {path}")
+                return False
+            if not cls._is_valid_fix_archive(path):
+                logger.warning(f"[LuaTools] Cached fix archive is corrupt, refetching: {path}")
+                return False
+            return True
+        except OSError as e:
+            logger.debug(f"[LuaTools] Could not inspect cached archive {path}: {e}")
+            return False
+
+    @classmethod
     def download_fix_zip(
         cls,
         fix_id: str,
@@ -622,8 +656,15 @@ class LuaToolsAPI:
         progress_cb: Optional[Callable[[int, int], None]] = None,
     ) -> Tuple[Optional[Path], Optional[str]]:
         """Resolve and download the fix zip to local cache (~/.local/share/ACCELA/luatools/fixes/)."""
-        target_file = _get_fixes_cache_dir() / f"{appid}_{fix_id}.zip"
-        if target_file.exists() and target_file.stat().st_size > 1024:
+        # The fix id arrives from the API, so it must not be able to steer the
+        # cache file out of the cache directory.
+        stem = (
+            f"{safe_path_component(appid, fallback_prefix='app')}"
+            f"_{safe_path_component(fix_id, fallback_prefix='fix')}"
+        )
+        target_file = _get_fixes_cache_dir() / f"{stem}.zip"
+
+        if cls._cached_fix_zip(target_file):
             logger.info(f"[LuaTools] Found cached fix archive: {target_file}")
             return target_file, None
 
@@ -631,7 +672,9 @@ class LuaToolsAPI:
         if not download_url:
             return None, err or "Download resolution failed."
 
-        temp_target = target_file.with_suffix(".part")
+        # A unique part name keeps two concurrent downloads of the same fix
+        # from writing over each other.
+        temp_target = target_file.with_suffix(f".{secrets.token_hex(4)}.part")
         try:
             req = urllib.request.Request(download_url, headers={"User-Agent": "ASSella/3.0"})
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -647,6 +690,12 @@ class LuaToolsAPI:
                         downloaded += len(chunk)
                         if progress_cb and total_size > 0:
                             progress_cb(downloaded, total_size)
+
+            if total_size > 0 and downloaded != total_size:
+                raise IOError(f"Incomplete download: got {downloaded} of {total_size} bytes")
+
+            if not cls._is_valid_fix_archive(temp_target):
+                raise IOError("Downloaded file is not a valid fix archive")
 
             temp_target.replace(target_file)
             return target_file, None
