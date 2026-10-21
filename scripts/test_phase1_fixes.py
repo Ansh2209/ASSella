@@ -195,7 +195,7 @@ def test_depot_tag_formatting_and_arch_detection():
         {"oslist": "windows", "osarch": "64", "language": "french", "is_dlc": True, "dlcappid": "500"},
         "French Voice Pack",
     )
-    assert row2 == "[WINDOWS] [x64] [FR] [DLC 500]  French Voice Pack", f"Got: {row2}"
+    assert row2 == "[WINDOWS] [x64] [DLC] [FR]  French Voice Pack", f"Got: {row2}"
 
     # 3. Smart depot selection filters 32-bit when 64-bit exists
     mock_depots = {

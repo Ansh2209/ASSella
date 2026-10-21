@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QCheckBox,
 )
 from ui.dialogs.themed_message_box import ThemedMessageBox
+from ui.dialogs.themed_dialog import install_themed_frame
 
 logger = logging.getLogger(__name__)
 
@@ -92,22 +93,18 @@ class FixPreviewDialog(QDialog):
         self.setWindowTitle(f"Apply Fix: {fix_title}")
         self.resize(680, 520)
         self.setMinimumSize(540, 420)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowMaximizeButtonHint)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #121316;
-                color: #f3f4f6;
-            }
-        """)
 
         self._setup_ui()
         self._load_files()
 
     def _setup_ui(self):
         """Set up the dialog UI."""
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 18)
-        layout.setSpacing(14)
+        layout = install_themed_frame(
+            self,
+            title=f"Apply Fix: {self.fix_title}",
+            margins=(20, 16, 20, 18),
+            spacing=14,
+        )
 
         # Header section
         header_vbox = QVBoxLayout()

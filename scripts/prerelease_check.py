@@ -31,6 +31,10 @@ SRC_DIR = REPO_ROOT / "src"
 
 # Auto-switch to bundled AppImage venv if running under unbundled python and venv is present
 APPIMAGE_VENV = Path.home() / ".local/share/ACCELA/squashfs-root/bin/.venv/bin/python3"
+if not APPIMAGE_VENV.exists():
+    _cand = Path.home() / ".local/share/ACCELA/build_rc1/squashfs-root/bin/.venv/bin/python3"
+    if _cand.exists():
+        APPIMAGE_VENV = _cand
 if APPIMAGE_VENV.exists() and sys.executable != str(APPIMAGE_VENV) and not os.environ.get("ASSELLA_TESTER_NO_REEXEC"):
     try:
         from steam.client import SteamClient
