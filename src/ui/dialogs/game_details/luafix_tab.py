@@ -35,7 +35,7 @@ def _hex_to_rgba(hex_code: str, alpha: float = 0.15) -> str:
             r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
             return f"rgba({r}, {g}, {b}, {alpha})"
         except ValueError:
-            pass
+            return hex_code
     return hex_code
 
 
@@ -376,16 +376,16 @@ def init_luafix_tab(dialog) -> None:
         if selected_files is None:
             try:
                 Path(zip_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[LuaFix] Could not delete temp zip {zip_path}: {e}")
             return
 
         # If user selected nothing, skip
         if not selected_files:
             try:
                 Path(zip_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[LuaFix] Could not delete temp zip {zip_path}: {e}")
             ThemedMessageBox.information(
                 dialog,
                 "No Files Selected",
@@ -416,8 +416,8 @@ def init_luafix_tab(dialog) -> None:
             # Clean up downloaded zip
             try:
                 Path(zip_path).unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[LuaFix] Could not delete temp zip {zip_path}: {e}")
 
             if ok:
                 ThemedMessageBox.information(dialog, "Success", msg)

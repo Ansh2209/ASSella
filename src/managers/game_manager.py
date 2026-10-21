@@ -1801,8 +1801,8 @@ class GameManager(QObject):
                     prec = get_plugin_game(str(appid), active_only=False)
                     if prec and prec.get("dlc_only"):
                         is_dlc_only = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[GameManager] Could not check plugin game for DLC-only mode: {e}")
 
         if is_dlc_only:
             from utils.dlc_helpers import get_dlc_uninstall_message
@@ -2079,8 +2079,8 @@ class GameManager(QObject):
                         prec = get_plugin_game(str(appid), active_only=False)
                         if prec and prec.get("dlc_only"):
                             is_dlc_only = True
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[GameManager] Could not check plugin game for DLC-only mode: {e}")
 
             if is_dlc_only:
                 # 1. Delete only files belonging to the DLC depots

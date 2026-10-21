@@ -1407,8 +1407,8 @@ class LibraryActionsMixin:
                     prec = get_plugin_game(appid, active_only=False)
                     if prec and prec.get("dlc_only"):
                         is_dlc_only = True
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"[LibraryActions] Could not check plugin game for DLC-only mode: {e}")
 
         c_data = opts.get("compat", False)
         c_saves = opts.get("saves", False)

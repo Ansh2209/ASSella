@@ -1018,8 +1018,8 @@ def detect_migration_complications(game_data: Dict[str, Any], settings: Any = No
 
             status = EOSDetector.get_proxy_status(install_path)
             eos_active = status in ("active", "stale")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[PluginGames] Could not check EOS proxy status for {appid_str}: {e}")
 
     # 4. Goldberg check
     goldberg_active = False
@@ -1028,8 +1028,8 @@ def detect_migration_complications(game_data: Dict[str, Any], settings: Any = No
             from ui.dialogs.library.actions import LibraryActionsMixin
 
             goldberg_active = LibraryActionsMixin._is_goldberg_applied(install_path)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[PluginGames] Could not check Goldberg status for {appid_str}: {e}")
 
     has_complications = bool(pinned_info or dlc_info or eos_active or goldberg_active)
     return {

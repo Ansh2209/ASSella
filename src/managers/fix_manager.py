@@ -660,8 +660,8 @@ class FixManager:
             try:
                 if fix_dir.is_dir() and not any(fix_dir.iterdir()):
                     fix_dir.rmdir()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[FixManager] Could not remove empty fix directory {fix_dir}: {e}")
 
             # Build result message
             msg_parts = [f"Fix restored: {restored_count} restored, {deleted_count} deleted"]

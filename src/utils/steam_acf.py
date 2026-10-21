@@ -30,7 +30,7 @@ import re
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -234,6 +234,30 @@ def find_appmanifest_path(game_data: Dict[str, Any], appid: str) -> Optional[str
         logger.debug(f"[SteamACF] Steam library scan failed for {appid}: {e}")
 
     return None
+
+
+def parse_acf_file(acf_path: Union[str, Path]) -> Dict[str, Any]:
+    """Parse an ACF / appmanifest file into a dictionary using vdf, with fallback."""
+    try:
+        import vdf
+        with open(acf_path, "r", encoding="utf-8", errors="replace") as f:
+            data = vdf.loads(f.read())
+            if isinstance(data, dict):
+                return data
+    except Exception as e:
+        logger.debug(f"[SteamACF] vdf parsing failed for {acf_path}: {e}")
+
+    res: Dict[str, Any] = {"AppState": {"InstalledDepots": {}}}
+    try:
+        content = Path(acf_path).read_text(encoding="utf-8", errors="replace")
+        block = _find_vdf_block(content, "InstalledDepots")
+        if block:
+            _, entries = _parse_installed_depots(block[2])
+            for did, mid in entries.items():
+                res["AppState"]["InstalledDepots"][str(did)] = {"manifest": str(mid)}
+    except Exception as e:
+        logger.debug(f"[SteamACF] Fallback parsing failed for {acf_path}: {e}")
+    return res
 
 
 def ensure_acf_has_installed_depots(

@@ -20,8 +20,8 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QWidget,
     QCheckBox,
-    QMessageBox,
 )
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 logger = logging.getLogger(__name__)
 
@@ -298,7 +298,7 @@ class FixPreviewDialog(QDialog):
 
         except Exception as e:
             logger.error(f"[FixPreviewDialog] Failed to load ZIP: {e}")
-            QMessageBox.critical(self, "Error", f"Failed to read fix archive:\n{e}")
+            ThemedMessageBox.critical(self, "Error", f"Failed to read fix archive:\n{e}")
 
     def set_game_path(self, game_path: str | Path):
         """Set the game path to determine modified vs added files."""
