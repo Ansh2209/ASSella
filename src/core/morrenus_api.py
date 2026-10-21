@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import ssl
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -666,19 +667,29 @@ def download_manifest(
 
     from utils.isp_bypass import execute_hubcap_request
 
+    try:
+        manifests_dir.mkdir(parents=True, exist_ok=True)
+        temp_fd, temp_name = tempfile.mkstemp(
+            prefix=f".{public_path.name}.", suffix=".part", dir=manifests_dir
+        )
+        os.close(temp_fd)
+        temp_path = Path(temp_name)
+    except OSError as e:
+        return None, f"Could not prepare manifest cache file: {e}"
+
     def _stream_to_file(url: str) -> None:
         r = execute_hubcap_request(
             get_session(), "GET", url, headers=headers, stream=True, timeout=60
         )
         r.raise_for_status()
-        with open(public_path, "wb") as f:
+        with open(temp_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
 
     def _cleanup_partial() -> None:
-        if public_path.exists():
+        if temp_path.exists():
             try:
-                os.remove(public_path)
+                temp_path.unlink()
             except OSError:
                 pass
 
@@ -698,6 +709,14 @@ def download_manifest(
         except Exception as fallback_err:
             _cleanup_partial()
             return None, _handle_request_exception(fallback_err, f"Download {app_id} (fallback)")
+
+    # Publish a complete download in one filesystem operation. A failed refresh
+    # must not truncate or remove the previously cached bundle.
+    try:
+        os.replace(temp_path, public_path)
+    except OSError as e:
+        _cleanup_partial()
+        return None, f"Could not replace cached manifest: {e}"
 
     if branch == "public":
         return str(public_path), None
