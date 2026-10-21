@@ -435,18 +435,18 @@ class TestDashboardRebuildCadence(unittest.TestCase):
 
 
 class TestLogRedactionRunsOnce(unittest.TestCase):
-    """The file handler redacts through its formatter only."""
+    """The file handler redacts sensitive data and retains the filter."""
 
-    def test_the_file_handler_has_no_second_filter(self):
+    def test_the_file_handler_has_sensitive_filter(self):
         from utils import logger as logger_module
 
         with mock.patch.object(logger_module, "get_base_path", return_value=Path("/tmp")):
             handler = logger_module._create_file_handler(Path("/tmp/calm_boot_log_test.log"))
         try:
             self.assertIsNotNone(handler)
-            self.assertFalse(
+            self.assertTrue(
                 any(isinstance(f, logger_module.SensitiveDataFilter) for f in handler.filters),
-                "the file handler must not redact a second time",
+                "the file handler must have SensitiveDataFilter attached",
             )
         finally:
             if handler is not None:
