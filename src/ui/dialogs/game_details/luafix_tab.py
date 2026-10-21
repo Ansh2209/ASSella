@@ -22,7 +22,7 @@ from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from core.lua_tools_api import LuaToolsAPI
 from managers.fix_manager import FixManager
-from ui.dialogs.game_details.fix_preview_dialog import show_fix_preview_dialog
+from ui.dialogs.game_details.fix_preview_dialog import show_fix_preview_dialog, show_restore_preview_dialog
 from utils.qt_utils import clear_layout
 
 logger = logging.getLogger(__name__)
@@ -164,8 +164,12 @@ def init_luafix_tab(dialog) -> None:
             return
 
         game_path = dialog.game_data.get("install_path")
-        active_receipt = FixManager.get_receipt(game_path) if game_path else None
-        active_fix_id = active_receipt.get("fix_id") if active_receipt else None
+        applied_receipts = {}
+        if game_path:
+            for r in FixManager.get_all_receipts(game_path):
+                fid = str(r.get("fix_id") or "")
+                if fid:
+                    applied_receipts[fid] = r
 
         for fix in fixes_list:
             card = QFrame()
@@ -234,7 +238,8 @@ def init_luafix_tab(dialog) -> None:
             action_row = QHBoxLayout()
             action_row.addStretch()
 
-            is_this_applied = (active_fix_id == fix.get("id"))
+            fix_id = str(fix.get("id"))
+            is_this_applied = fix_id in applied_receipts
 
             if is_this_applied:
                 applied_badge = QLabel("✓ Applied")
@@ -265,7 +270,9 @@ def init_luafix_tab(dialog) -> None:
                     }
                     QPushButton:hover { background: rgba(251, 191, 36, 0.28); }
                 """)
-                restore_btn.clicked.connect(lambda _c, gp=game_path, fid=fix.get("id"): on_restore_fix_clicked(gp, fid))
+                restore_btn.clicked.connect(
+                    lambda _c, gp=game_path, fid=fix_id, ft=title_text: on_restore_fix_clicked(gp, fid, ft)
+                )
                 action_row.addWidget(restore_btn)
             else:
                 apply_btn = QPushButton("Apply Fix")
@@ -282,13 +289,15 @@ def init_luafix_tab(dialog) -> None:
                     }
                     QPushButton:hover { background: #2563eb; }
                 """)
-                apply_btn.clicked.connect(lambda _c, f=fix, gp=game_path: on_apply_fix_clicked(f, gp))
+                apply_btn.clicked.connect(
+                    lambda _c, f=fix, gp=game_path, b=apply_btn: on_apply_fix_clicked(f, gp, b)
+                )
                 action_row.addWidget(apply_btn)
 
             c_lay.addLayout(action_row)
             dialog.luafix_content_box.addWidget(card)
 
-    def on_apply_fix_clicked(fix, game_path):
+    def on_apply_fix_clicked(fix, game_path, btn=None):
         if not game_path or not Path(game_path).is_dir():
             ThemedMessageBox.critical(dialog, "Error", f"Game directory not found at:\n{game_path}")
             return
@@ -328,7 +337,11 @@ def init_luafix_tab(dialog) -> None:
         if confirm != ThemedMessageBox.StandardButton.Yes:
             return
 
-        # Download the fix with progress dialog
+        # Disable button during download to prevent double-invocations
+        if btn is not None:
+            btn.setEnabled(False)
+
+        # Download the fix with modal progress dialog
         orig_title = dialog.windowTitle()
         from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
 
@@ -339,6 +352,7 @@ def init_luafix_tab(dialog) -> None:
             maximum=100,
             parent=dialog,
         )
+        dl_dialog.setWindowModality(Qt.WindowModality.WindowModal)
         dl_dialog.setWindowTitle("Downloading Fix")
         dl_dialog.show()
         QApplication.processEvents()
@@ -361,6 +375,8 @@ def init_luafix_tab(dialog) -> None:
             )
         finally:
             dl_dialog.close()
+            if btn is not None:
+                btn.setEnabled(True)
 
         if not zip_path:
             ThemedMessageBox.critical(dialog, "Download Failed", f"Could not download fix:\n{err}")
@@ -372,20 +388,12 @@ def init_luafix_tab(dialog) -> None:
             dialog, zip_path, fix_title, game_name, game_path=game_path
         )
 
-        # User cancelled preview
+        # User cancelled preview — preserve cached zip archive for instant reuse!
         if selected_files is None:
-            try:
-                Path(zip_path).unlink(missing_ok=True)
-            except Exception as e:
-                logger.debug(f"[LuaFix] Could not delete temp zip {zip_path}: {e}")
             return
 
-        # If user selected nothing, skip
+        # If user selected nothing, skip (preserve cached archive)
         if not selected_files:
-            try:
-                Path(zip_path).unlink(missing_ok=True)
-            except Exception as e:
-                logger.debug(f"[LuaFix] Could not delete temp zip {zip_path}: {e}")
             ThemedMessageBox.information(
                 dialog,
                 "No Files Selected",
@@ -413,7 +421,7 @@ def init_luafix_tab(dialog) -> None:
                 progress_cb=progress_cb,
             )
 
-            # Clean up downloaded zip
+            # Clean up downloaded zip from cache once applied
             try:
                 Path(zip_path).unlink(missing_ok=True)
             except Exception as e:
@@ -431,16 +439,27 @@ def init_luafix_tab(dialog) -> None:
                 dialog.setWindowTitle(orig_title)
             QApplication.restoreOverrideCursor()
 
-    def on_restore_fix_clicked(game_path, fix_id=None):
-        confirm = ThemedMessageBox.question(
+    def on_restore_fix_clicked(game_path, fix_id=None, fix_title="Fix"):
+        game_name = dialog.game_data.get("game_name", "Unknown Game")
+        preview_data = FixManager.preview_restore(game_path, fix_id=fix_id)
+        if not preview_data.get("receipt"):
+            ThemedMessageBox.critical(
+                dialog,
+                "Restore Error",
+                preview_data.get("error") or "No active fix receipt found in game directory."
+            )
+            return
+
+        # Show restore preview dialog detailing actions, backups, and any conflicts
+        confirmed = show_restore_preview_dialog(
             dialog,
-            "Restore Fix",
-            "Are you sure you want to restore this fix?\n\n"
-            "All modified game files will be restored to their original state.",
-            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
-            ThemedMessageBox.StandardButton.No,
+            game_path=game_path,
+            fix_id=str(fix_id),
+            fix_title=preview_data.get("fix_title") or fix_title,
+            game_name=game_name,
+            preview_data=preview_data,
         )
-        if confirm != ThemedMessageBox.StandardButton.Yes:
+        if not confirmed:
             return
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
@@ -448,7 +467,7 @@ def init_luafix_tab(dialog) -> None:
             ok, msg = FixManager.remove_fix(game_path, fix_id=fix_id)
             if ok:
                 ThemedMessageBox.information(dialog, "Fix Restored", msg)
-                load_fixes()
+                load_fixes(force_refresh=True)
             else:
                 ThemedMessageBox.critical(dialog, "Restore Failed", msg)
         finally:

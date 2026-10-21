@@ -199,10 +199,6 @@
     "broad": 3,
     "narrow": 0
   },
-  "ui/dialogs/game_details/luafix_tab.py": {
-    "broad": 0,
-    "narrow": 1
-  },
   "ui/dialogs/game_details/tools_tab.py": {
     "broad": 2,
     "narrow": 0

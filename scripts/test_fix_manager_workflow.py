@@ -45,8 +45,8 @@ class TestFixManagerWorkflow(unittest.TestCase):
     def tearDown(self):
         self.test_dir.cleanup()
 
-    def _create_fix_zip(self, files: dict) -> Path:
-        zip_path = self.root / "fix.zip"
+    def _create_fix_zip(self, files: dict, filename: str = "fix.zip") -> Path:
+        zip_path = self.root / filename
         with zipfile.ZipFile(zip_path, "w") as zf:
             for rel_path, content in files.items():
                 if isinstance(content, str):
@@ -255,10 +255,126 @@ class TestFixManagerWorkflow(unittest.TestCase):
         self.assertEqual(checked_count, 3)
 
         # Test apply collection
-        dlg._list_widgets[2]._cb.setChecked(False) # uncheck readme.txt
+        dlg._list_widgets[2]._cb.setChecked(False)  # uncheck readme.txt
         dlg._on_apply()
         self.assertEqual(dlg.selected_files, {"bin/game.exe", "new_file.dll"})
+
+    def test_preview_restore_and_preflight_conflict(self):
+        """Test preview_restore dry-run and preflight conflict blocking."""
+        zip_path = self._create_fix_zip({
+            "bin/game.exe": b"FIXED_EXE_V2",
+            "fix_overlay.dll": b"NEW_OVERLAY",
+        })
+        ok, msg = FixManager.apply_fix(
+            game_path=self.game_dir,
+            appid="1000",
+            fix_id="preview_test_fix",
+            fix_title="Preview Test",
+            zip_path=zip_path,
+        )
+        self.assertTrue(ok)
+
+        # 1. Clean preview
+        pre = FixManager.preview_restore(self.game_dir, "preview_test_fix")
+        self.assertTrue(pre["can_restore"])
+        self.assertEqual(len(pre["conflicts"]), 0)
+        self.assertEqual(pre["total_files"], 2)
+
+        # 2. Introduce conflict by editing file externally
+        self.orig_bin.write_bytes(b"EXTERNALLY_ALTERED_CONTENT")
+
+        # 3. Preview should report conflict
+        pre_conflict = FixManager.preview_restore(self.game_dir, "preview_test_fix")
+        self.assertFalse(pre_conflict["can_restore"])
+        self.assertIn("bin/game.exe", pre_conflict["conflicts"])
+
+        # 4. remove_fix should abort without modifying any files
+        ok_rem, msg_rem = FixManager.remove_fix(self.game_dir, "preview_test_fix")
+        self.assertFalse(ok_rem)
+        self.assertIn("Conflict detected", msg_rem)
+        # Verify overlay is STILL present (zero files modified on abort)
+        self.assertTrue((self.game_dir / "fix_overlay.dll").exists())
+
+    def test_multi_fix_per_fix_restore(self):
+        """Test that multiple fixes can be recorded and restored independently."""
+        zip1 = self._create_fix_zip({"mod1.dll": b"MOD1_DATA"}, "fix1.zip")
+        zip2 = self._create_fix_zip({"mod2.dll": b"MOD2_DATA"}, "fix2.zip")
+
+        ok1, _ = FixManager.apply_fix(self.game_dir, "1000", "fix_one", "Fix 1", zip1)
+        ok2, _ = FixManager.apply_fix(self.game_dir, "1000", "fix_two", "Fix 2", zip2)
+        self.assertTrue(ok1)
+        self.assertTrue(ok2)
+
+        receipts = FixManager.get_all_receipts(self.game_dir)
+        fix_ids = {r["fix_id"] for r in receipts}
+        self.assertEqual(fix_ids, {"fix_one", "fix_two"})
+
+        # Remove Fix 1 only
+        ok_rem1, _ = FixManager.remove_fix(self.game_dir, fix_id="fix_one")
+        self.assertTrue(ok_rem1)
+        self.assertFalse((self.game_dir / "mod1.dll").exists())
+        self.assertTrue((self.game_dir / "mod2.dll").exists())
+
+        remaining = FixManager.get_all_receipts(self.game_dir)
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["fix_id"], "fix_two")
+
+    def test_restore_preview_dialog_ui(self):
+        """Test FixPreviewDialog in restore mode renders and handles filter buttons."""
+        preview_data = {
+            "fix_id": "test_restore",
+            "fix_title": "Test Restore Fix",
+            "files": [
+                {"relative_path": "bin/game.exe", "action": "revert", "status": "ok", "size": 1024},
+                {"relative_path": "extra.dll", "action": "delete", "status": "ok", "size": 512},
+                {"relative_path": "modded.cfg", "action": "revert", "status": "conflict", "conflict_reason": "Modified", "size": 128},
+            ],
+            "conflicts": ["modded.cfg"],
+            "can_restore": False,
+            "has_legacy_files": False,
+            "revert_count": 2,
+            "delete_count": 1,
+        }
+
+        dlg = FixPreviewDialog(
+            parent=None,
+            fix_title="Test Restore Fix",
+            game_name="Test Game",
+            game_path=self.game_dir,
+            mode="restore",
+            preview_data=preview_data,
+        )
+        self.assertEqual(len(dlg._all_files), 3)
+        # Action button should be disabled due to conflict
+        self.assertFalse(dlg.action_btn.isEnabled())
+
+        # Test filter pill click
+        dlg._on_filter_pill_clicked("delete")
+        visible_paths = [w._file_info["relative_path"] for w in dlg._list_widgets if not w.isHidden()]
+        self.assertEqual(visible_paths, ["extra.dll"])
+
+
+class TestVersionHelpers(unittest.TestCase):
+    def test_version_parsing_and_comparison(self):
+        from utils.version import parse_version, extract_semver, get_effective_update_channel
+
+        self.assertEqual(extract_semver("v3.0.0"), "3.0.0")
+        self.assertEqual(extract_semver("20261021+ASSella-3.0.0"), "3.0.0")
+        self.assertEqual(extract_semver("v3.1.0-beta.1"), "3.1.0-beta.1")
+
+        # Stable release > RC > Beta > Canary
+        self.assertGreater(parse_version("3.0.0"), parse_version("3.0.0-rc1"))
+        self.assertGreater(parse_version("3.0.0-rc1"), parse_version("3.0.0-beta.1"))
+        self.assertGreater(parse_version("3.0.0-beta.1"), parse_version("3.0.0-canary.1"))
+        self.assertGreater(parse_version("3.0.1"), parse_version("3.0.0"))
+
+        # Channel resolution
+        self.assertEqual(get_effective_update_channel("stable", "3.0.0"), "stable")
+        self.assertEqual(get_effective_update_channel("", "3.0.0-canary.1"), "canary")
+        self.assertEqual(get_effective_update_channel("", "3.0.0-beta.2"), "beta")
+        self.assertEqual(get_effective_update_channel("", "3.0.0"), "stable")
 
 
 if __name__ == "__main__":
     unittest.main()
+

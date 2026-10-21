@@ -262,8 +262,8 @@ def format_depot_row_label(
 ) -> str:
     """
     Builds clean, structured depot description string with tags:
-    Tag order: [OS] [ARCH] [LANG] [DLC]  Depot Name
-    e.g. [WINDOWS] [x64] [EN] [DLC]  Metro 2033 Redux Content
+    Tag order: [OS] [ARCH] [DLC] [LANG]  Depot Name
+    e.g. [WINDOWS] [x64] [DLC] [EN]  Metro 2033 Redux Content
     """
     if not isinstance(depot_data, dict):
         depot_data = {}

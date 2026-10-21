@@ -45,7 +45,7 @@ from utils.web_server import WebServerManager, get_local_ip
 from utils.settings import get_settings
 from utils.task_runner import TaskRunner
 from datetime import datetime, timezone
-from utils.version import app_version
+from utils.version import app_version, check_for_updates, extract_semver
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +54,6 @@ logger = logging.getLogger(__name__)
 # a short wait returns while the dialog is still open, which silently skips the
 # game while leaving a stale dialog on screen.
 DIALOG_WAIT_SECONDS = 300
-
-
-def _extract_semver(raw: str) -> str:
-    """Strip build-date prefix (e.g. '20260608+ASSella-') returning just the version tag."""
-    # Format: YYYYMMDD+ASSella-<version>  OR  <version>
-    if "+ASSella-" in raw:
-        return raw.split("+ASSella-", 1)[1].strip()
-    return raw.strip()
 
 
 class MainWindow(QMainWindow):
@@ -2424,127 +2416,28 @@ class MainWindow(QMainWindow):
         self._tool_update_status = "checking"
         self.refresh_system_status()
 
-        def _parse_version(v_str: str) -> tuple:
-            import re as _re
-            v_str = v_str.lstrip('v').strip()
-            m = _re.match(r'^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[._-]?(dev|alpha|beta|rc|release[_-]?candidate|hotfix|testing|canary)(\d*)|\-([a-zA-Z0-9.]+))?$', v_str, _re.IGNORECASE)
-            if m:
-                major = int(m.group(1) or 0)
-                minor = int(m.group(2) or 0)
-                patch = int(m.group(3) or 0)
-                pre_type = m.group(4) or ""
-                pre_num_str = m.group(5) or ""
-                pre_extra = m.group(6) or ""
-                pre_weights = {"hotfix": 1, "rc": -1, "release_candidate": -1, "releasecandidate": -1, "beta": -2, "alpha": -3, "dev": -4, "testing": -4, "canary": -5}
-                if pre_type:
-                    norm_type = pre_type.lower().replace("-", "_")
-                    pre_val = pre_weights.get(norm_type, 1 if "hotfix" in norm_type else -4)
-                    pre_num = int(pre_num_str) if pre_num_str else 1
-                elif pre_extra:
-                    if "hotfix" in pre_extra.lower():
-                        hm = _re.search(r'\d+', pre_extra)
-                        pre_val = 1
-                        pre_num = int(hm.group(0)) if hm else 1
-                    else:
-                        pre_val = -4
-                        pre_num = 0
-                else:
-                    pre_val = 0
-                    pre_num = 0
-                return (major, minor, patch, pre_val, pre_num)
-            return (0, 0, 0, 0, 0)
-
         def _check_sync():
             status = "offline"
             remote_clean = None
             try:
-                import json
-                local_clean = _extract_semver(app_version)
-
                 configured_channel = self.settings.value("update_channel", "").strip().lower()
-                if configured_channel not in ("stable", "beta", "canary"):
-                    if any(x in local_clean.lower() for x in ("canary", "testing")):
-                        configured_channel = "canary"
-                    elif any(x in local_clean.lower() for x in ("beta", "dev", "rc")):
-                        configured_channel = "beta"
+                res = check_for_updates(configured_channel=configured_channel, current_version=app_version)
+                status = res["status"]
+                remote_clean = res["remote_version"]
+                if not configured_channel or configured_channel not in ("stable", "beta", "canary"):
+                    self.settings.setValue("update_channel", res["channel"])
+
+                if status == "update_available":
+                    if res.get("is_cross_channel"):
+                        logger.info(
+                            f"Cross-channel update available: {remote_clean} (channel: {res['channel']}, current: {res['local_version']})"
+                        )
                     else:
-                        configured_channel = "stable"
-                    self.settings.setValue("update_channel", configured_channel)
-
-                # 1. Primary check: GitHub Releases API (detects full releases + pre-releases with AppImage)
-                try:
-                    api_url = "https://api.github.com/repos/niwia/ASSella/releases"
-                    req = urllib.request.Request(
-                        api_url,
-                        headers={"User-Agent": "ASSella-Updater", "Accept": "application/vnd.github+json"}
-                    )
-                    with urllib.request.urlopen(req, timeout=10) as response:
-                        releases = json.loads(response.read().decode("utf-8"))
-                        for r in releases:
-                            tag = str(r.get("tag_name", "")).strip()
-                            tag_lower = tag.lower()
-                            is_pre = bool(r.get("prerelease", False))
-                            is_canary = any(x in tag_lower for x in ("canary", "testing"))
-                            is_beta = any(x in tag_lower for x in ("beta", "dev", "rc")) and not is_canary
-                            is_stable = not is_canary and not is_beta and not is_pre
-
-                            if configured_channel == "stable" and not is_stable:
-                                continue
-                            elif configured_channel == "beta" and not is_beta and not is_stable:
-                                continue
-
-                            assets = [a.get("name", "") for a in r.get("assets", []) if isinstance(a, dict)]
-                            has_appimage = any(
-                                a.lower().endswith(".appimage")
-                                and not a.lower().endswith(".zsync")
-                                and not a.lower().endswith(".sha256")
-                                for a in assets
-                            )
-
-                            if has_appimage:
-                                remote_clean = _extract_semver(tag)
-                                break
-                except Exception as api_err:
-                    logger.debug(f"GitHub Releases API check error: {api_err}")
-
-                # 2. Fallback check: raw version file on GitHub branch
-                if not remote_clean:
-                    branch = configured_channel if configured_channel in ("beta", "canary") else "main"
-                    url = f"https://raw.githubusercontent.com/niwia/ASSella/{branch}/src/res/version"
-                    logger.info(f"Checking for tool updates from raw branch: {branch}")
-                    req = urllib.request.Request(
-                        url,
-                        headers={"User-Agent": "ASSella-Updater"}
-                    )
-                    with urllib.request.urlopen(req, timeout=10) as response:
-                        remote_raw = response.read().decode("utf-8").strip()
-                        remote_clean = _extract_semver(remote_raw)
-
-                logger.info(
-                    f"Tool update check: channel='{configured_channel}', remote='{remote_clean}', local='{local_clean}'"
-                )
-                if remote_clean:
-                    is_local_canary = any(x in local_clean.lower() for x in ("canary", "testing", "devtest"))
-                    is_local_beta = any(x in local_clean.lower() for x in ("beta", "dev", "rc")) and not is_local_canary
-                    is_local_stable = not is_local_canary and not is_local_beta
-
-                    channel_mismatch = (
-                        (configured_channel == "stable" and not is_local_stable)
-                        or (configured_channel == "beta" and not is_local_beta)
-                        or (configured_channel == "canary" and not is_local_canary)
-                    )
-
-                    if channel_mismatch and remote_clean != local_clean:
-                        logger.info(f"Cross-channel update available: {remote_clean} (channel: {configured_channel}, current: {local_clean})")
-                        status = "update_available"
-                    elif _parse_version(remote_clean) > _parse_version(local_clean):
-                        logger.info(f"Tool update available: {remote_clean} (current: {local_clean})")
-                        status = "update_available"
-                    else:
-                        logger.info(f"Tool is up to date ({local_clean})")
-                        status = "up_to_date"
+                        logger.info(f"Tool update available: {remote_clean} (current: {res['local_version']})")
+                elif status == "up_to_date":
+                    logger.info(f"Tool is up to date ({res['local_version']})")
                 else:
-                    status = "offline"
+                    logger.debug(f"Tool update check offline/unresolved: {res.get('error')}")
             except Exception as e:
                 logger.warning(f"Failed to check tool updates from GitHub: {e}")
                 status = "offline"

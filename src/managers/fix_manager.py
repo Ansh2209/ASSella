@@ -419,13 +419,10 @@ class FixManager:
         if not archive.is_file():
             return False, f"Fix archive not found: {archive}"
 
-        # Check for existing fix and remove if different
+        # Check if this specific fix is already applied
         existing_receipt = cls.get_receipt(target_dir, fix_id)
         if existing_receipt:
-            if existing_receipt.get("fix_id") == fix_id:
-                return True, "This fix is already applied to the game."
-            logger.info(f"[FixManager] Removing existing fix: {existing_receipt.get('fix_id')}")
-            cls.remove_fix(target_dir)
+            return True, "This fix is already applied to the game."
 
         # ── Phase 1: PLAN ──
         if progress_cb:
@@ -548,6 +545,143 @@ class FixManager:
     # ──────────────────────────────────────────────────────────────
 
     @classmethod
+    def preview_restore(
+        cls,
+        game_path: str | Path,
+        fix_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Pre-flight analysis for restoring a fix without modifying files on disk.
+        Checks for conflicts (external modifications) and missing backups.
+        """
+        target_dir = Path(game_path)
+        if not target_dir.is_dir():
+            return {
+                "receipt": None,
+                "fix_id": str(fix_id or ""),
+                "fix_title": "",
+                "applied_at": "",
+                "files": [],
+                "conflicts": [],
+                "can_restore": False,
+                "has_legacy_files": False,
+                "total_files": 0,
+                "revert_count": 0,
+                "delete_count": 0,
+                "error": f"Game directory not found: {target_dir}",
+            }
+
+        receipt = cls.get_receipt(target_dir, fix_id)
+        if not receipt:
+            return {
+                "receipt": None,
+                "fix_id": str(fix_id or ""),
+                "fix_title": "",
+                "applied_at": "",
+                "files": [],
+                "conflicts": [],
+                "can_restore": False,
+                "has_legacy_files": False,
+                "total_files": 0,
+                "revert_count": 0,
+                "delete_count": 0,
+                "error": "No active fix receipt found in game directory.",
+            }
+
+        rec_fix_id = str(receipt.get("fix_id") or fix_id or "unknown")
+        fix_dir = cls._get_fix_dir(target_dir)
+        fix_key = cls._safe_fix_key(rec_fix_id)
+        fix_subdir = fix_dir / fix_key
+
+        planned_files = []
+        conflicts = []
+        revert_count = 0
+        delete_count = 0
+        has_legacy_files = False
+
+        for entry in receipt.get("files", []):
+            rel_path = entry.get("relative_path", "")
+            action = entry.get("action", "")
+            hash_after = entry.get("hash_after")
+            hash_before = entry.get("hash_before")
+            backup_path = entry.get("backup_path")
+
+            if hash_after is None:
+                has_legacy_files = True
+
+            dest_file = target_dir / rel_path
+            file_size = 0
+            file_status = "ok"
+            conflict_reason = None
+            display_action = "revert" if action == "modified" else "delete"
+
+            if action == "modified":
+                revert_count += 1
+                if backup_path:
+                    backup_file = fix_dir / backup_path
+                else:
+                    backup_file = fix_subdir / f"{rel_path}.bak"
+
+                if backup_file.is_file():
+                    file_size = backup_file.stat().st_size
+                elif dest_file.is_file():
+                    file_size = dest_file.stat().st_size
+
+                if dest_file.exists():
+                    if hash_after or hash_before:
+                        current_hash = cls._sha256_file(dest_file)
+                        if current_hash not in (hash_after, hash_before):
+                            file_status = "conflict"
+                            conflict_reason = "File modified externally since fix was applied"
+                            conflicts.append(rel_path)
+                    if file_status != "conflict" and not backup_file.is_file():
+                        file_status = "missing_backup"
+                        conflict_reason = "Backup file not found in .lfix directory"
+                        conflicts.append(rel_path)
+                else:
+                    if not backup_file.is_file():
+                        file_status = "missing_backup"
+                        conflict_reason = "Both game file and backup file are missing"
+                        conflicts.append(rel_path)
+
+            elif action == "added":
+                delete_count += 1
+                if dest_file.exists():
+                    file_size = dest_file.stat().st_size
+                    if hash_after:
+                        current_hash = cls._sha256_file(dest_file)
+                        if current_hash != hash_after:
+                            file_status = "conflict"
+                            conflict_reason = "Added file was modified since fix was applied"
+                            conflicts.append(rel_path)
+                else:
+                    display_action = "already_removed"
+
+            planned_files.append({
+                "relative_path": rel_path,
+                "action": display_action,
+                "status": file_status,
+                "conflict_reason": conflict_reason,
+                "size": file_size,
+                "has_hash": hash_after is not None,
+            })
+
+        return {
+            "receipt": receipt,
+            "fix_id": rec_fix_id,
+            "fix_title": receipt.get("fix_title", "Fix"),
+            "applied_at": receipt.get("applied_at", ""),
+            "files": planned_files,
+            "conflicts": conflicts,
+            "can_restore": len(conflicts) == 0,
+            "has_legacy_files": has_legacy_files,
+            "total_files": len(planned_files),
+            "revert_count": revert_count,
+            "delete_count": delete_count,
+            "error": None,
+        }
+
+    @classmethod
     def remove_fix(
         cls,
         game_path: str | Path,
@@ -556,58 +690,52 @@ class FixManager:
     ) -> Tuple[bool, str]:
         """
         Remove an applied fix, restoring original files and cleaning up.
-        Uses SHA-256 hashes for conflict detection.
+        Performs pre-flight verification before modifying ANY file on disk.
         """
         target_dir = Path(game_path)
         if not target_dir.is_dir():
             return False, f"Game directory not found: {target_dir}"
 
-        # Find the receipt
-        receipt = cls.get_receipt(target_dir, fix_id)
-        if not receipt:
-            return False, "No active fix receipt found in game directory."
+        # 1. Pre-flight check: dry-run conflict and backup verification
+        preflight = cls.preview_restore(target_dir, fix_id)
+        if not preflight.get("receipt"):
+            return False, preflight.get("error") or "No active fix receipt found in game directory."
 
-        fix_id = receipt.get("fix_id")
+        if not preflight.get("can_restore"):
+            conflicts = preflight.get("conflicts", [])
+            total = preflight.get("total_files", 0)
+            sample = conflicts[0] if conflicts else "unknown"
+            return False, (
+                f"Conflict detected on {len(conflicts)} of {total} file(s) (e.g. '{sample}'). "
+                f"File was modified externally after the fix was applied. "
+                f"No changes were made to game files. Backups were preserved."
+            )
+
+        if preflight.get("has_legacy_files"):
+            logger.warning(
+                f"[FixManager] Restoring legacy fix '{preflight.get('fix_id')}' without post-install hashes; "
+                f"restoring files directly from backup."
+            )
+
+        rec_fix_id = preflight["fix_id"]
         fix_dir = cls._get_fix_dir(target_dir)
-        fix_key = cls._safe_fix_key(fix_id)
+        fix_key = cls._safe_fix_key(rec_fix_id)
         fix_subdir = fix_dir / fix_key
-        
+        receipt = preflight["receipt"]
+
         restored_count = 0
         deleted_count = 0
-        conflicts = 0
         errors = 0
-        conflict_files = []
 
         try:
             for entry in receipt.get("files", []):
                 rel_path = entry.get("relative_path")
                 action = entry.get("action")
-                hash_after = entry.get("hash_after")
-                hash_before = entry.get("hash_before")
                 backup_path = entry.get("backup_path")
-                
                 dest_file = target_dir / rel_path
-                if not dest_file.exists():
-                    # If modified file was missing, try restoring from backup
-                    if action == "modified" and backup_path:
-                        backup_file = fix_dir / backup_path
-                        if backup_file.is_file():
-                            dest_file.parent.mkdir(parents=True, exist_ok=True)
-                            shutil.copy2(backup_file, dest_file)
-                            restored_count += 1
-                    continue
 
                 try:
                     if action == "modified":
-                        # Check for conflicts
-                        if hash_after or hash_before:
-                            current_hash = cls._sha256_file(dest_file)
-                            if current_hash not in (hash_after, hash_before):
-                                conflicts += 1
-                                conflict_files.append(rel_path)
-                                continue
-                        
-                        # Restore from backup
                         if backup_path:
                             backup_file = fix_dir / backup_path
                         else:
@@ -619,22 +747,11 @@ class FixManager:
                             restored_count += 1
                             if progress_cb:
                                 progress_cb(f"Restoring: {Path(rel_path).name}")
-                        else:
+                        elif not dest_file.exists():
                             errors += 1
 
                     elif action == "added":
-                        # Only delete if we wrote it (hash match) or if no hash info recorded
-                        if hash_after:
-                            current_hash = cls._sha256_file(dest_file)
-                            if current_hash == hash_after:
-                                dest_file.unlink()
-                                deleted_count += 1
-                                if progress_cb:
-                                    progress_cb(f"Removing: {Path(rel_path).name}")
-                            else:
-                                conflicts += 1
-                                conflict_files.append(rel_path)
-                        else:
+                        if dest_file.exists():
                             dest_file.unlink()
                             deleted_count += 1
                             if progress_cb:
@@ -644,14 +761,10 @@ class FixManager:
                     logger.warning(f"[FixManager] Error handling {rel_path}: {e}")
                     errors += 1
 
-            if conflicts > 0:
-                # IMPORTANT: DO NOT delete backups or record on conflict!
-                return False, f"Conflict detected on {len(conflict_files)} file(s) (e.g. '{conflict_files[0]}'). Another fix or update changed the file. Backups were preserved."
-
             # Clean up backup directory and record
             if fix_subdir.is_dir():
                 shutil.rmtree(fix_subdir, ignore_errors=True)
-            
+
             record_path = fix_dir / f"{fix_key}.json"
             if record_path.exists():
                 record_path.unlink()
@@ -664,12 +777,10 @@ class FixManager:
                 logger.debug(f"[FixManager] Could not remove empty fix directory {fix_dir}: {e}")
 
             # Build result message
-            msg_parts = [f"Fix restored: {restored_count} restored, {deleted_count} deleted"]
+            msg_parts = [f"Fix restored: {restored_count} file(s) restored, {deleted_count} file(s) removed"]
             if errors > 0:
-                msg_parts.append(f"({errors} errors)")
-            msg = " ".join(msg_parts)
-            
-            return True, msg
+                msg_parts.append(f"({errors} warnings)")
+            return True, " ".join(msg_parts)
 
         except Exception as e:
             logger.error(f"[FixManager] Error removing fix: {e}", exc_info=True)
