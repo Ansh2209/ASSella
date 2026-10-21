@@ -64,7 +64,9 @@ class ManualRollbackDialog(QDialog):
         self.should_pin_build = True
 
         self.setWindowTitle(f"Manual Rollback — {game_name or f'App {self.appid}'}")
-        self.setFixedSize(480, 360)
+        # The dialog grows with its content; a fixed height squeezed the
+        # layout until the labels and inputs overlapped.
+        self.setMinimumWidth(520)
         self.setModal(True)
         self._init_ui()
 
@@ -136,17 +138,17 @@ class ManualRollbackDialog(QDialog):
             }}
         """)
 
-        layout = install_themed_frame(self, margins=(24, 20, 24, 20), spacing=14)
+        layout = install_themed_frame(self, margins=(24, 18, 24, 18), spacing=12)
 
-        # Title
-        title_lbl = QLabel("Manual Version Rollback")
-        title_lbl.setStyleSheet(f"font-size: 13pt; font-weight: bold; color: {self.accent_color};")
-        layout.addWidget(title_lbl)
-
-        desc_lbl = QLabel(f"Download a specific previous build for <b>{self.game_name}</b> (AppID: {self.appid}) using official Steam depot manifests.")
-        desc_lbl.setWordWrap(True)
-        desc_lbl.setStyleSheet("color: rgba(255, 255, 255, 0.65); font-size: 8.5pt;")
-        layout.addWidget(desc_lbl)
+        # Header: one line, the game this rollback applies to.
+        target_name = self.game_name or f"App {self.appid}"
+        header_lbl = QLabel(
+            f"Download a specific version of: "
+            f"<b><span style='color:{self.accent_color}'>{target_name}</span></b>"
+        )
+        header_lbl.setWordWrap(True)
+        header_lbl.setStyleSheet("color: #E2E2E6; font-size: 11pt;")
+        layout.addWidget(header_lbl)
 
         layout.addWidget(_make_thin_separator())
 
@@ -168,6 +170,7 @@ class ManualRollbackDialog(QDialog):
                 self.depot_combo.addItem(label, str(d_id))
         else:
             self.depot_combo.addItem(f"Depot {self.appid}", str(self.appid))
+        self._fit_depot_combo()
         depot_row.addWidget(self.depot_combo)
         layout.addLayout(depot_row)
 
@@ -196,8 +199,11 @@ class ManualRollbackDialog(QDialog):
         layout.addLayout(mid_row)
 
         # Pin build checkbox
-        self.pin_checkbox = QCheckBox("Pin build (prevent ACCELA auto-updater from overriding this version)")
+        self.pin_checkbox = QCheckBox("Pin build (stop the ACCELA auto-updater overriding it)")
         self.pin_checkbox.setChecked(True)
+        self.pin_checkbox.setToolTip(
+            "Keeps ACCELA from updating this game past the build you roll back to."
+        )
         layout.addWidget(self.pin_checkbox)
 
         layout.addSpacing(6)
@@ -241,6 +247,21 @@ class ManualRollbackDialog(QDialog):
         btn_row.addWidget(self.submit_btn)
 
         layout.addLayout(btn_row)
+
+        # Size the dialog to the content it just got, so the fields keep their
+        # spacing instead of being squeezed into each other.
+        self.adjustSize()
+
+    def _fit_depot_combo(self) -> None:
+        """Give the depot combo room for the longest depot label."""
+        fm = self.depot_combo.fontMetrics()
+        longest = max(
+            (fm.horizontalAdvance(self.depot_combo.itemText(i))
+             for i in range(self.depot_combo.count())),
+            default=0,
+        )
+        # +48 leaves room for the drop-down arrow and the frame padding.
+        self.depot_combo.setMinimumWidth(min(longest + 48, 640))
 
     def _on_submit(self):
         depot_data = self.depot_combo.currentData()
