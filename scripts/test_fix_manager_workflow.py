@@ -427,6 +427,32 @@ class TestFixManagerWorkflow(unittest.TestCase):
         self.assertEqual(self.orig_bin.read_bytes(), b"ORIGINAL_EXE_V1")
         self.assertIsNone(FixManager.get_receipt(self.game_dir, "force_fix"))
 
+    def test_force_restore_keeps_chain_of_custody(self):
+        """Force-restore must still hand the genuine original to the fix that owns the file."""
+        zip1 = self._create_fix_zip({"bin/game.exe": b"FIX1_BINARY_V2"}, "forcefix1.zip")
+        zip2 = self._create_fix_zip({"bin/game.exe": b"FIX2_BINARY_V3"}, "forcefix2.zip")
+
+        ok1, msg1 = FixManager.apply_fix(self.game_dir, "1000", "fix_one", "Fix 1", zip1)
+        ok2, msg2 = FixManager.apply_fix(self.game_dir, "1000", "fix_two", "Fix 2", zip2)
+        self.assertTrue(ok1, f"apply fix 1 failed: {msg1}")
+        self.assertTrue(ok2, f"apply fix 2 failed: {msg2}")
+        self.assertEqual(self.orig_bin.read_bytes(), b"FIX2_BINARY_V3")
+
+        # Force restore of the older fix overwrites the file with the genuine original
+        ok_rem1, msg_rem1 = FixManager.remove_fix(self.game_dir, fix_id="fix_one", force=True)
+        self.assertTrue(ok_rem1, f"force remove fix 1 failed: {msg_rem1}")
+        self.assertEqual(self.orig_bin.read_bytes(), b"ORIGINAL_EXE_V1")
+
+        # Fix 2's backup must now hold the genuine original, not fix 1's intermediate output
+        fix_two_bak = self.game_dir / FIX_DIR / "fix_two" / "bin" / "game.exe.bak"
+        self.assertTrue(fix_two_bak.is_file())
+        self.assertEqual(fix_two_bak.read_bytes(), b"ORIGINAL_EXE_V1")
+
+        # Restoring fix 2 afterwards must land on the original, not on a half-reverted state
+        ok_rem2, msg_rem2 = FixManager.remove_fix(self.game_dir, fix_id="fix_two", force=True)
+        self.assertTrue(ok_rem2, f"force remove fix 2 failed: {msg_rem2}")
+        self.assertEqual(self.orig_bin.read_bytes(), b"ORIGINAL_EXE_V1")
+
 
 class TestVersionHelpers(unittest.TestCase):
     def test_version_parsing_and_comparison(self):
@@ -472,6 +498,38 @@ class TestVersionHelpers(unittest.TestCase):
         self.assertEqual(get_branch_from_version("v2.7.0beta"), "beta")
         self.assertEqual(get_branch_from_version("2.6.2-hotfix1"), "main")
         self.assertEqual(get_branch_from_version("v3.0.0"), "main")
+
+    def test_build_stamp_normalization(self):
+        """Dated build stamps must share one canonical scale and order chronologically."""
+        from utils.version import _normalize_build_num, parse_version
+
+        # 9-digit DDMMYYNNN (the format ASSella canary/RC builds use)
+        self.assertEqual(_normalize_build_num("051026003"), 20261005003)
+        self.assertEqual(_normalize_build_num("111026001"), 20261011001)
+        self.assertEqual(_normalize_build_num("010127001"), 20270101001)
+
+        # 8-digit stamps are ambiguous; both layouts land on the same canonical scale
+        self.assertEqual(_normalize_build_num("20261021"), 20261021000)
+        self.assertEqual(_normalize_build_num("05102026"), 20261005000)
+        # Day 20-31 must not be mistaken for a YYYYMMDD year
+        self.assertEqual(_normalize_build_num("20122026"), 20261220000)
+        self.assertEqual(_normalize_build_num("30092026"), 20260930000)
+        self.assertEqual(_normalize_build_num("15112026"), 20261115000)
+
+        # Non-date numbers keep their plain numeric value
+        self.assertEqual(_normalize_build_num("1"), 1)
+        self.assertEqual(_normalize_build_num("123456789"), 123456789)
+
+        # Chronological ordering across layouts
+        self.assertGreater(
+            parse_version("3.0.0-beta.20122026"), parse_version("3.0.0-beta.05102026")
+        )
+        self.assertGreater(
+            parse_version("3.0.0-beta.20261021"), parse_version("3.0.0-beta.051026003")
+        )
+        self.assertGreater(
+            parse_version("3.0.0testing051026003"), parse_version("3.0.0testing300926012")
+        )
 
 
 if __name__ == "__main__":

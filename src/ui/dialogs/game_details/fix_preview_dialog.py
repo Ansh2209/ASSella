@@ -781,11 +781,22 @@ class FixPreviewDialog(QDialog):
         """Confirm and accept dialog in restore mode."""
         conflicts = self.preview_data.get("conflicts", [])
         if conflicts:
+            managed = [
+                f for f in self.preview_data.get("files", [])
+                if f.get("status") == "managed_by_other_fix"
+            ]
+            managed_note = ""
+            if managed:
+                managed_note = (
+                    f"\n\n{len(managed)} file(s) are currently owned by another applied fix "
+                    "and will be overwritten as well."
+                )
             reply = ThemedMessageBox.question(
                 self,
                 "Force Restore Despite Conflicts?",
                 f"Conflict detected on {len(conflicts)} file(s).\n\n"
-                "Restoring anyway will overwrite existing files with backups and remove added files.\n\n"
+                "Restoring anyway will overwrite existing files with backups and remove added files."
+                f"{managed_note}\n\n"
                 "Are you sure you want to proceed with Force Restore?",
                 ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
                 ThemedMessageBox.StandardButton.No,

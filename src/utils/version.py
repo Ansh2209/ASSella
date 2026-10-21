@@ -53,33 +53,44 @@ def extract_semver(raw_version: str) -> str:
 def _normalize_build_num(num_str: str) -> int:
     """
     Normalize build numbers or date-based build stamps into a monotonic comparable integer.
-    Handles:
-      - 9-digit DDMMYYNNN stamps (e.g. '051026003' -> 20261005003, '010127001' -> 20270101001)
-      - 8-digit YYYYMMDD stamps (e.g. '20261021' -> 20261021)
-      - Standard sequential integers (e.g. '1', '2')
+
+    Dated stamps are decoded onto a single canonical scale (YYYYMMDDNNN) so that the
+    different stamp encodings stay comparable with one another:
+
+      - 9-digit DDMMYYNNN (ASSella canary/RC builds): '051026003' -> 20261005003
+      - 8-digit YYYYMMDD:                             '20261021'   -> 20261021000
+      - 8-digit DDMMYYYY:                             '05102026'   -> 20261005000
+
+    8-digit stamps are ambiguous between the two layouts, so they are disambiguated by
+    validity (a plausible year plus a real month/day) rather than by prefix, which would
+    reject every DDMMYYYY stamp whose day is 20-31.
+
+    Plain sequential build numbers ('1', '2') carry no date and keep their numeric
+    value; they therefore rank below any dated stamp of the same release.
     """
     if not num_str or not num_str.isdigit():
         return 0
 
     s = num_str.strip()
+
+    def _canonical(year: int, month: int, day: int, seq: int = 0) -> int:
+        return year * 10000000 + month * 100000 + day * 1000 + seq
+
     # 9-digit DDMMYYNNN stamp used in ASSella Canary / testing / RC builds
     if len(s) == 9:
-        try:
-            dd, mm, yy, nnn = int(s[0:2]), int(s[2:4]), int(s[4:6]), int(s[6:9])
-            if 1 <= dd <= 31 and 1 <= mm <= 12:
-                year = 2000 + yy if yy < 100 else yy
-                return year * 10000000 + mm * 100000 + dd * 1000 + nnn
-        except (ValueError, IndexError):
-            pass
+        dd, mm, yy, nnn = int(s[0:2]), int(s[2:4]), int(s[4:6]), int(s[6:9])
+        if 1 <= dd <= 31 and 1 <= mm <= 12:
+            year = 2000 + yy if yy < 100 else yy
+            return _canonical(year, mm, dd, nnn)
 
-    # 8-digit DDMMYYYY (e.g. 05102026)
-    if len(s) == 8 and not s.startswith("20"):
-        try:
-            dd, mm, yyyy = int(s[0:2]), int(s[2:4]), int(s[4:8])
-            if 1 <= dd <= 31 and 1 <= mm <= 12 and yyyy >= 2020:
-                return yyyy * 10000 + mm * 100 + dd
-        except (ValueError, IndexError):
-            pass
+    # 8-digit stamps: YYYYMMDD or DDMMYYYY, disambiguated by validity
+    if len(s) == 8:
+        y1, m1, d1 = int(s[0:4]), int(s[4:6]), int(s[6:8])
+        if y1 >= 2020 and 1 <= m1 <= 12 and 1 <= d1 <= 31:
+            return _canonical(y1, m1, d1)
+        d2, m2, y2 = int(s[0:2]), int(s[2:4]), int(s[4:8])
+        if 1 <= d2 <= 31 and 1 <= m2 <= 12 and y2 >= 2020:
+            return _canonical(y2, m2, d2)
 
     try:
         return int(s)

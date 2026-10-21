@@ -803,29 +803,18 @@ class FixManager:
                 is_managed_by_other = (file_info.get("status") == "managed_by_other_fix")
 
                 try:
-                    if is_managed_by_other and not force:
-                        # Another active fix currently controls this file; leave disk file intact!
-                        preserved_count += 1
-
-                        # Transfer original backup to managing fix's backup if chained
-                        managing_fid = file_info.get("managing_fix_id")
-                        if managing_fid and backup_path:
-                            our_bak = fix_dir / backup_path
-                            managing_rec = cls.get_receipt(target_dir, managing_fid)
-                            if our_bak.is_file() and managing_rec:
-                                for mf in managing_rec.get("files", []):
-                                    if mf.get("relative_path") == rel_path and mf.get("backup_path"):
-                                        other_bak = fix_dir / mf["backup_path"]
-                                        if other_bak.is_file():
-                                            try:
-                                                shutil.copy2(our_bak, other_bak)
-                                                logger.info(
-                                                    f"[FixManager] Transferred genuine backup of {rel_path} "
-                                                    f"to managing fix '{managing_fid}'"
-                                                )
-                                            except Exception as e:
-                                                logger.debug(f"[FixManager] Failed to forward chained backup: {e}")
-                        continue
+                    if is_managed_by_other:
+                        # Another active fix currently controls this file. Hand our genuine
+                        # pre-fix backup over to it either way, so that restoring that fix
+                        # later still yields the original instead of a half-reverted state.
+                        cls._forward_backup_to_managing_fix(
+                            target_dir, fix_dir, file_info, rel_path, backup_path
+                        )
+                        if not force:
+                            # Leave the other fix's file on disk intact.
+                            preserved_count += 1
+                            continue
+                        # force=True: fall through and overwrite the file with our backup.
 
                     if action == "modified":
                         if backup_path:
@@ -879,6 +868,50 @@ class FixManager:
         except Exception as e:
             logger.error(f"[FixManager] Error removing fix: {e}", exc_info=True)
             return False, f"Error removing fix: {e}"
+
+    @classmethod
+    def _forward_backup_to_managing_fix(
+        cls,
+        target_dir: Path,
+        fix_dir: Path,
+        file_info: Dict[str, Any],
+        rel_path: str,
+        backup_path: Optional[str],
+    ) -> None:
+        """
+        Hand our genuine pre-fix backup over to the fix that currently owns the file.
+
+        When fix A and fix B both modify the same file, B's backup holds A's output.
+        Restoring A must therefore leave B's backup pointing at the real original,
+        otherwise restoring B later resurrects a half-reverted intermediate state.
+        This runs whether the file is left intact or overwritten with force=True.
+        """
+        managing_fid = file_info.get("managing_fix_id")
+        if not managing_fid or not backup_path:
+            return
+
+        our_bak = fix_dir / backup_path
+        if not our_bak.is_file():
+            return
+
+        managing_rec = cls.get_receipt(target_dir, managing_fid)
+        if not managing_rec:
+            return
+
+        for mf in managing_rec.get("files", []):
+            if mf.get("relative_path") != rel_path or not mf.get("backup_path"):
+                continue
+            other_bak = fix_dir / mf["backup_path"]
+            if not other_bak.is_file():
+                continue
+            try:
+                shutil.copy2(our_bak, other_bak)
+                logger.info(
+                    f"[FixManager] Transferred genuine backup of {rel_path} "
+                    f"to managing fix '{managing_fid}'"
+                )
+            except Exception as e:
+                logger.debug(f"[FixManager] Failed to forward chained backup: {e}")
 
     # ──────────────────────────────────────────────────────────────
     # Utility Methods
