@@ -51,6 +51,29 @@ try:
 except ImportError:
     DEPOT_BLACKLIST = set()
 
+# A DecryptionKeys line looks like:  1234567890: abcd...   # 2230763
+_KEY_LINE_RE = re.compile(r"^[ \t]*['\"]?(\d+)['\"]?[ \t]*:[ \t]*([^\r\n]*)")
+_APPID_COMMENT_RE = re.compile(r"#\s*(\d+)")
+
+
+def index_appids_in_key_comments(config_text: str) -> Dict[str, Set[str]]:
+    """Map every appid mentioned in a key comment to the keys it sits under.
+
+    The SLSsteam config can hold thousands of decryption keys. Looking for one
+    appid at a time means re-reading the file and re-scanning every key for
+    every appid, which crawls. One pass builds the whole index instead.
+    """
+    index: Dict[str, Set[str]] = {}
+    for line in config_text.splitlines():
+        match = _KEY_LINE_RE.match(line)
+        if not match:
+            continue
+        key = match.group(1)
+        for appid in _APPID_COMMENT_RE.findall(match.group(2)):
+            index.setdefault(appid, set()).add(key)
+    return index
+
+
 logger = logging.getLogger(__name__)
 
 ALL_SHARED_REDISTS: Set[str] = SHARED_REDISTS | {str(d) for d in DEPOT_BLACKLIST}
@@ -187,6 +210,15 @@ class At0mUpdateChecker(QObject):
                 cfg_keys = get_decryption_keys(cfg_path)
                 cfg_key_ids = set(str(k) for k in cfg_keys.keys())
 
+                # Read and index the config once, not once per appid.
+                cfg_text = ""
+                appid_key_index: Dict[str, Set[str]] = {}
+                try:
+                    cfg_text = cfg_path.read_text(encoding="utf-8", errors="ignore")
+                    appid_key_index = index_appids_in_key_comments(cfg_text)
+                except Exception:
+                    pass
+
                 for aid in cfg_apps:
                     aid_str = str(aid)
                     if not aid_str.isdigit() or aid_str in accela_installed or aid_str in discovered:
@@ -203,18 +235,14 @@ class At0mUpdateChecker(QObject):
                                 has_key = True
                                 break
 
-                    if not has_key:
-                        # Check comments in config.yaml for AppID reference
-                        try:
-                            cfg_text = cfg_path.read_text(encoding="utf-8", errors="ignore")
-                            for kid in cfg_key_ids:
-                                if kid in ALL_SHARED_REDISTS:
-                                    continue
-                                if re.search(rf"^[ \t]*['\"]?{re.escape(kid)}['\"]?[ \t]*:[ \t]*[^\r\n]*#{re.escape(aid_str)}", cfg_text, re.MULTILINE):
-                                    has_key = True
-                                    break
-                        except Exception:
-                            pass
+                    if not has_key and appid_key_index:
+                        # The config comments name the app a key belongs to.
+                        for kid in appid_key_index.get(aid_str, ()):  # noqa: B007
+                            if kid in ALL_SHARED_REDISTS:
+                                continue
+                            if kid in cfg_key_ids:
+                                has_key = True
+                                break
 
                     if has_key:
                         name = app_info.get("name") or f"App {aid_str}"
@@ -524,11 +552,13 @@ class At0mUpdateChecker(QObject):
                         logger.error(f"[At0mChecker] Error checking game {aid}: {e}")
 
                     self.progress.emit(idx + 1, total)
-
-                self.all_checked.emit()
             finally:
+                # The completion signal is emitted from the finally block so it
+                # fires exactly once, also when the scan aborted early. Callers
+                # use it to release whatever was queued behind this check.
                 self._is_checking = False
                 self._cancel_requested = False
+                self.all_checked.emit()
 
         threading.Thread(target=_worker, daemon=True, name="At0mUpdateCheckerThread").start()
 

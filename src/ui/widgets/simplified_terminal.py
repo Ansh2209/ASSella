@@ -282,8 +282,12 @@ class SimplifiedTerminalWidget(QWidget):
             self._stats_timer.stop()
             self._do_update_stats()
         else:
+            # A bulk update check emits a status change per game. At 120 ms
+            # that rebuilt the whole dashboard (and repainted it) more than a
+            # hundred times while the check ran; half a second keeps the
+            # pending-updates list live without flooding the paint queue.
             if not self._stats_timer.isActive():
-                self._stats_timer.start(120)
+                self._stats_timer.start(500)
 
     def _do_update_stats(self):
         if sip.isdeleted(self):

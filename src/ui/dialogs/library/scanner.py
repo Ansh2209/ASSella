@@ -60,14 +60,18 @@ class LibraryScannerMixin:
         if self._closing or not self.isVisible():
             return
 
-        # Find matching item
-        item = None
-        for i in range(self.games_list.count()):
-            it = self.games_list.item(i)
-            game_data = it.data(Qt.ItemDataRole.UserRole)
-            if game_data and game_data.get("appid") == appid:
-                item = it
-                break
+        # Find matching item. A bulk update check reports every game, so this
+        # lookup runs a few hundred times in a row: the appid index answers it
+        # without walking the whole list.
+        item = self._items_by_appid.get(str(appid))
+        if item is None:
+            # The index does not cover every row, so fall back to a scan.
+            for i in range(self.games_list.count()):
+                it = self.games_list.item(i)
+                game_data = it.data(Qt.ItemDataRole.UserRole)
+                if game_data and game_data.get("appid") == appid:
+                    item = it
+                    break
 
         if not item:
             return
