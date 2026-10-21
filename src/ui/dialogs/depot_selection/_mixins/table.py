@@ -56,7 +56,7 @@ class DepotTableMixin:
 
     def _build_config_text(self, d_id, d_data, is_first=False) -> str:
         original_desc = d_data.get("desc") or d_data.get("name") or ""
-        for p in ("[Checking]", "[Missing]", "[Recovered]", "[No Key]", "[Missing from Hubcap]", "[Unavailable on Hubcap (404)]"):
+        for p in ("[Checking]", "[Missing]", "[Recovered]", "[No Key]", "[Key Ready]", "[Missing from Hubcap]", "[Unavailable on Hubcap (404)]"):
             original_desc = original_desc.replace(p, "").strip()
         original_desc = re.sub(
             r"\s*-\s*Depot\s*" + re.escape(str(d_id)),

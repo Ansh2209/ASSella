@@ -175,6 +175,7 @@ class DepotMetadataMixin:
 
         def _worker():
             recovered = {}
+            key_states: Dict[str, str] = {}
             try:
                 from core import morrenus_api
                 logger.debug(f"[DepotSelection] Checking /contents for App {app_id_str} in background...")
@@ -193,6 +194,23 @@ class DepotMetadataMixin:
                     cached_keys = DepotKeyManager().get_depot_keys(app_id_str) or {}
                     hubcap_key_index = morrenus_api.get_hubcap_depot_keys(allow_network=True)
                     existing_key_dids = hubcap_key_index.get("existing_depot_ids", set()) if isinstance(hubcap_key_index, dict) else set()
+                    pending_key_dids = hubcap_key_index.get("pending_depot_ids", set()) if isinstance(hubcap_key_index, dict) else set()
+
+                    # What does Hubcap know about each missing depot?
+                    #   available - Hubcap holds a decryption key for it
+                    #   pending   - Hubcap knows the depot, the key is not out yet
+                    #   unknown   - Hubcap has not indexed the depot at all
+                    # The three must not be collapsed: "no key yet" and
+                    # "Hubcap does not know it" lead to different actions.
+                    key_states: Dict[str, str] = {}
+                    for did in target_dids:
+                        did_str = str(did)
+                        if did_str in existing_key_dids:
+                            key_states[did_str] = "available"
+                        elif did_str in pending_key_dids:
+                            key_states[did_str] = "pending"
+                        else:
+                            key_states[did_str] = "unknown"
 
                     # 1. Check if any missing depots lacking keys now have keys in Hubcap
                     needs_bundle_refetch = False
@@ -249,15 +267,26 @@ class DepotMetadataMixin:
             except Exception as e:
                 logger.debug(f"[DepotSelection] Background /contents check error: {e}")
             finally:
-                self._missing_contents_checked_signal.emit(recovered)
+                self._missing_contents_checked_signal.emit(
+                    {"recovered": recovered, "key_states": key_states}
+                )
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _on_missing_contents_check_finished(self, recovered: Dict[str, str]):
+    def _on_missing_contents_check_finished(self, payload: Dict):
         """Called when background /contents check finishes. Settles spinners into final disabled state."""
         self._is_checking_missing_contents = False
         if hasattr(self, "_spinner_timer") and self._spinner_timer.isActive():
             self._spinner_timer.stop()
+
+        # The payload carries the depots that came back and what Hubcap knows
+        # about the ones that did not.
+        if isinstance(payload, dict) and ("recovered" in payload or "key_states" in payload):
+            recovered = payload.get("recovered") or {}
+            key_states = payload.get("key_states") or {}
+        else:
+            recovered = payload or {}
+            key_states = {}
 
         if recovered:
             self._on_missing_depots_recovered(recovered)
@@ -270,12 +299,29 @@ class DepotMetadataMixin:
                     did_str = str(id_item.data(Qt.ItemDataRole.UserRole))
                     minfo = self.missing_depots_info.get(did_str, {})
                     hubcap_status = minfo.get("hubcap_status")
-                    if hubcap_status == "missing_key":
+                    state = key_states.get(did_str)
+
+                    if state == "available":
+                        # Hubcap holds the key, but the manifest bundle in use
+                        # is older than the key. Refetching the bundle picks it
+                        # up - that is what the recovery above does.
+                        tag = "[Key Ready]"
+                        tip = (
+                            f"Depot {did_str} has a decryption key on Hubcap. "
+                            f"Refresh the manifest bundle to pick it up."
+                        )
+                    elif state == "pending":
+                        tag = "[No Key]"
+                        tip = (
+                            f"Hubcap knows depot {did_str} but has not published "
+                            f"a decryption key yet."
+                        )
+                    elif hubcap_status == "missing_key":
                         tag = "[No Key]"
                         tip = f"Depot {did_str} has a manifest on Hubcap but lacks an AES decryption key. It cannot be downloaded."
                     else:
                         tag = "[Missing]"
-                        tip = "Checked: not available on Hubcap yet"
+                        tip = "Checked: Hubcap does not know this depot yet"
 
                     base_cfg = self._build_config_text(did_str, minfo)
                     cfg_text = f"{tag}  {base_cfg}"
