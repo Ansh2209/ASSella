@@ -22,6 +22,7 @@ from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from core.lua_tools_api import LuaToolsAPI
 from managers.fix_manager import FixManager
+from ui.dialogs.game_details.fix_preview_dialog import show_fix_preview_dialog
 from utils.qt_utils import clear_layout
 
 logger = logging.getLogger(__name__)
@@ -250,22 +251,22 @@ def init_luafix_tab(dialog) -> None:
                 """)
                 action_row.addWidget(applied_badge)
 
-                remove_btn = QPushButton("Remove Fix")
-                remove_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-                remove_btn.setStyleSheet("""
+                restore_btn = QPushButton("Restore")
+                restore_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+                restore_btn.setStyleSheet("""
                     QPushButton {
-                        background: rgba(239, 68, 68, 0.15);
-                        color: #f87171;
-                        border: 1px solid rgba(239, 68, 68, 0.35);
+                        background: rgba(251, 191, 36, 0.15);
+                        color: #fbbf24;
+                        border: 1px solid rgba(251, 191, 36, 0.35);
                         border-radius: 5px;
                         padding: 5px 12px;
                         font-size: 8.5pt;
                         font-weight: 500;
                     }
-                    QPushButton:hover { background: rgba(239, 68, 68, 0.28); }
+                    QPushButton:hover { background: rgba(251, 191, 36, 0.28); }
                 """)
-                remove_btn.clicked.connect(lambda _c, gp=game_path: on_remove_fix_clicked(gp))
-                action_row.addWidget(remove_btn)
+                restore_btn.clicked.connect(lambda _c, gp=game_path: on_restore_fix_clicked(gp, fix.get("id")))
+                action_row.addWidget(restore_btn)
             else:
                 apply_btn = QPushButton("Apply Fix")
                 apply_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -320,14 +321,14 @@ def init_luafix_tab(dialog) -> None:
             "Apply Fix",
             f"Are you sure you want to apply '{fix_title}' to {dialog.game_data.get('game_name', 'this game')}?\n\n"
             f"Archive: {fix_filename}\n"
-            "Existing game files will be backed up automatically for safe 1-click removal.",
+            "Existing game files will be backed up automatically for safe removal.",
             ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
             ThemedMessageBox.StandardButton.Yes,
         )
         if confirm != ThemedMessageBox.StandardButton.Yes:
             return
 
-        # Download & apply with progress
+        # Download the fix
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
             zip_path, err = LuaToolsAPI.download_fix_zip(fix_id, dialog.appid)
@@ -335,17 +336,67 @@ def init_luafix_tab(dialog) -> None:
                 ThemedMessageBox.critical(dialog, "Download Failed", f"Could not download fix:\n{err}")
                 return
 
+            # Show preview dialog to let user select files
+            game_name = dialog.game_data.get("game_name", "Unknown Game")
+            selected_files = show_fix_preview_dialog(
+                dialog, zip_path, fix_title, game_name
+            )
+
+            # User cancelled preview
+            if selected_files is None:
+                return
+
+            # If user selected nothing, skip
+            if not selected_files:
+                ThemedMessageBox.information(
+                    dialog,
+                    "No Files Selected",
+                    "You haven't selected any files to apply.\n\n"
+                    "No changes will be made to the game."
+                )
+                return
+
+            # Apply the fix with selected files
+            def progress_cb(msg):
+                # Update status message if the dialog has this method
+                if hasattr(dialog, 'setStatusMessage'):
+                    dialog.setStatusMessage(msg)
+                else:
+                    # Use a simple status update
+                    dialog.setWindowTitle(f"Applying Fix - {msg}")
+
             ok, msg = FixManager.apply_fix(
                 game_path=game_path,
                 appid=dialog.appid,
                 fix_id=fix_id,
                 fix_title=fix_title,
                 zip_path=zip_path,
+                selected_files=selected_files,
+                progress_cb=progress_cb,
             )
+
             if ok:
+                # Clean up downloaded zip
+                try:
+                    Path(zip_path).unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+                # Reset window title
+                if hasattr(dialog, 'setStatusMessage'):
+                    dialog.setStatusMessage("")
+                else:
+                    dialog.setWindowTitle("Apply Fix")
+
                 ThemedMessageBox.information(dialog, "Success", msg)
                 load_fixes()
             else:
+                # Reset window title
+                if hasattr(dialog, 'setStatusMessage'):
+                    dialog.setStatusMessage("")
+                else:
+                    dialog.setWindowTitle("Apply Fix")
+
                 ThemedMessageBox.critical(dialog, "Application Failed", msg)
         finally:
             QApplication.restoreOverrideCursor()
