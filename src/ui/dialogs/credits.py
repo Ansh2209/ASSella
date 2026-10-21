@@ -32,10 +32,12 @@ def _get_branch_from_version(version: str) -> str:
         tag = v.split("+assela-", 1)[1]
     else:
         tag = v
+    if "canary" in tag or "testing" in tag:
+        return "canary"
     if "rc" in tag or "beta" in tag:
         return "beta"
     if "alpha" in tag or "test" in tag or "dev" in tag:
-        return "test"
+        return "canary"
     return "main"
 
 
@@ -164,15 +166,17 @@ class CreditsDialog(QDialog):
         ver_row.setContentsMargins(0, 0, 0, 0)
         ver_row.setSpacing(8)
 
-        build_date = "03/09/2026"
+        build_date = "21/10/2026"
         ver_lbl = QLabel(f"v{app_version}  ·  {build_date}")
         ver_lbl.setStyleSheet("font-size: 11px; color: #666666;")
 
         branch = _get_branch_from_version(app_version)
         branch_colors = {
-            "beta":  ("#7B3F00", "#E07B00"),
-            "test":  ("#4A2300", "#FF8C00"),
-            "main":  ("#1a2a3a", "#4A90D9"),
+            "beta":   ("#7B3F00", "#E07B00"),
+            "canary": ("#4A2300", "#FF8C00"),
+            "test":   ("#4A2300", "#FF8C00"),
+            "main":   ("#1a2a3a", "#4A90D9"),
+            "stable": ("#1a2a3a", "#4A90D9"),
         }
         bg, fg = branch_colors.get(branch, ("#2a2a2a", "#888888"))
 
@@ -388,30 +392,91 @@ class CreditsDialog(QDialog):
 
         def _check_sync():
             try:
+                import json
                 local_clean = _extract_semver(app_version)
-                if "alpha" in local_clean.lower():
-                    branch = "alpha"
-                elif any(x in local_clean.lower() for x in ("beta", "rc")):
-                    branch = "beta"
+                configured_channel = self.settings.value("update_channel", "").strip().lower()
+                if configured_channel not in ("stable", "beta", "canary"):
+                    if any(x in local_clean.lower() for x in ("canary", "testing", "alpha")):
+                        configured_channel = "canary"
+                    elif any(x in local_clean.lower() for x in ("beta", "dev", "rc")):
+                        configured_channel = "beta"
+                    else:
+                        configured_channel = "stable"
+
+                remote_clean = None
+                # 1. Primary check: GitHub Releases API
+                try:
+                    api_url = "https://api.github.com/repos/niwia/ASSella/releases"
+                    req = urllib.request.Request(
+                        api_url,
+                        headers={"User-Agent": "ASSella-Updater", "Accept": "application/vnd.github+json"}
+                    )
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        releases = json.loads(response.read().decode("utf-8"))
+                        for r in releases:
+                            tag = str(r.get("tag_name", "")).strip()
+                            tag_lower = tag.lower()
+                            is_pre = bool(r.get("prerelease", False))
+                            is_canary = any(x in tag_lower for x in ("canary", "testing"))
+                            is_beta = any(x in tag_lower for x in ("beta", "dev", "rc")) and not is_canary
+                            is_stable = not is_canary and not is_beta and not is_pre
+
+                            if configured_channel == "stable" and not is_stable:
+                                continue
+                            elif configured_channel == "beta" and not is_beta and not is_stable:
+                                continue
+
+                            assets = [a.get("name", "") for a in r.get("assets", []) if isinstance(a, dict)]
+                            has_appimage = any(
+                                a.lower().endswith(".appimage")
+                                and not a.lower().endswith(".zsync")
+                                and not a.lower().endswith(".sha256")
+                                for a in assets
+                            )
+
+                            if has_appimage:
+                                remote_clean = _extract_semver(tag)
+                                break
+                except Exception as api_err:
+                    logger.debug(f"Credits GitHub Releases API check error: {api_err}")
+
+                # 2. Fallback check: raw version file on GitHub branch
+                if not remote_clean:
+                    branch = configured_channel if configured_channel in ("beta", "canary") else "main"
+                    url = f"https://raw.githubusercontent.com/niwia/ASSella/{branch}/src/res/version"
+                    req = urllib.request.Request(url, headers={"User-Agent": "ASSella-Updater"})
+                    with urllib.request.urlopen(req, timeout=10) as response:
+                        remote_raw = response.read().decode("utf-8").strip()
+                        remote_clean = _extract_semver(remote_raw)
+
+                if remote_clean:
+                    is_local_canary = any(x in local_clean.lower() for x in ("canary", "testing", "devtest"))
+                    is_local_beta = any(x in local_clean.lower() for x in ("beta", "dev", "rc")) and not is_local_canary
+                    is_local_stable = not is_local_canary and not is_local_beta
+
+                    channel_mismatch = (
+                        (configured_channel == "stable" and not is_local_stable)
+                        or (configured_channel == "beta" and not is_local_beta)
+                        or (configured_channel == "canary" and not is_local_canary)
+                    )
+
+                    if (channel_mismatch and remote_clean != local_clean) or (_parse_version(remote_clean) > _parse_version(local_clean)):
+                        QMetaObject.invokeMethod(
+                            self, "_on_check_available",
+                            Qt.ConnectionType.QueuedConnection,
+                            Q_ARG(str, remote_clean),
+                        )
+                    else:
+                        QMetaObject.invokeMethod(
+                            self, "_on_check_up_to_date",
+                            Qt.ConnectionType.QueuedConnection,
+                        )
                 else:
-                    branch = "main"
-                url = f"https://raw.githubusercontent.com/niwia/ASSella/{branch}/src/res/version"
-                req = urllib.request.Request(url, headers={"User-Agent": "ASSella-Updater"})
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    remote_raw = response.read().decode("utf-8").strip()
-                    remote_clean = _extract_semver(remote_raw)
-                    if remote_clean:
-                        if _parse_version(remote_clean) > _parse_version(local_clean):
-                            QMetaObject.invokeMethod(
-                                self, "_on_check_available",
-                                Qt.ConnectionType.QueuedConnection,
-                                Q_ARG(str, remote_clean),
-                            )
-                        else:
-                            QMetaObject.invokeMethod(
-                                self, "_on_check_up_to_date",
-                                Qt.ConnectionType.QueuedConnection,
-                            )
+                    QMetaObject.invokeMethod(
+                        self, "_on_check_failed",
+                        Qt.ConnectionType.QueuedConnection,
+                        Q_ARG(str, "Could not determine latest version."),
+                    )
             except Exception as e:
                 logger.warning(f"Credits check updates failed: {e}")
                 QMetaObject.invokeMethod(
