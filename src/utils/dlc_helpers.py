@@ -182,7 +182,7 @@ def build_app_to_depots_map(
 
     gd = game_data or {}
     gd_dlcs = gd.get("dlcs") or {}
-    for dlc_id in gd_dlcs.keys():
+    for dlc_id in (gd_dlcs.keys() if isinstance(gd_dlcs, dict) else gd_dlcs):
         s_dlc = str(dlc_id).strip()
         if s_dlc and s_dlc.isdigit():
             target_apps.add(s_dlc)
@@ -234,15 +234,22 @@ def build_app_to_depots_map(
             mapping.setdefault(appid_str, set()).add(did_str)
 
     gd_depots = gd.get("depots") or {}
-    for did, dinfo in gd_depots.items():
-        did_str = str(did).strip()
-        if isinstance(dinfo, dict):
-            dlc_id = str(dinfo.get("dlcappid") or "").strip()
-            if dlc_id and dlc_id.isdigit() and dlc_id != appid_str:
-                mapping.setdefault(dlc_id, set()).add(did_str)
-                target_apps.add(dlc_id)
+    if isinstance(gd_depots, dict):
+        for did, dinfo in gd_depots.items():
+            did_str = str(did).strip()
+            if isinstance(dinfo, dict):
+                dlc_id = str(dinfo.get("dlcappid") or "").strip()
+                if dlc_id and dlc_id.isdigit() and dlc_id != appid_str:
+                    mapping.setdefault(dlc_id, set()).add(did_str)
+                    target_apps.add(dlc_id)
+                else:
+                    mapping.setdefault(appid_str, set()).add(did_str)
             else:
                 mapping.setdefault(appid_str, set()).add(did_str)
+    elif isinstance(gd_depots, (list, set)):
+        for did in gd_depots:
+            did_str = str(did).strip()
+            mapping.setdefault(appid_str, set()).add(did_str)
 
     # 3. Check cached Lua DLC sections and MAIN GAME DEPOTS
     try:
@@ -318,9 +325,9 @@ def build_app_to_depots_map(
     if candidate_depots:
         all_known_candidates.update(str(d).strip() for d in candidate_depots if str(d).strip().isdigit())
     if gd_depots:
-        all_known_candidates.update(str(d).strip() for d in gd_depots.keys() if str(d).strip().isdigit())
+        all_known_candidates.update(str(d).strip() for d in (gd_depots.keys() if isinstance(gd_depots, dict) else gd_depots) if str(d).strip().isdigit())
     if inst_depots:
-        all_known_candidates.update(str(d).strip() for d in inst_depots.keys() if str(d).strip().isdigit())
+        all_known_candidates.update(str(d).strip() for d in (inst_depots.keys() if isinstance(inst_depots, dict) else inst_depots) if str(d).strip().isdigit())
 
     claimed_by_dlcs = set()
     for aid, dids in mapping.items():
@@ -384,7 +391,7 @@ def resolve_dlc_mapping_for_selection(
     else:
         # If no explicit selection provided, default to all known DLCs for this game
         resolved_dlc_appids.update(dlc_apps_in_map)
-        resolved_dlc_appids.update(str(d).strip() for d in gd_dlcs.keys() if str(d).strip().isdigit())
+        resolved_dlc_appids.update(str(d).strip() for d in (gd_dlcs.keys() if isinstance(gd_dlcs, dict) else gd_dlcs) if str(d).strip().isdigit())
         resolved_dlc_appids.discard(appid_str)
 
     # Build selected DLC depots (ONLY depots belonging to resolved DLCs, NEVER parent AppID)
@@ -1102,7 +1109,8 @@ def purge_and_sanitize_for_dlc_only(
     # Known depots for this game
     all_game_depots = set()
     if game_data and game_data.get("depots"):
-        all_game_depots.update(str(d) for d in game_data["depots"].keys())
+        d_raw = game_data["depots"]
+        all_game_depots.update(str(d) for d in (d_raw.keys() if isinstance(d_raw, dict) else d_raw))
     try:
         from managers.db_manager import DatabaseManager
         db = DatabaseManager()
