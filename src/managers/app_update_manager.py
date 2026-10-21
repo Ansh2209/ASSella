@@ -10,7 +10,8 @@ import urllib.request
 from pathlib import Path
 
 from PyQt6.QtCore import QMetaObject, QObject, Qt, Q_ARG
-from PyQt6.QtWidgets import QMessageBox, QProgressDialog
+from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+from ui.dialogs.themed_message_box import ThemedMessageBox
 
 from utils.paths import Paths
 from utils.version import app_version
@@ -42,7 +43,7 @@ class AppUpdateManager(QObject):
         if not appimage_path or not os.path.exists(appimage_path):
             appimage_path = default_appimage
         if not os.path.exists(appimage_path):
-            QMessageBox.information(
+            ThemedMessageBox.information(
                 self._parent, "Self-Update",
                 "Could not locate the installed ASSella.AppImage to update."
             )
@@ -62,18 +63,18 @@ class AppUpdateManager(QObject):
 
         local_clean = extract_semver(app_version)
 
-        reply = QMessageBox.question(
+        reply = ThemedMessageBox.question(
             self._parent, "Install Update",
             f"A new version of ASSella is available ({tag or 'the latest build'}).\n\n"
             "Would you like to download and install it now?\n"
             "The app will need to be restarted after the update.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.Yes
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if reply != ThemedMessageBox.StandardButton.Yes:
             return
 
-        progress = QProgressDialog("Connecting to GitHub...", "Cancel", 0, 100, self._parent)
+        progress = ThemedProgressDialog("Connecting to GitHub...", "Cancel", 0, 100, self._parent)
         progress.setWindowTitle("Downloading Update")
         progress.setWindowModality(Qt.WindowModality.WindowModal)
         progress.setMinimumDuration(0)

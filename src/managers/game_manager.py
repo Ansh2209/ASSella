@@ -11,7 +11,6 @@ from core.steam_helpers import (
     get_library_index,
     find_steam_install,
 )
-from core.tasks.manifest_check_task import ManifestCheckTask
 from utils.helpers import get_base_path
 from utils.lua_parsing import is_placeholder_key, iter_live_matches
 from utils.task_runner import TaskRunner
@@ -297,8 +296,8 @@ class GameManager(QObject):
                 at0m_checker = At0mUpdateChecker.get_instance()
                 try:
                     at0m_checker.game_checked.disconnect(self._on_at0m_game_checked)
-                except Exception:
-                    pass
+                except TypeError:
+                    logger.debug("AT0-M update signal was not connected")
                 at0m_checker.game_checked.connect(self._on_at0m_game_checked)
                 try:
                     at0m_checker.check_all_games_async(force_refresh=force_refresh,
@@ -322,8 +321,8 @@ class GameManager(QObject):
             at0m_checker = At0mUpdateChecker.get_instance()
             try:
                 at0m_checker.game_checked.disconnect(self._on_at0m_game_checked)
-            except Exception:
-                pass
+            except TypeError:
+                logger.debug("AT0-M update signal was not connected")
             at0m_checker.game_checked.connect(self._on_at0m_game_checked)
             try:
                 at0m_checker.check_all_games_async(force_refresh=force_refresh,
@@ -334,6 +333,8 @@ class GameManager(QObject):
             logger.debug(f"Error launching At0mUpdateChecker: {e}")
 
         # Create new task with trigger provenance
+        from core.tasks.manifest_check_task import ManifestCheckTask
+
         trigger = "USER_MANUAL" if force_refresh else ("AUTO_TIMER" if is_periodic else "BACKGROUND_SCAN")
         self.manifest_check_task = ManifestCheckTask(self._games_to_check, trigger=trigger)
         self.update_check_progress.emit(0, len(self._games_to_check))
@@ -426,6 +427,8 @@ class GameManager(QObject):
         game["hubcap_needs_update"] = False
         game["hubcap_update_in_progress"] = False
         self.game_update_status_changed.emit(appid, UPDATE_STATUS["CHECKING"])
+
+        from core.tasks.manifest_check_task import ManifestCheckTask
 
         task = ManifestCheckTask([game])
         runner = TaskRunner()
@@ -787,8 +790,8 @@ class GameManager(QObject):
                             try:
                                 if os.path.isfile(filepath) or os.path.islink(filepath):
                                     size += os.lstat(filepath).st_size
-                            except (OSError, FileNotFoundError, PermissionError):
-                                pass
+                            except OSError as e:
+                                logger.debug(f"  Skipped unreadable file {filepath}: {e}")
                     if size > 0:
                         if hasattr(self, "games_cache"):
                             self.games_cache.set_cached_size(game_path, size, appid)
@@ -853,8 +856,8 @@ class GameManager(QObject):
             from utils.plugin_games import get_all_plugin_games, build_dlc_reverse_map
             plugin_games_dict = get_all_plugin_games()
             dlc_to_base = build_dlc_reverse_map()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Plugin game list unavailable, plugin games are not scanned: {e}")
 
         try:
             # Use scandir for better error handling during concurrent modifications
@@ -920,8 +923,9 @@ class GameManager(QObject):
                                 "Vapor" if is_vapor else ("ACCELA" if marker_path else "Steam"),
                                 game_name,
                             )
-                    except (OSError, FileNotFoundError, PermissionError):
+                    except OSError as e:
                         # Skip entries that can't be accessed
+                        logger.debug(f"  Skipped unreadable entry in {common_path}: {e}")
                         continue
 
         except OSError as e:
@@ -988,7 +992,8 @@ class GameManager(QObject):
                             cache[installdir] = (manifest_path, appid)
                             cache[installdir.lower()] = (manifest_path, appid)
                             cache[f"appid:{appid}"] = (manifest_path, installdir)
-                    except (OSError, IOError, PermissionError):
+                    except OSError as e:
+                        logger.debug(f"  Skipped unreadable appmanifest {manifest_path}: {e}")
                         continue
         except OSError as e:
             logger.debug(f"Error building ACF cache for {steamapps_path}: {e}")
@@ -1018,8 +1023,9 @@ class GameManager(QObject):
                         # If we find any file or directory that is not ignored, treat it as content
                         if entry.is_file() or entry.is_dir():
                             return True
-                    except (OSError, FileNotFoundError, PermissionError):
+                    except OSError as e:
                         # Skip entries that can't be accessed
+                        logger.debug(f"  Skipped unreadable entry in {game_path}: {e}")
                         continue
 
             return False
@@ -1214,12 +1220,24 @@ class GameManager(QObject):
             if self._scan_cancelled:
                 return None
 
-            marker_path = marker_path or self._get_accela_marker_path(game_path)
-            is_accela_install = bool(marker_path)
-            is_managed = is_accela_install or is_vapor
-
             # Try to read appmanifest to get AppID and other metadata
             appmanifest_path, appid = self._parse_acf_for_appid(library_path, game_name, acf_cache=acf_cache)
+
+            # A DLC-only install writes into the Steam folder and leaves a
+            # `.DepotDownloader` marker behind, but the base game is still
+            # Steam's. The marker must not move such a game out of the Steam
+            # tab and into the ACCELA tab.
+            is_dlc_only = False
+            if appid and appid not in ("0", "N/A", "unknown"):
+                try:
+                    from utils.dlc_helpers import is_dlc_only_mode
+                    is_dlc_only = bool(is_dlc_only_mode(appid))
+                except Exception as e:
+                    logger.debug(f"  DLC-only check failed for {appid}: {e}")
+
+            marker_path = marker_path or self._get_accela_marker_path(game_path)
+            is_accela_install = bool(marker_path) and not is_dlc_only
+            is_managed = is_accela_install or is_vapor
 
             # Try to load metadata.json if ACF is missing/invalid, only when experimental mode is enabled
             try:
@@ -1254,13 +1272,13 @@ class GameManager(QObject):
                 try:
                     from utils.plugin_games import get_plugin_game
                     plugin_record = get_plugin_game(appid, active_only=True)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"  Plugin library lookup failed for {appid}: {e}")
 
             is_plugin_game = bool(plugin_record)
 
             # Smart correlation: If not in plugin library and no physical marker, check if configured in SLSsteam with DecryptionKeys
-            if not is_plugin_game and not is_accela_install and appid and appid not in ("0", "N/A", "unknown"):
+            if not is_plugin_game and not is_accela_install and not is_dlc_only and appid and appid not in ("0", "N/A", "unknown"):
                 try:
                     from utils.yaml_config_manager import get_user_config_path, get_additional_apps, get_decryption_keys
                     cfg_path = get_user_config_path()
@@ -1298,8 +1316,8 @@ class GameManager(QObject):
                         with open(meta_json_path, "r", encoding="utf-8") as mf:
                             m_data = json.load(mf)
                             marker_ts = float(m_data.get("last_updated") or 0)
-                    except Exception:
-                        pass
+                    except (OSError, ValueError, TypeError) as e:
+                        logger.debug(f"  Could not read {meta_json_path}: {e}")
                 if marker_ts == 0 and marker_path and os.path.exists(marker_path):
                     try:
                         marker_ts = os.path.getmtime(marker_path)
@@ -1359,10 +1377,11 @@ class GameManager(QObject):
                 "depot_downloader_path": marker_path or "",
                 "accela_marker_path": marker_path or "",
                 "appmanifest_path": appmanifest_path or "",
+                "is_dlc_only": is_dlc_only,
             }
 
             # Detect DLC-only installations by comparing the saved main depot against base game depots
-            if is_accela_install and appid and appid not in ("0", "N/A", "unknown"):
+            if (is_accela_install or is_dlc_only) and appid and appid not in ("0", "N/A", "unknown"):
                 depot_file = Path(get_base_path()) / "depots" / f"{appid}.depot"
                 if depot_file.exists():
                     try:
@@ -1377,11 +1396,15 @@ class GameManager(QObject):
                                 if main_depot_id not in app_info["depots"]:
                                     # It's not in the base game depots -> it's a DLC
                                     game_data["is_dlc_only"] = True
-                                    dlc_info = db.get_app_info(main_depot_id)
-                                    if dlc_info and dlc_info.get("name"):
-                                        game_data["game_name"] = f"{dlc_info['name']} [DLC]"
-                                    else:
-                                        game_data["game_name"] = f"{game_name} [DLC]"
+                                    # A DLC-only Steam game keeps its base-game name:
+                                    # the library card marks the mode with a chip.
+                                    # Legacy ACCELA installs still carry the suffix.
+                                    if is_accela_install:
+                                        dlc_info = db.get_app_info(main_depot_id)
+                                        if dlc_info and dlc_info.get("name"):
+                                            game_data["game_name"] = f"{dlc_info['name']} [DLC]"
+                                        else:
+                                            game_data["game_name"] = f"{game_name} [DLC]"
                     except Exception as e:
                         logger.error(f"Error checking DLC-only status for {appid}: {e}")
 
@@ -1465,10 +1488,10 @@ class GameManager(QObject):
                                 try:
                                     if os.path.isfile(filepath) or os.path.islink(filepath):
                                         size_on_disk += os.lstat(filepath).st_size
-                                except (OSError, FileNotFoundError, PermissionError):
-                                    pass
-                    except OSError:
-                        pass
+                                except OSError as e:
+                                    logger.debug(f"  Skipped unreadable file {filepath}: {e}")
+                    except OSError as e:
+                        logger.debug(f"  Size scan incomplete for {game_path}, size may be low: {e}")
                     game_data["size_on_disk"] = size_on_disk
             else:
                 game_data["size_on_disk"] = size_on_disk
@@ -1483,8 +1506,8 @@ class GameManager(QObject):
                         if stat and stat.get("status") in ("update_available", "key_pending"):
                             at0m_status = stat["status"]
                             game_data["at0m_update_details"] = stat
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"  AT0-M update status lookup failed for {appid}: {e}")
                 game_data["update_status"] = at0m_status
                 game_data["installed_branch"] = "public"
                 game_data["selected_branch"] = "public"
@@ -1494,8 +1517,8 @@ class GameManager(QObject):
                         _s = get_settings()
                         _s.setValue(f"installed_branch/{appid}", "public")
                         _s.setValue(f"selected_branch/{appid}", "public")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"  Could not record the public branch for {appid}: {e}")
                 return game_data
 
             # Set update status — restore from disk cache if available
@@ -1578,9 +1601,11 @@ class GameManager(QObject):
                                         appid = entry.name.replace("appmanifest_", "").replace(".acf", "")
                                         logger.debug(f"  ✓ Match found! AppID: {appid}")
                                         break
-                            except (OSError, IOError, PermissionError):
+                            except OSError as e:
+                                logger.debug(f"  Skipped unreadable appmanifest {test_manifest_path}: {e}")
                                 continue
-                        except (OSError, FileNotFoundError, PermissionError):
+                        except OSError as e:
+                            logger.debug(f"  Skipped unreadable entry while matching {game_name}: {e}")
                             continue
             except OSError as e:
                 logger.debug(f"  Error scanning steamapps directory: {e}")
@@ -1622,8 +1647,8 @@ class GameManager(QObject):
                             _appid = str(game_data.get("appid") or "")
                             if _appid:
                                 _s.setValue(f"installed_branch/{_appid}", betakey_val)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(f"  Could not record the installed branch: {e}")
 
                 # Extract SizeOnDisk using regex (only use if non-zero)
                 sizeon_disk_match = re.search(r'"SizeOnDisk"\s+"([^"]+)"', content)
@@ -1736,7 +1761,9 @@ class GameManager(QObject):
         self.manifest_check_runner = None
         self._games_to_check = []
 
-    def get_uninstall_confirmation_message(self, game_data):
+    def get_uninstall_confirmation_message(
+        self, game_data, remove_compatdata=False, remove_saves=False
+    ):
         """
         Build a confirmation message for uninstalling a game.
         Returns a string with the confirmation message.
@@ -1755,15 +1782,27 @@ class GameManager(QObject):
                 atom_info = get_atom_game_install_info(appid)
                 if atom_info:
                     install_path = atom_info.get("common_path") or atom_info.get("install_path")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"  AT0-M install info unavailable for {appid}: {e}")
 
         is_accela_install = game_data.get("is_accela_install", False)
 
         is_dlc_only = False
         if appid and appid not in ("0", "N/A", "unknown"):
             from utils.dlc_helpers import is_dlc_only_mode
-            is_dlc_only = is_dlc_only_mode(str(appid))
+            is_dlc_only = (
+                is_dlc_only_mode(str(appid))
+                or bool(game_data.get("dlc_only"))
+                or bool(game_data.get("is_dlc_only"))
+            )
+            if not is_dlc_only:
+                try:
+                    from utils.plugin_games import get_plugin_game
+                    prec = get_plugin_game(str(appid), active_only=False)
+                    if prec and prec.get("dlc_only"):
+                        is_dlc_only = True
+                except Exception as e:
+                    logger.debug(f"[GameManager] Could not check plugin game for DLC-only mode: {e}")
 
         if is_dlc_only:
             from utils.dlc_helpers import get_dlc_uninstall_message
@@ -1801,14 +1840,14 @@ class GameManager(QObject):
                 )
                 userdata_path = os.path.join(steam_dir, "userdata")
 
-                # Check if compatdata exists
-                if os.path.exists(compatdata_path):
+                # Only show compatdata if explicitly selected for removal
+                if remove_compatdata and os.path.exists(compatdata_path):
                     confirm_msg += (
-                        f"• Proton/Wine compatibility data: {compatdata_path}\n"
+                        f"• Proton/Wine compatibility data (includes Windows saves): {compatdata_path}\n"
                     )
 
-                # Check if userdata exists
-                if os.path.exists(userdata_path):
+                # Only show Steam Cloud saves if explicitly selected for removal
+                if remove_saves and os.path.exists(userdata_path):
                     has_saves = False
                     try:
                         for user_dir in os.listdir(userdata_path):
@@ -1818,11 +1857,15 @@ class GameManager(QObject):
                                 if os.path.exists(saves_path):
                                     has_saves = True
                                     break
-                    except OSError:
-                        pass
+                    except OSError as e:
+                        logger.debug(f"  Steam Cloud save scan incomplete: {e}")
 
                     if has_saves:
                         confirm_msg += "• Steam Cloud saves from userdata folders\n"
+
+                # Reassure user if neither prefix nor saves are being removed
+                if not remove_compatdata and not remove_saves:
+                    confirm_msg += "\nNote: Proton prefix, game saves, and Steam Cloud data will NOT be deleted.\n"
         elif (
             platform.system() == "Windows"
             and is_accela_install
@@ -1869,8 +1912,8 @@ class GameManager(QObject):
                                     "• GreenLuma AppList DLC file(s): "
                                     f"{', '.join(found_dlc_files)}\n"
                                 )
-                        except OSError:
-                            pass
+                        except OSError as e:
+                            logger.debug(f"  GreenLuma AppList scan incomplete: {e}")
 
         confirm_msg += "\nThis action cannot be undone!"
         return confirm_msg
@@ -1882,7 +1925,7 @@ class GameManager(QObject):
         from utils.paths import Paths
         from utils.helpers import get_dotnet_path, get_dotnet_env
         
-        depotdownloader_path = Paths.deps("depot-downloader/DepotDownloader.dll")
+        depotdownloader_path = Paths.depot_downloader_dll()
         if not depotdownloader_path.exists():
             logger.warning("DepotDownloader.dll not found, cannot delete DLC files")
             return
@@ -1942,8 +1985,8 @@ class GameManager(QObject):
                         if d.exists() and d.is_dir() and not os.listdir(d):
                             try:
                                 d.rmdir()
-                            except OSError:
-                                pass
+                            except OSError as e:
+                                logger.debug(f"  Left empty directory {d} behind: {e}")
             except Exception as e:
                 logger.error(f"Failed to fetch manifest and delete files for DLC {dlc_appid}: {e}")
 
@@ -2011,8 +2054,8 @@ class GameManager(QObject):
                     cancel_event = _retry_cancel_flags.get(str(appid))
                 if cancel_event:
                     cancel_event.set()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"  Could not cancel an install retry for {appid}: {e}")
 
             # Send SLSsteam API uninstall trigger to Steam client if active
             if platform.system() == "Linux" and appid and appid not in ("0", "N/A", "unknown"):
@@ -2025,7 +2068,19 @@ class GameManager(QObject):
             is_dlc_only = False
             if appid and appid not in ("0", "N/A", "unknown"):
                 from utils.dlc_helpers import is_dlc_only_mode
-                is_dlc_only = is_dlc_only_mode(str(appid))
+                is_dlc_only = (
+                    is_dlc_only_mode(str(appid))
+                    or bool(game_data.get("dlc_only"))
+                    or bool(game_data.get("is_dlc_only"))
+                )
+                if not is_dlc_only:
+                    try:
+                        from utils.plugin_games import get_plugin_game
+                        prec = get_plugin_game(str(appid), active_only=False)
+                        if prec and prec.get("dlc_only"):
+                            is_dlc_only = True
+                    except Exception as e:
+                        logger.debug(f"[GameManager] Could not check plugin game for DLC-only mode: {e}")
 
             if is_dlc_only:
                 # 1. Delete only files belonging to the DLC depots
@@ -2141,8 +2196,8 @@ class GameManager(QObject):
                                                 editor.remove_app(did)
                                                 editor.remove_fake_app_id(did)
                                                 editor.remove_app_token(did)
-                                    except Exception:
-                                        pass
+                                    except Exception as e:
+                                        logger.debug(f"  Could not clean {depot_file} from the SLSsteam config: {e}")
                             else:
                                 editor.remove_app(str(appid))
 
@@ -2507,7 +2562,8 @@ class GameManager(QObject):
                     content = file_handle.read().strip()
                 if content in files_by_id:
                     files_by_id[content].append(filename)
-            except OSError:
+            except OSError as e:
+                logger.debug(f"  Skipped unreadable AppList file {filepath}: {e}")
                 continue
 
         for file_list in files_by_id.values():

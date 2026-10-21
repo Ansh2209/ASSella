@@ -30,7 +30,12 @@ from managers.depot_key_manager import DepotKeyManager
 from utils.helpers import get_base_path
 from utils.lua_parsing import is_placeholder_key, iter_live_matches
 from utils.paths import Paths
-from utils.plugin_games import SHARED_REDISTS, load_plugin_library
+from utils.plugin_games import (
+    SHARED_REDISTS,
+    build_depot_comment,
+    build_key_comment,
+    load_plugin_library,
+)
 from utils.settings import get_settings
 from utils.sls_bridge import SLSBridge
 from utils.yaml_config_manager import (
@@ -378,6 +383,11 @@ class At0mUpdateChecker(QObject):
                 return "up_to_date", {"appid": appid_str, "status": "up_to_date"}
 
         # Step 4: Depot Delta calculation
+        from ui.dialogs.depot_selection.rules import _depot_is_macos, _depot_is_android
+        import platform as _platform
+
+        is_macos_system = _platform.system().lower() == "darwin"
+
         steam_depots: Set[str] = set()
         depots_dict = steam_info.get("depots") or {}
         for did, ddata in depots_dict.items():
@@ -386,6 +396,20 @@ class At0mUpdateChecker(QObject):
                 continue
             # Keep meaningful content depots
             if isinstance(ddata, dict):
+                # Filter out macOS-only depots on non-macOS platforms
+                if not is_macos_system and _depot_is_macos(ddata):
+                    continue
+                # Filter out Android-only depots
+                if _depot_is_android(ddata):
+                    continue
+                # Filter out 0-byte or empty placeholder depots
+                size = ddata.get("size")
+                if size is not None and str(size).strip() == "0":
+                    manifests = ddata.get("manifests") or {}
+                    pub = manifests.get("public") if isinstance(manifests, dict) else {}
+                    if not pub or (isinstance(pub, dict) and pub.get("download") in ("0", 0, None)):
+                        continue
+
                 # If depot has manifest or size, it is a content depot
                 if ddata.get("manifest_id") or ddata.get("manifests") or ddata.get("size") or ddata.get("is_dlc"):
                     steam_depots.add(did_str)
@@ -556,9 +580,8 @@ class At0mUpdateChecker(QObject):
                     for did, k in fresh_keys.items():
                         if did not in ALL_SHARED_REDISTS:
                             if did != appid_str:
-                                editor.add_depot(did, comment=f"{game_title} ({did})", app_id=appid_str)
-                            key_comment = f"{game_title} [AppKey]" if did == appid_str else f"{game_title} ({did})"
-                            editor.add_key(did, k, comment=key_comment)
+                                editor.add_depot(did, comment=build_depot_comment(game_title, did, "", appid_str), app_id=appid_str)
+                            editor.add_key(did, k, comment=build_key_comment(game_title, did, "", appid_str))
 
                 if editor.has_changes:
                     SLSBridge.notify_reload()

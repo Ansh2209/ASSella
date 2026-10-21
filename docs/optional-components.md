@@ -27,4 +27,4 @@ corrupt or interrupted download never replaces a working install.
 ## For maintainers
 
 The procedure for updating, packaging and publishing these components lives in
-[`cloud/README.md`](../cloud/README.md).
+[`cloud/README.md`](https://github.com/niwia/ASSella/blob/beta/cloud/README.md).

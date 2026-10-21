@@ -304,6 +304,9 @@ def perform_steam_handoff(
         logger.warning(f"[SteamHandoff] Excluded {len(unkeyed_depots)} unkeyed depot(s) for {appid}: {unkeyed_depots}")
         selected_depots = [d for d in selected_depots if str(d) in valid_keyed_depots]
 
+    if not selected_depots and not is_dlc:
+        return False, f"No valid keyed content depots could be resolved for {game_name} ({appid}). Steam cannot download without valid depots."
+
     # AdditionalDepots gets only actual depots. DecryptionKeys keeps depot keys AND the root AppID key.
     active_keys = {str(d): k for d, k in depot_keys.items()}
     if is_dlc and selected_depots:
@@ -318,7 +321,7 @@ def perform_steam_handoff(
     # 5. Verify plugins are present BEFORE mutating configuration
     from utils.plugin_manager import are_plugins_present, is_plugin_check_bypassed
     if not are_plugins_present():
-        return False, "AT0-M plugins (download.lua / spliced-tickets.lua) not found. Please enable and deploy plugin support from the AT0-M page in Settings, or enable 'I'm using custom plugins (Advanced)'."
+        return False, "AT0-M plugins (download interceptor / spliced-tickets.lua) not found. Please enable and deploy plugin support from the AT0-M page in Settings, or enable 'I'm using custom plugins (Advanced)'."
     if is_plugin_check_bypassed() and not are_plugins_present(ignore_bypass=True):
         _emit("WARNING: Custom plugins active — third-party plugin support cannot be guaranteed.")
 

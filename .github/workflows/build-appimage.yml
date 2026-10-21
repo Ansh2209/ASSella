@@ -443,13 +443,13 @@ jobs:
             QT_QPA_PLATFORM=offscreen ASSELLA_TESTER_NO_REEXEC=1 \
               AppDir_extract/bin/.venv/bin/python3 -u \
               AppDir_extract/bin/src/scripts/prerelease_check.py \
-              --src AppDir_extract/bin/src 2>&1 | tee /tmp/appimage_prerelease.log || true
+              --ci --src AppDir_extract/bin/src 2>&1 | tee /tmp/appimage_prerelease.log || true
             grep -E 'RESULTS:|STATUS:' /tmp/appimage_prerelease.log || true
           else
             echo "pre-release suite not bundled in AppImage; running repo copy against extracted src"
             QT_QPA_PLATFORM=offscreen ASSELLA_TESTER_NO_REEXEC=1 \
               AppDir_extract/bin/.venv/bin/python3 -u scripts/prerelease_check.py \
-              --src AppDir_extract/bin/src 2>&1 | tee /tmp/appimage_prerelease.log || true
+              --ci --src AppDir_extract/bin/src 2>&1 | tee /tmp/appimage_prerelease.log || true
             grep -E 'RESULTS:|STATUS:' /tmp/appimage_prerelease.log || true
           fi
           echo "::endgroup::"

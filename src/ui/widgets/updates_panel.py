@@ -120,38 +120,50 @@ class UpdateItemWidget(QFrame):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
     def mousePressEvent(self, event):
-        super().mousePressEvent(event)
         if event.button() == Qt.MouseButton.LeftButton:
-            try:
-                main_win = None
-                p = self.parent()
-                while p:
-                    if hasattr(p, "game_manager"):
-                        main_win = p
-                        break
-                    p = p.parent()
-                if not main_win:
-                    from PyQt6.QtWidgets import QApplication
-                    for w in QApplication.topLevelWidgets():
-                        if hasattr(w, "game_manager"):
-                            main_win = w
+            appid = self.appid
+
+            def _open():
+                try:
+                    main_win = None
+                    p = self.parent()
+                    while p:
+                        if hasattr(p, "game_manager"):
+                            main_win = p
                             break
-                if main_win and hasattr(main_win, "game_manager"):
-                    game = main_win.game_manager.get_game(self.appid)
-                    if game:
-                        from ui.dialogs.gamelibrary_v2 import GameDetailsDialogV2
-                        dlg = GameDetailsDialogV2(main_win, game)
-                        dlg.exec()
-            except Exception:
-                pass
+                        p = p.parent()
+                    if not main_win:
+                        from PyQt6.QtWidgets import QApplication
+                        for w in QApplication.topLevelWidgets():
+                            if hasattr(w, "game_manager"):
+                                main_win = w
+                                break
+                    if main_win and hasattr(main_win, "game_manager"):
+                        game = main_win.game_manager.get_game(appid)
+                        if game:
+                            from ui.dialogs.gamelibrary_v2 import GameDetailsDialogV2
+                            dlg = GameDetailsDialogV2(main_win, game)
+                            dlg.exec()
+                except Exception:
+                    pass
+
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(0, _open)
+            event.accept()
+        else:
+            super().mousePressEvent(event)
 
     def enterEvent(self, event):
         super().enterEvent(event)
-        self.update()
-        
+        from PyQt6 import sip
+        if not sip.isdeleted(self):
+            self.update()
+
     def leaveEvent(self, event):
         super().leaveEvent(event)
-        self.update()
+        from PyQt6 import sip
+        if not sip.isdeleted(self):
+            self.update()
 
     def paintEvent(self, event):
         from PyQt6.QtGui import QPainter, QLinearGradient, QBrush, QPainterPath, QPen
