@@ -380,7 +380,7 @@
     "narrow": 0
   },
   "utils/web_server.py": {
-    "broad": 7,
+    "broad": 5,
     "narrow": 0
   },
   "utils/workshop_helpers.py": {

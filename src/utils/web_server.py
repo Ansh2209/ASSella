@@ -39,6 +39,32 @@ def get_local_ip() -> str:
     return ip
 
 
+def read_progress_snapshot(main_win) -> tuple:
+    """Return ``(progress, speed)`` for the web UI.
+
+    The web server answers requests on its own threads, so it must not read
+    QWidget state here. The GUI thread publishes a plain snapshot (see
+    ``MainWindow._refresh_web_status_snapshot``) and this reads only that.
+    """
+    progress = 0
+    speed = ""
+
+    getter = getattr(main_win, "get_web_status_snapshot", None)
+    status = getter() if callable(getter) else {}
+    status = status or {}
+
+    if status.get("progress_visible"):
+        try:
+            progress = int(status.get("progress", 0) or 0)
+        except (TypeError, ValueError):
+            progress = 0
+
+    if status.get("speed_visible"):
+        speed = str(status.get("speed", "") or "")
+
+    return progress, speed
+
+
 class WebRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         # Redirect standard http.server logs to python logging framework
@@ -250,19 +276,10 @@ class WebRequestHandler(BaseHTTPRequestHandler):
                 speed = ""
                 is_paused = bool(task_manager.is_download_paused)
 
-                try:
-                    if main_win.progress_bar and main_win.progress_bar.isVisible():
-                        progress = main_win.progress_bar.value()
-                except Exception:
-                    pass
-
-                try:
-                    if main_win.speed_label and main_win.speed_label.isVisible():
-                        # The label elides what it displays; the web UI wants
-                        # the whole speed string.
-                        speed = getattr(main_win.speed_label, "full_text", "") or main_win.speed_label.text()
-                except Exception:
-                    pass
+                # The web server answers requests on its own threads, so it must
+                # not read QWidget state here. The GUI thread publishes a plain
+                # snapshot that we read instead.
+                progress, speed = read_progress_snapshot(main_win)
 
                 # Determine active stage
                 stage = "unknown"

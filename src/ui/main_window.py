@@ -221,6 +221,15 @@ class MainWindow(QMainWindow):
         self.progress_layout = None
         self.progress_bar = None
         self.speed_label = None
+        # Plain-Python mirror of the progress widgets, published for the web UI.
+        # The web server answers requests on its own threads and must never read
+        # QWidget state, so the GUI thread refreshes this snapshot instead.
+        self._web_status_snapshot = {
+            "progress": 0,
+            "progress_visible": False,
+            "speed": "",
+            "speed_visible": False,
+        }
         self.progress_controls_widget = None
         self.media_pause_button = None
         self.media_cancel_button = None
@@ -560,6 +569,8 @@ class MainWindow(QMainWindow):
         self.web_server_manager = WebServerManager(self, self.web_command_queue)
         self.web_command_timer = QTimer(self)
         self.web_command_timer.timeout.connect(self._process_web_commands)
+        # The same GUI-thread timer publishes the progress state for the web UI.
+        self.web_command_timer.timeout.connect(self._refresh_web_status_snapshot)
         # Timer is started/stopped dynamically when web server starts/stops
 
         logger.info("Starting initial game library scan...")
@@ -598,6 +609,46 @@ class MainWindow(QMainWindow):
                         self.game_manager.check_game_updates_async()
             except Exception as e:
                 logger.error(f"Error processing web command: {e}")
+
+    def _refresh_web_status_snapshot(self) -> None:
+        """Publish the progress widgets' state for the web UI.
+
+        Runs on the GUI thread (driven by ``web_command_timer``) so the web
+        server never has to touch QWidget state from its request threads.
+        """
+        progress = 0
+        progress_visible = False
+        speed = ""
+        speed_visible = False
+
+        try:
+            if self.progress_bar is not None:
+                progress_visible = bool(self.progress_bar.isVisible())
+                progress = int(self.progress_bar.value())
+            if self.speed_label is not None:
+                speed_visible = bool(self.speed_label.isVisible())
+                # The label elides what it displays; the web UI wants the whole
+                # speed string.
+                speed = getattr(self.speed_label, "full_text", "") or self.speed_label.text()
+        except RuntimeError as exc:
+            # Widgets already destroyed (window tearing down).
+            logger.debug(f"Web status snapshot refresh skipped: {exc}")
+            return
+
+        self._web_status_snapshot = {
+            "progress": progress,
+            "progress_visible": progress_visible,
+            "speed": str(speed),
+            "speed_visible": speed_visible,
+        }
+
+    def get_web_status_snapshot(self) -> dict:
+        """Return a plain-Python copy of the published status snapshot.
+
+        Safe to call from any thread: it only reads a dict of primitives.
+        """
+        snapshot = getattr(self, "_web_status_snapshot", None) or {}
+        return dict(snapshot)
 
     def toggle_web_server(self, enabled: bool, port: int = 8765) -> None:
         if enabled:
@@ -649,6 +700,7 @@ class MainWindow(QMainWindow):
                     ["systemctl", "--user", "is-active", "assella-testing.service"],
                     capture_output=True,
                     text=True,
+                    timeout=2.0,
                 )
                 if res.stdout.strip() == "active":
                     is_bg_active = True
