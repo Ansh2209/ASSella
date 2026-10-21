@@ -328,36 +328,75 @@ def init_luafix_tab(dialog) -> None:
         if confirm != ThemedMessageBox.StandardButton.Yes:
             return
 
-        # Download the fix
+        # Download the fix with progress dialog
         orig_title = dialog.windowTitle()
+        from ui.dialogs.themed_progress_dialog import ThemedProgressDialog
+
+        dl_dialog = ThemedProgressDialog(
+            labelText=f"Connecting and downloading {fix_title}...",
+            cancelButtonText=None,
+            minimum=0,
+            maximum=100,
+            parent=dialog,
+        )
+        dl_dialog.setWindowTitle("Downloading Fix")
+        dl_dialog.show()
+        QApplication.processEvents()
+
+        def dl_progress(downloaded: int, total: int):
+            if total > 0:
+                pct = max(0, min(100, int(downloaded * 100 / total)))
+                dl_dialog.setValue(pct)
+                mb_down = downloaded / (1024 * 1024)
+                mb_tot = total / (1024 * 1024)
+                dl_dialog.setLabelText(f"Downloading {fix_title}...\n{mb_down:.1f} MB of {mb_tot:.1f} MB ({pct}%)")
+            else:
+                mb_down = downloaded / (1024 * 1024)
+                dl_dialog.setLabelText(f"Downloading {fix_title}...\n{mb_down:.1f} MB")
+            QApplication.processEvents()
+
+        try:
+            zip_path, err = LuaToolsAPI.download_fix_zip(
+                fix_id, dialog.appid, progress_cb=dl_progress
+            )
+        finally:
+            dl_dialog.close()
+
+        if not zip_path:
+            ThemedMessageBox.critical(dialog, "Download Failed", f"Could not download fix:\n{err}")
+            return
+
+        # Show preview dialog to let user select files
+        game_name = dialog.game_data.get("game_name", "Unknown Game")
+        selected_files = show_fix_preview_dialog(
+            dialog, zip_path, fix_title, game_name, game_path=game_path
+        )
+
+        # User cancelled preview
+        if selected_files is None:
+            try:
+                Path(zip_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            return
+
+        # If user selected nothing, skip
+        if not selected_files:
+            try:
+                Path(zip_path).unlink(missing_ok=True)
+            except Exception:
+                pass
+            ThemedMessageBox.information(
+                dialog,
+                "No Files Selected",
+                "You haven't selected any files to apply.\n\n"
+                "No changes will be made to the game."
+            )
+            return
+
+        # Apply the fix with selected files
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            zip_path, err = LuaToolsAPI.download_fix_zip(fix_id, dialog.appid)
-            if not zip_path:
-                ThemedMessageBox.critical(dialog, "Download Failed", f"Could not download fix:\n{err}")
-                return
-
-            # Show preview dialog to let user select files
-            game_name = dialog.game_data.get("game_name", "Unknown Game")
-            selected_files = show_fix_preview_dialog(
-                dialog, zip_path, fix_title, game_name, game_path=game_path
-            )
-
-            # User cancelled preview
-            if selected_files is None:
-                return
-
-            # If user selected nothing, skip
-            if not selected_files:
-                ThemedMessageBox.information(
-                    dialog,
-                    "No Files Selected",
-                    "You haven't selected any files to apply.\n\n"
-                    "No changes will be made to the game."
-                )
-                return
-
-            # Apply the fix with selected files
             def progress_cb(msg):
                 if hasattr(dialog, 'setStatusMessage'):
                     dialog.setStatusMessage(msg)
