@@ -265,7 +265,7 @@ def init_luafix_tab(dialog) -> None:
                     }
                     QPushButton:hover { background: rgba(251, 191, 36, 0.28); }
                 """)
-                restore_btn.clicked.connect(lambda _c, gp=game_path: on_restore_fix_clicked(gp, fix.get("id")))
+                restore_btn.clicked.connect(lambda _c, gp=game_path, fid=fix.get("id"): on_restore_fix_clicked(gp, fid))
                 action_row.addWidget(restore_btn)
             else:
                 apply_btn = QPushButton("Apply Fix")
@@ -401,12 +401,12 @@ def init_luafix_tab(dialog) -> None:
         finally:
             QApplication.restoreOverrideCursor()
 
-    def on_remove_fix_clicked(game_path):
+    def on_restore_fix_clicked(game_path, fix_id=None):
         confirm = ThemedMessageBox.question(
             dialog,
-            "Remove Fix",
-            "Are you sure you want to remove this fix?\n\n"
-            "All original game files will be restored from backup.",
+            "Restore Fix",
+            "Are you sure you want to restore this fix?\n\n"
+            "All modified game files will be restored to their original state.",
             ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
             ThemedMessageBox.StandardButton.No,
         )
@@ -415,12 +415,12 @@ def init_luafix_tab(dialog) -> None:
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            ok, msg = FixManager.remove_fix(game_path)
+            ok, msg = FixManager.remove_fix(game_path, fix_id=fix_id)
             if ok:
-                ThemedMessageBox.information(dialog, "Fix Removed", msg)
+                ThemedMessageBox.information(dialog, "Fix Restored", msg)
                 load_fixes()
             else:
-                ThemedMessageBox.critical(dialog, "Removal Failed", msg)
+                ThemedMessageBox.critical(dialog, "Restore Failed", msg)
         finally:
             QApplication.restoreOverrideCursor()
 
