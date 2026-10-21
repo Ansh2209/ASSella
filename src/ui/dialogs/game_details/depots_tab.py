@@ -1544,14 +1544,9 @@ def init_depots_tab(dialog) -> None:
 
         def _worker():
             try:
-                # 1. Bypass existing cached zip to ensure a completely fresh download from Hubcap
-                try:
-                    target_zip = morrenus_api.get_manifest_zip_path(appid_str, "public")
-                    if target_zip and target_zip.exists():
-                        target_zip.unlink()
-                except Exception as unlink_err:
-                    logger.debug(f"[DepotsTab] Could not unlink existing manifest zip: {unlink_err}")
-
+                # 1. Force a fresh download from Hubcap. The cached zip is kept
+                # until the new one arrives: deleting it first would leave the
+                # user with no manifest at all if the download fails.
                 zip_path, err = morrenus_api.download_manifest(appid_str, force_update=True)
                 if zip_path and os.path.exists(zip_path):
                     import zipfile
@@ -1583,7 +1578,7 @@ def init_depots_tab(dialog) -> None:
                                 from managers.depot_key_manager import DepotKeyManager
                                 DepotKeyManager.get_instance().save_depot_keys(appid_str, fresh_keys)
 
-                            # Sync fresh keys and all discovered depots to config.yaml and plugin library
+                            # Sync fresh keys and mountable depots to config.yaml and plugin library
                             try:
                                 import time
                                 from utils.yaml_config_manager import (
@@ -1599,30 +1594,64 @@ def init_depots_tab(dialog) -> None:
                                 rec = lib.get(appid_str)
                                 is_dlc_only = rec.get("dlc_only", False) if rec else False
                                 game_name = dialog.game_data.get("game_name") or f"App {appid_str}"
+                                registered_depots = {
+                                    str(d) for d in (rec.get("depots", []) if rec else [])
+                                }
+                                registered_dlc_apps = {
+                                    str(d) for d in (rec.get("dlc_appids", []) if rec else [])
+                                }
+                                discovered_dlc_apps = {
+                                    str(d) for d in (dialog.game_data.get("dlcs") or {})
+                                } | registered_dlc_apps
+
+                                # Only a depot with a decryption key can be served
+                                # by SLSsteam. Mounting an unkeyed depot in
+                                # AdditionalApps produces DepotWithoutKey.
+                                keyed_depots = {
+                                    d for d in all_discovered_depots
+                                    if d != appid_str
+                                    and d not in discovered_dlc_apps
+                                    and d in fresh_keys
+                                    and d not in SHARED_REDISTS
+                                    and (not is_dlc_only or d in registered_depots)
+                                }
+                                allowed_key_ids = (
+                                    registered_depots | registered_dlc_apps | {appid_str} | SHARED_REDISTS
+                                    if is_dlc_only
+                                    else keyed_depots | {appid_str} | SHARED_REDISTS
+                                )
+                                publish_keys = {
+                                    did: key for did, key in fresh_keys.items()
+                                    if did in allowed_key_ids
+                                }
 
                                 if cfg_path and cfg_path.exists():
                                     with batch_config_edit(cfg_path) as editor:
-                                        for did, k in fresh_keys.items():
+                                        for did, k in publish_keys.items():
                                             editor.add_key(did, k, comment=build_key_comment(game_name, did, "", appid_str))
-                                        for did in all_discovered_depots:
-                                            if did not in SHARED_REDISTS and did != appid_str and not is_dlc_only:
+                                        for did in keyed_depots:
+                                            if not is_dlc_only:
                                                 editor.add_depot(did, comment=build_depot_comment(game_name, did, "", appid_str), app_id=appid_str)
                                     if editor.has_changes:
                                         SLSBridge.notify_reload()
 
                                 if rec:
-                                    rec.setdefault("keys", {}).update(fresh_keys)
-                                    existing_deps = set(str(d) for d in rec.get("depots", []))
-                                    existing_deps.update(all_discovered_depots)
-                                    rec["depots"] = sorted(list(existing_deps), key=lambda x: int(x) if x.isdigit() else 0)
+                                    rec.setdefault("keys", {}).update(publish_keys)
+                                    if not is_dlc_only:
+                                        # A DLC-only record keeps its curated
+                                        # depot list; bulk-adding every depot
+                                        # would override the DLC-only scoping.
+                                        existing_deps = set(str(d) for d in rec.get("depots", []))
+                                        existing_deps.update(keyed_depots)
+                                        rec["depots"] = sorted(list(existing_deps), key=lambda x: int(x) if x.isdigit() else 0)
                                     rec["updated_at"] = int(time.time())
                                     save_plugin_library(lib)
 
                                 if hasattr(dialog, "game_data") and isinstance(dialog.game_data, dict):
                                     g_deps = set(str(d) for d in dialog.game_data.get("depots", []))
-                                    g_deps.update(all_discovered_depots)
+                                    g_deps.update(keyed_depots)
                                     dialog.game_data["depots"] = sorted(list(g_deps), key=lambda x: int(x) if x.isdigit() else 0)
-                                    dialog.game_data.setdefault("keys", {}).update(fresh_keys)
+                                    dialog.game_data.setdefault("keys", {}).update(publish_keys)
                             except Exception as sync_err:
                                 logger.debug(f"[DepotsTab] Error syncing refetched keys to config: {sync_err}")
 

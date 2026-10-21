@@ -291,8 +291,16 @@ def build_app_to_depots_map(
                 did_s = str(did).strip()
                 if did_s != appid_str:
                     if is_dlc_game and dlc_ids:
-                        for d_id in dlc_ids:
-                            mapping.setdefault(d_id, set()).add(did_s)
+                        # A DLC-only record stores the depots of *all* its
+                        # mapped DLCs in one flat list. Without per-depot
+                        # attribution (Steps 2/3) inventing one is arbitrary:
+                        # the map is set-ordered, so the same depot resolves to
+                        # a different DLC every run and the wrong entitlement
+                        # is registered. Only a record with a single mapped DLC
+                        # can claim every depot; anything else stays unclaimed
+                        # and falls through to the base game (Step 6).
+                        if len(dlc_ids) == 1:
+                            mapping.setdefault(dlc_ids[0], set()).add(did_s)
                     else:
                         mapping.setdefault(aid, set()).add(did_s)
             for dlc_id in dlc_ids:
