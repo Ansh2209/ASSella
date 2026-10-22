@@ -54,6 +54,10 @@ Before proceeding, choose the path that applies to you:
 
 This step is intended for users who need to reset their Steam setup before reinstalling Headcrab.
 
+::: tip Stuck on loading screen in Game Mode?
+If your Steam Deck or Linux PC is stuck in an infinite loading loop in Game Mode and you cannot access Desktop Mode, follow our **[Game Mode Boot Loop Fix (TTY Recovery Guide)](/recovery-tty)** to recover your system using a plain-text TTY terminal.
+:::
+
 ### SteamOS preparation
 
 *Users on standard desktop Linux distributions can skip this subsection.*

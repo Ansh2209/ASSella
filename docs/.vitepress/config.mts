@@ -23,7 +23,8 @@ export default defineConfig({
         items: [
           { text: 'Themes', link: '/themes' },
           { text: 'Dependencies', link: '/dependencies' },
-          { text: 'Optional Components', link: '/optional-components' }
+          { text: 'Optional Components', link: '/optional-components' },
+          { text: 'Game Mode Boot Loop Fix (TTY)', link: '/recovery-tty' }
         ]
       },
       { text: 'Releases', link: 'https://github.com/niwia/ASSella/releases' }
@@ -42,7 +43,8 @@ export default defineConfig({
         items: [
           { text: 'Themes Guide', link: '/themes' },
           { text: 'Dependencies', link: '/dependencies' },
-          { text: 'Optional Components', link: '/optional-components' }
+          { text: 'Optional Components', link: '/optional-components' },
+          { text: 'Game Mode Boot Loop Fix (TTY)', link: '/recovery-tty' }
         ]
       }
     ],

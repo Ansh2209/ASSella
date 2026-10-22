@@ -229,8 +229,8 @@ detect_channel() {
     if [ -n "${TARGET_CHANNEL:-}" ]; then
         return 0
     fi
-    # Default to beta channel for beta branch installer
-    TARGET_CHANNEL="beta"
+    # Default to stable channel (main branch releases)
+    TARGET_CHANNEL="stable"
 }
 
 prompt_user() {
@@ -413,7 +413,7 @@ get_latest_github_version() {
             PARSED=$(echo "$REL_JSON" | python3 -c '
 import sys, json
 
-target_channel = sys.argv[1] if len(sys.argv) > 1 else "beta"
+target_channel = sys.argv[1] if len(sys.argv) > 1 else "stable"
 try:
     data = json.load(sys.stdin)
     for r in data:
@@ -466,8 +466,8 @@ except Exception:
             LATEST_VER="v3.0Release_candidate111026001"
             LATEST_URL="https://github.com/niwia/ASSella/releases/download/v3.0Release_candidate111026001/assella3.0canary.appimage"
         elif [ "$TARGET_CHANNEL" = "stable" ]; then
-            LATEST_VER="v2.6.5"
-            LATEST_URL="https://github.com/niwia/ASSella/releases/download/v2.6.5/ASSella.AppImage"
+            LATEST_VER="v3.0.1"
+            LATEST_URL="https://github.com/niwia/ASSella/releases/download/v3.0.1/ASSella.AppImage"
         else
             LATEST_VER="v2.7.0beta"
             LATEST_URL="https://github.com/niwia/ASSella/releases/download/v2.7.0beta/ASSella.AppImage"
