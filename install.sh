@@ -466,8 +466,8 @@ except Exception:
             LATEST_VER="v3.0Release_candidate111026001"
             LATEST_URL="https://github.com/niwia/ASSella/releases/download/v3.0Release_candidate111026001/assella3.0canary.appimage"
         elif [ "$TARGET_CHANNEL" = "stable" ]; then
-            LATEST_VER="v3.0.2"
-            LATEST_URL="https://github.com/niwia/ASSella/releases/download/v3.0.2/ASSella.AppImage"
+            LATEST_VER="v3.0.3"
+            LATEST_URL="https://github.com/niwia/ASSella/releases/download/v3.0.3/ASSella.AppImage"
         else
             LATEST_VER="v2.7.0beta"
             LATEST_URL="https://github.com/niwia/ASSella/releases/download/v2.7.0beta/ASSella.AppImage"
