@@ -36,8 +36,8 @@ from utils.version import (
     get_build_date_display,
 )
 
-BUILD_DATE = "2026-10-22"  # build date of the release under test
-CURRENT_VERSION = "3.0.1"
+BUILD_DATE = "2026-10-23"  # build date of the release under test
+CURRENT_VERSION = "3.0.2"
 
 
 class _FakeResponse:
@@ -113,11 +113,11 @@ class TestUpdateCheckerRules(UpdateCheckerTestCase):
 
     def test_newer_canary_of_same_base_is_offered(self):
         result = self.run_check(
-            releases=[_release("v3.0.1testing241026001", published="2026-10-25T10:00:00Z")],
+            releases=[_release("v3.0.2testing241026001", published="2026-10-25T10:00:00Z")],
             channel="canary",
         )
         self.assertEqual(result["status"], "update_available")
-        self.assertEqual(result["remote_version"], "3.0.1testing241026001")
+        self.assertEqual(result["remote_version"], "3.0.2testing241026001")
         self.assertEqual(result["local_version"], CURRENT_VERSION)
         self.assertTrue(result["is_cross_channel"])
 
@@ -140,23 +140,23 @@ class TestUpdateCheckerRules(UpdateCheckerTestCase):
     def test_same_version_is_not_offered(self):
         """The running build must not be offered back as an update."""
         result = self.run_check(
-            releases=[_release("v3.0.1", published="2026-10-25T10:00:00Z")],
+            releases=[_release("v3.0.2", published="2026-10-25T10:00:00Z")],
             channel="stable",
         )
         self.assertEqual(result["status"], "up_to_date")
 
     def test_newer_stable_release_is_offered(self):
         result = self.run_check(
-            releases=[_release("v3.0.2", published="2026-10-25T10:00:00Z")],
+            releases=[_release("v3.0.3", published="2026-10-25T10:00:00Z")],
             channel="stable",
         )
         self.assertEqual(result["status"], "update_available")
-        self.assertEqual(result["remote_version"], "3.0.2")
+        self.assertEqual(result["remote_version"], "3.0.3")
         self.assertFalse(result["is_cross_channel"])
 
     def test_release_without_appimage_asset_is_ignored(self):
         result = self.run_check(
-            releases=[_release("v3.0.2", published="2026-10-25T10:00:00Z", assets=("ASSella-3.0.2.AppImage.zsync",))],
+            releases=[_release("v3.0.3", published="2026-10-25T10:00:00Z", assets=("ASSella-3.0.3.AppImage.zsync",))],
             channel="stable",
         )
         self.assertEqual(result["status"], "offline")
@@ -183,12 +183,12 @@ class TestUpdateCheckerFallback(UpdateCheckerTestCase):
 
 class TestBuildDateHelpers(unittest.TestCase):
     def test_default_build_date(self):
-        self.assertEqual(version_mod.BUILD_DATE, "2026-10-22")
-        self.assertEqual(get_build_date(), "2026-10-22")
-        self.assertEqual(get_build_date_display(), "22/10/2026")
+        self.assertEqual(version_mod.BUILD_DATE, "2026-10-23")
+        self.assertEqual(get_build_date(), "2026-10-23")
+        self.assertEqual(get_build_date_display(), "23/10/2026")
 
     def test_version_file_matches_the_release(self):
-        self.assertEqual(app_version, "3.0.1")
+        self.assertEqual(app_version, "3.0.2")
 
     def test_build_stamp_in_version_file_wins(self):
         """A dated build ('20261024+ASSella-3.0.1') carries its own build date."""
