@@ -41,6 +41,9 @@ class SteamCfgTestCase(unittest.TestCase):
         self.home = Path(self._tmp.name)
         patcher = mock.patch.dict(os.environ, {"HOME": str(self.home)})
         patcher.start()
+        from core.steam_helpers import invalidate_steam_env_cache
+        invalidate_steam_env_cache()
+        self.addCleanup(invalidate_steam_env_cache)
         self.addCleanup(patcher.stop)
         self.addCleanup(self._tmp.cleanup)
 
@@ -218,10 +221,36 @@ class TestHealthTabControl(unittest.TestCase):
         cfg = self.home / ".steam" / "steam" / "steam.cfg"
         cfg.parent.mkdir(parents=True, exist_ok=True)
         cfg.write_text("BootStrapperInhibitAll=enable\n")
-
         health_tab.refresh_steam_updates_control(self.dialog)
         self.assertEqual(self.dialog.health_steam_updates_btn.text(), "Enable Steam Updates")
         self.assertIn(str(cfg), self.dialog.health_steam_updates_lbl.text())
+
+    def test_enabling_steam_updates_shows_warning_and_cancels_on_no(self):
+        from ui.dialogs.themed_message_box import ThemedMessageBox
+
+        cfg = self.home / ".steam" / "steam" / "steam.cfg"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("BootStrapperInhibitAll=enable\n")
+
+        with mock.patch.object(ThemedMessageBox, "question", return_value=ThemedMessageBox.StandardButton.No) as mock_q:
+            self.health_tab.on_steam_updates_clicked(self.dialog)
+            self.assertTrue(mock_q.called)
+            # Must remain blocked
+            self.assertTrue(steam_updates.are_steam_updates_blocked())
+
+    def test_enabling_steam_updates_unblocks_on_yes(self):
+        from ui.dialogs.themed_message_box import ThemedMessageBox
+
+        cfg = self.home / ".steam" / "steam" / "steam.cfg"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("BootStrapperInhibitAll=enable\n")
+
+        with mock.patch.object(ThemedMessageBox, "question", return_value=ThemedMessageBox.StandardButton.Yes) as mock_q:
+            with mock.patch.object(ThemedMessageBox, "information") as mock_info:
+                self.health_tab.on_steam_updates_clicked(self.dialog)
+                self.assertTrue(mock_q.called)
+                self.assertTrue(mock_info.called)
+                self.assertFalse(steam_updates.are_steam_updates_blocked())
 
 
 if __name__ == "__main__":
