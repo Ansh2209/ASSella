@@ -50,9 +50,27 @@ Releases are automated via [.github/workflows/build-appimage.yml](file:///.githu
    - Generates SHA-256 checksums (`ASSella.AppImage.sha256`).
 3. **Automated GitHub Release Publishing**:
    - Automatically marks Beta and Canary releases as pre-releases on GitHub. Stable releases (`v3.0.0`) are published as official full releases.
-   - Attaches `ASSella.AppImage` (capital `.AppImage` required for compatibility), `.zsync`, and checksum files.
+   - Attaches `ASSella.AppImage` (capital `.AppImage` required for compatibility), `.zsync`, companion source archives (`.tar.gz` and `.zip`), and checksum files (`.sha256`).
 
-### C. Local AppImage Builds (When Testing Locally)
+### C. Companion Source Code Release Packaging (Automated)
+Every GitHub Actions release run automatically generates and publishes standalone source code archives (`ASSella-<tag>-linux-source.tar.gz` and `ASSella-<tag>-linux-source.zip`) alongside SHA-256 checksums (`.sha256`).
+- Archive layout:
+  ```text
+  ASSella-<version>-linux-source/
+  ├── install.sh
+  ├── uninstall.sh
+  └── bin/
+      ├── src/           # Python codebase (excluding __pycache__ & heavy optional deps)
+      ├── run.sh         # Venv/system python launcher wrapper
+      ├── requirements.txt
+      └── icon.png
+  ```
+- Packaging rules:
+  - Prunes `__pycache__` directories and `*.pyc` bytecode files.
+  - Strips heavy on-demand binaries (`Goldberg`, `Steamless`, `SLScheevo` under `src/deps/`) which are fetched dynamically from R2, keeping the source distribution lightweight (~38MB).
+  - Computes and publishes `.sha256` checksum files alongside each archive.
+
+### D. Local AppImage Builds (When Testing Locally)
 - Production binary: **`ASSella.AppImage`** (`~/.local/share/ACCELA/ASSella.AppImage`).
 - Local beta development binary: **`ASSella-2.7dev.AppImage`** (`~/.local/share/ACCELA/ASSella-2.7dev.AppImage`).
 - Local canary development binary: **`assella3.0canary.appimage`** (`~/.local/share/ACCELA/assella3.0canary.appimage`).
