@@ -17,7 +17,12 @@ from PyQt6.QtCore import Qt, QMetaObject, Q_ARG, pyqtSlot
 from PyQt6.QtGui import QFont
 
 from utils.settings import get_settings
-from utils.version import app_version, get_branch_from_version, check_for_updates
+from utils.version import (
+    app_version,
+    get_branch_from_version,
+    get_build_date_display,
+    check_for_updates,
+)
 from ui.dialogs.themed_dialog import install_themed_frame
 
 logger = logging.getLogger(__name__)
@@ -148,7 +153,7 @@ class CreditsDialog(QDialog):
         ver_row.setContentsMargins(0, 0, 0, 0)
         ver_row.setSpacing(8)
 
-        build_date = "21/10/2026"
+        build_date = get_build_date_display()
         ver_lbl = QLabel(f"v{app_version}  ·  {build_date}")
         ver_lbl.setStyleSheet("font-size: 11px; color: #666666;")
 

@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import urllib.request
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from utils.paths import Paths
 
@@ -26,6 +26,37 @@ def _load_version() -> str:
 
 
 app_version = _load_version()
+
+# Build date of this release (ISO). The release pipeline does not stamp the
+# version file, so this constant is the authoritative build date and has to be
+# bumped together with src/res/version. A version file that does carry a build
+# stamp ('20261022+ASSella-3.0.1') wins over it - see get_build_date().
+BUILD_DATE = "2026-10-22"
+
+
+def _stamp_date(raw: str) -> str:
+    """Return the ISO date (YYYY-MM-DD) of a build stamp prefix, or '' when absent.
+
+    Handles the 'YYYYMMDD+ASSella-3.0.1' stamp used by dated builds.
+    """
+    m = re.match(r"^(\d{8})\+", (raw or "").strip())
+    if not m:
+        return ""
+    s = m.group(1)
+    return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+
+
+def get_build_date() -> str:
+    """Return the ISO build date (YYYY-MM-DD) of the running build."""
+    return _stamp_date(app_version) or BUILD_DATE
+
+
+def get_build_date_display() -> str:
+    """Return the build date of the running build as DD/MM/YYYY for UI display."""
+    parts = get_build_date().split("-")
+    if len(parts) == 3:
+        return f"{parts[2]}/{parts[1]}/{parts[0]}"
+    return BUILD_DATE
 
 
 def extract_semver(raw_version: str) -> str:
@@ -188,6 +219,54 @@ def get_effective_update_channel(configured_channel: Optional[str] = None, curre
     return "stable" if branch == "main" else branch
 
 
+def _release_date(release: Dict[str, Any]) -> str:
+    """Return the publication date (YYYY-MM-DD) of a GitHub release, '' when unknown."""
+    raw = str(release.get("published_at") or release.get("created_at") or "").strip()
+    return raw[:10] if len(raw) >= 10 else ""
+
+
+def _is_newer_release(
+    remote_version: str,
+    remote_date: str,
+    local_version: str,
+    local_date: str,
+) -> bool:
+    """Decide whether a remote build is a genuine upgrade over the running one.
+
+    Three rules, applied in order:
+
+      1. The same version string is never an upgrade - that is the build that is
+         already running, and offering it would nag on every check.
+      2. A release published before this build was compiled is never an upgrade,
+         whatever its version number is: it is an older build.
+      3. Across version lines the base version (major.minor.patch) decides, so a
+         channel switch can never offer a downgrade ('2.7.0beta' over '3.0.1').
+         Within one base version the publication date decides, because a
+         pre-release of that base ranks below the release it precedes.
+    """
+    if not remote_version:
+        return False
+    if remote_version == local_version:
+        return False
+
+    remote_parsed = parse_version(remote_version)
+    local_parsed = parse_version(local_version)
+
+    # Rule 2: published before this build was compiled.
+    if remote_date and local_date and remote_date < local_date:
+        return False
+
+    # Rule 3: the base version decides across version lines.
+    if remote_parsed[:3] != local_parsed[:3]:
+        return remote_parsed[:3] > local_parsed[:3]
+
+    # Same base version: the publication date decides, a dated release is newer
+    # than the build it was compared against.
+    if remote_date and local_date:
+        return remote_date >= local_date
+    return remote_parsed > local_parsed
+
+
 def check_for_updates(
     configured_channel: Optional[str] = None,
     current_version: Optional[str] = None,
@@ -195,19 +274,25 @@ def check_for_updates(
 ) -> Dict[str, Any]:
     """
     Check GitHub for ASSella application updates.
-    
+
+    A release is only offered when it genuinely ranks above the running build
+    (see _is_newer_release): a channel switch never offers a downgrade, and a
+    release published before this build was compiled is ignored.
+
     Returns dict:
       - status: 'update_available' | 'up_to_date' | 'offline'
       - remote_version: str or None
       - local_version: str
       - channel: str ('stable' | 'beta' | 'canary')
-      - is_cross_channel: bool
+      - is_cross_channel: bool (label: the configured channel differs from the
+        channel of the running build)
       - error: str or None
     """
     cur = current_version or app_version
     local_clean = extract_semver(cur)
+    local_date = get_build_date()
     channel = get_effective_update_channel(configured_channel, cur)
-    remote_clean = None
+    candidates: List[Tuple[str, str]] = []  # (version, publication date)
     last_error = None
 
     # 1. Primary check: GitHub Releases API
@@ -253,26 +338,27 @@ def check_for_updates(
                 )
 
                 if has_appimage:
-                    remote_clean = extract_semver(tag)
-                    break
+                    candidates.append((extract_semver(tag), _release_date(r)))
     except Exception as e:
         last_error = str(e)
         logger.debug(f"[Updater] GitHub Releases API check error: {e}")
 
-    # 2. Fallback check: raw version file on GitHub branch
-    if not remote_clean:
+    # 2. Fallback check: raw version file on GitHub branch. Only reached when the
+    #    releases API yielded nothing for this channel; the file carries no
+    #    publication date, so the version comparison has to carry the decision.
+    if not candidates:
         try:
             branch = channel if channel in ("beta", "canary") else "main"
             url = f"https://raw.githubusercontent.com/niwia/ASSella/{branch}/src/res/version"
             req = urllib.request.Request(url, headers={"User-Agent": "ASSella-Updater"})
             with urllib.request.urlopen(req, timeout=timeout) as response:
                 remote_raw = response.read().decode("utf-8").strip()
-                remote_clean = extract_semver(remote_raw)
+                candidates.append((extract_semver(remote_raw), _stamp_date(remote_raw)))
         except Exception as e:
             last_error = str(e)
             logger.debug(f"[Updater] Fallback raw version check error: {e}")
 
-    if not remote_clean:
+    if not candidates:
         return {
             "status": "offline",
             "remote_version": None,
@@ -281,6 +367,17 @@ def check_for_updates(
             "is_cross_channel": False,
             "error": last_error or "Could not determine latest version.",
         }
+
+    # The newest candidate that is a genuine upgrade over the running build. A
+    # candidate that only looks newer (older build date, lower base version) is
+    # never offered - that is what used to make a channel switch ask the user to
+    # "update" to an older build.
+    offerable = [c for c in candidates if _is_newer_release(c[0], c[1], local_clean, local_date)]
+    best = max(
+        offerable or candidates,
+        key=lambda c: (parse_version(c[0])[:3], parse_version(c[0]), c[1]),
+    )
+    remote_clean = best[0]
 
     is_local_canary = any(x in local_clean.lower() for x in ("canary", "testing", "devtest"))
     is_local_beta = any(x in local_clean.lower() for x in ("beta", "dev", "rc")) and not is_local_canary
@@ -292,16 +389,13 @@ def check_for_updates(
         or (channel == "canary" and not is_local_canary)
     )
 
-    is_newer = parse_version(remote_clean) > parse_version(local_clean)
-    is_cross = bool(channel_mismatch and remote_clean != local_clean)
-
-    if is_cross or is_newer:
+    if offerable:
         return {
             "status": "update_available",
             "remote_version": remote_clean,
             "local_version": local_clean,
             "channel": channel,
-            "is_cross_channel": is_cross,
+            "is_cross_channel": bool(channel_mismatch),
             "error": None,
         }
 

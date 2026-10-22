@@ -2,6 +2,8 @@ import logging
 import os
 import sys
 import threading
+from pathlib import Path
+from typing import Tuple
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (
@@ -243,18 +245,6 @@ def create_health_tab(dialog) -> QWidget:
             color: #FFFFFF;
         }
     """
-    crab_disabled_style = """
-        QPushButton {
-            background-color: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 6px;
-            color: rgba(255, 255, 255, 0.25);
-            padding: 6px 14px;
-            font-size: 8.5pt;
-            font-weight: 500;
-        }
-    """
-
     dialog.health_h3adcrab_btn = QPushButton("h3adcrab")
     dialog.health_h3adcrab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
     dialog.health_h3adcrab_btn.setStyleSheet(crab_btn_style)
@@ -270,12 +260,34 @@ def create_health_tab(dialog) -> QWidget:
     crab_row.addWidget(dialog.health_r3set_crab_btn, 1)
 
     dialog.health_smallcrab_btn = QPushButton("smallcrab")
-    dialog.health_smallcrab_btn.setEnabled(False)
-    dialog.health_smallcrab_btn.setStyleSheet(crab_disabled_style)
-    dialog.health_smallcrab_btn.setToolTip("smallcrab (Placeholder / Coming soon)")
+    dialog.health_smallcrab_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    dialog.health_smallcrab_btn.setStyleSheet(crab_btn_style)
+    dialog.health_smallcrab_btn.setToolTip("Experimental Headcrab fork: patches the Steam launch scripts so SLSsteam loads")
+    dialog.health_smallcrab_btn.clicked.connect(lambda: on_smallcrab_clicked(dialog))
     crab_row.addWidget(dialog.health_smallcrab_btn, 1)
 
     sls_layout.addLayout(crab_row)
+
+    # Steam Updates Row: the steam.cfg block, and the button that flips it.
+    steam_updates_row = QHBoxLayout()
+    steam_updates_row.setContentsMargins(2, 2, 2, 2)
+    steam_updates_row.setSpacing(8)
+
+    dialog.health_steam_updates_lbl = QLabel("")
+    dialog.health_steam_updates_lbl.setStyleSheet("color: rgba(255, 255, 255, 0.6); font-size: 8.5pt; font-weight: 400; border: none; background: transparent;")
+    dialog.health_steam_updates_lbl.setWordWrap(True)
+    dialog.health_steam_updates_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    steam_updates_row.addWidget(dialog.health_steam_updates_lbl, 1)
+
+    dialog.health_steam_updates_btn = QPushButton("Disable Steam Updates")
+    dialog.health_steam_updates_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    dialog.health_steam_updates_btn.setStyleSheet(crab_btn_style)
+    dialog.health_steam_updates_btn.setToolTip("Steam reads steam.cfg when it starts, so this applies on the next Steam start.")
+    dialog.health_steam_updates_btn.clicked.connect(lambda: on_steam_updates_clicked(dialog))
+    steam_updates_row.addWidget(dialog.health_steam_updates_btn, 0)
+
+    sls_layout.addLayout(steam_updates_row)
+    refresh_steam_updates_control(dialog)
     layout.addWidget(sls_card)
 
     # ── 2. SLS Config (Linux/Steam Deck) ──────────────────────────────
@@ -488,6 +500,8 @@ def refresh_health_tab_status(dialog) -> None:
     threading.Thread(target=_ver_worker, daemon=True).start()
 
     update_rec_score_badge(dialog)
+
+    refresh_steam_updates_control(dialog)
 
 
 def handle_sls_version_check_done(dialog, result: dict) -> None:
@@ -814,4 +828,171 @@ def on_r3set_crab_clicked(dialog) -> None:
     if reply == ThemedMessageBox.StandardButton.Yes:
         cmd = ["bash", "-c", 'curl -fsSL "https://raw.githubusercontent.com/Deadboy666/h3adcr-b-modul3s/refs/heads/main/reset2vanilla.sh" | bash; echo; echo \'--- Done. Press Enter to close ---\'; read _']
         _launch_terminal_and_quit_app(dialog, cmd)
+
+
+# ── Steam updates (steam.cfg) ───────────────────────────────────────────
+
+def refresh_steam_updates_control(dialog) -> None:
+    """Show the live state of the steam.cfg update block in the Health tab."""
+    btn = getattr(dialog, "health_steam_updates_btn", None)
+    lbl = getattr(dialog, "health_steam_updates_lbl", None)
+    if btn is None:
+        return
+
+    from utils.steam_updates import are_steam_updates_blocked, find_steam_cfg, target_steam_cfg
+
+    blocked = are_steam_updates_blocked()
+    existing = find_steam_cfg()
+    path = existing if existing is not None else target_steam_cfg()
+
+    if blocked:
+        btn.setText("Enable Steam Updates")
+        if lbl is not None:
+            lbl.setText(f"Steam updates are blocked - {path} exists. Steam reads it at startup, so this applies on the next Steam start.")
+    else:
+        btn.setText("Disable Steam Updates")
+        if lbl is not None:
+            lbl.setText("Steam updates are allowed - no steam.cfg found. Steam reads it at startup, so this applies on the next Steam start.")
+
+    btn.setToolTip(
+        f"Toggles {path}\n"
+        "Steam reads steam.cfg when it starts, so the change applies on the next Steam start."
+    )
+
+
+def on_steam_updates_clicked(dialog) -> None:
+    """Create or remove steam.cfg, so Steam can (or cannot) update itself."""
+    from utils.steam_updates import are_steam_updates_blocked, set_steam_updates_blocked
+
+    blocked = are_steam_updates_blocked()
+    ok, message = set_steam_updates_blocked(not blocked)
+
+    refresh_steam_updates_control(dialog)
+    _refresh_main_window_status(dialog)
+
+    if not ok:
+        ThemedMessageBox.critical(dialog, "Steam Updates", message)
+        return
+
+    ThemedMessageBox.information(
+        dialog,
+        "Steam Updates",
+        message + "\n\nSteam reads steam.cfg when it starts - restart Steam for this to take effect.",
+    )
+
+
+def _refresh_main_window_status(dialog) -> None:
+    """Let the status visor show the new Steam Updates state right away."""
+    main_window = getattr(dialog, "main_window", None)
+    if main_window is None or not hasattr(main_window, "refresh_system_status"):
+        return
+    try:
+        main_window.refresh_system_status()
+    except Exception as e:
+        logger.warning("Could not refresh the main window status: %s", e)
+
+
+# ── smallcrab ───────────────────────────────────────────────────────────
+
+SMALLCRAB_URL = "https://raw.githubusercontent.com/niwia/smallcrab/main/smallcrab.sh"
+
+
+def _slssteam_config_path() -> Path:
+    """The SLSsteam config.yaml the user has to back up."""
+    try:
+        from utils.yaml_config_manager import get_user_config_path
+        return get_user_config_path()
+    except Exception as e:
+        logger.warning("Could not resolve the SLSsteam config path: %s", e)
+        from utils.assfixer import DEFAULT_CONFIG_PATH
+        return DEFAULT_CONFIG_PATH
+
+
+def _backup_slssteam_config(config_path: Path) -> Tuple[bool, str]:
+    """Copy config.yaml next to itself; the Health tab can restore it later.
+
+    Returns ``(ok, backup_path)``; the path is empty when there was nothing
+    to copy.
+    """
+    if not config_path.exists():
+        return True, ""
+    try:
+        from utils.assfixer import make_backup_with_rotation
+        backup = make_backup_with_rotation(config_path)
+    except Exception as e:
+        logger.error("Could not back up %s: %s", config_path, e)
+        return False, f"Could not back up {config_path}: {e}"
+    return True, str(backup)
+
+
+def _confirm_slssteam_backup(dialog) -> Tuple[bool, str]:
+    """Warn that the installer rewrites config.yaml, and offer the backup."""
+    config_path = _slssteam_config_path()
+
+    choice = ThemedMessageBox.choices(
+        dialog,
+        "Back Up Your SLSsteam Config",
+        "Headcrab - the installer smallcrab is forked from - rewrites the SLSsteam "
+        "configuration when it installs, and smallcrab patches the same Steam files.\n\n"
+        f"Config file:\n{config_path}\n\n"
+        "Back it up first if you keep custom settings there. ASSella can make the copy "
+        "for you and restore it later from Health -> SLS Config -> Restore Backup.",
+        [
+            ("Back Up Now", "backup"),
+            ("Continue Without Backup", "skip"),
+            ("Cancel", "cancel"),
+        ],
+        default="backup",
+        severity="warning",
+    )
+
+    if choice == "cancel":
+        return False, ""
+    if choice != "backup":
+        return True, ""
+
+    ok, backup_path = _backup_slssteam_config(config_path)
+    if not ok:
+        ThemedMessageBox.warning(dialog, "Backup Failed", backup_path)
+        return True, ""
+    if not backup_path:
+        return True, ""
+    return True, f"\n\nBackup created: {backup_path}"
+
+
+def _confirm_smallcrab(dialog, backup_note: str = "") -> bool:
+    """Explain what smallcrab does, then ask whether to run it."""
+    choice = ThemedMessageBox.choices(
+        dialog,
+        "Run smallcrab",
+        "smallcrab is an experimental fork of Headcrab.\n\n"
+        "What it does:\n"
+        "  - Patches your Steam client so SLSsteam loads.\n"
+        "  - Does not downgrade or update Steam.\n"
+        "  - Does not edit your configs.\n\n"
+        "It is recommended that you only run this if you know what this does.\n\n"
+        "The script may also ask to create steam.cfg, which stops Steam from updating "
+        "itself. You can undo that with the Steam Updates button in this tab.\n\n"
+        "A terminal window will open and ASSella will close, the same as the h3adcrab "
+        "button." + backup_note,
+        [
+            ("Run smallcrab", "run"),
+            ("Cancel", "cancel"),
+        ],
+        default="run",
+        severity="warning",
+    )
+    return choice == "run"
+
+
+def on_smallcrab_clicked(dialog) -> None:
+    """Warn about the config rewrite, then run smallcrab in a terminal."""
+    proceed, backup_note = _confirm_slssteam_backup(dialog)
+    if not proceed:
+        return
+    if not _confirm_smallcrab(dialog, backup_note):
+        return
+
+    cmd = ["bash", "-c", f"curl -fsSL --retry 3 {SMALLCRAB_URL} | bash; echo; echo '--- Done. Press Enter to close ---'; read _"]
+    _launch_terminal_and_quit_app(dialog, cmd)
 
