@@ -5,7 +5,7 @@ Replaces native OS QProgressDialog with ASSella dark theme and DialogTitleBar.
 
 import logging
 from typing import Optional
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QPoint
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import (
     QDialog,
@@ -166,6 +166,7 @@ class ThemedProgressDialog(QDialog):
     # QProgressDialog Compatible Interface
     # ─────────────────────────────────────────────────────────────────────────
 
+    @pyqtSlot(str)
     def setLabelText(self, text: str):
         self.label.setText(text)
         if self.title_bar and hasattr(self.title_bar, "title_label"):
@@ -188,8 +189,14 @@ class ThemedProgressDialog(QDialog):
     def setRange(self, minimum: int, maximum: int):
         self.progress_bar.setRange(minimum, maximum)
 
+    @pyqtSlot(int)
     def setValue(self, value: int):
         self.progress_bar.setValue(value)
+
+    @pyqtSlot()
+    def finish(self):
+        """Close the dialog through a queued call from a worker thread."""
+        self.accept()
 
     def setMaximum(self, maximum: int):
         self.progress_bar.setMaximum(maximum)
