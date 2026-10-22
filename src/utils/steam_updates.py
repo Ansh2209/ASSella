@@ -38,14 +38,28 @@ _FALSE_VALUES = {"disable", "disabled", "false", "0"}
 def candidate_paths() -> List[Path]:
     """Every ``steam.cfg`` location Steam may read, most likely first."""
     home = Path.home()
-    return [
+    paths: List[Path] = []
+
+    try:
+        from core.steam_helpers import get_steam_env
+        env = get_steam_env()
+        if env and env.steam_path:
+            p = Path(env.steam_path) / "steam.cfg"
+            paths.append(p)
+    except Exception as e:
+        logger.debug("Could not query SteamEnv in candidate_paths: %s", e)
+
+    for p in [
         home / ".steam" / "steam" / "steam.cfg",
         home / ".steam" / "root" / "steam.cfg",
         home / ".local" / "share" / "Steam" / "steam.cfg",
         home / ".steam" / "steam.cfg",
         home / ".var" / "app" / "com.valvesoftware.Steam" / ".steam" / "steam" / "steam.cfg",
         home / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam" / "steam.cfg",
-    ]
+    ]:
+        if p not in paths:
+            paths.append(p)
+    return paths
 
 
 def find_steam_cfg() -> Optional[Path]:
@@ -64,6 +78,16 @@ def target_steam_cfg() -> Path:
     existing = find_steam_cfg()
     if existing is not None:
         return existing
+
+    try:
+        from core.steam_helpers import get_steam_env
+        env = get_steam_env()
+        if env and env.steam_path:
+            p = Path(env.steam_path) / "steam.cfg"
+            if p.parent.is_dir():
+                return p
+    except Exception as e:
+        logger.debug("Could not query SteamEnv in target_steam_cfg: %s", e)
 
     home = Path.home()
     flatpak_steam = home / ".var" / "app" / "com.valvesoftware.Steam" / ".steam" / "steam"

@@ -945,6 +945,21 @@ def on_steam_updates_clicked(dialog) -> None:
     from utils.steam_updates import are_steam_updates_blocked, set_steam_updates_blocked
 
     blocked = are_steam_updates_blocked()
+
+    if blocked:
+        reply = ThemedMessageBox.question(
+            dialog,
+            "Enable Steam Updates",
+            "Enabling Steam updates is NOT recommended!\n\n"
+            "Allowing Steam to update itself may overwrite the launcher patches and cause SLSsteam to become incompatible or stop working.\n\n"
+            "Make sure you are aware of this before proceeding!\n\n"
+            "Are you sure you want to enable Steam updates?",
+            ThemedMessageBox.StandardButton.Yes | ThemedMessageBox.StandardButton.No,
+            ThemedMessageBox.StandardButton.No,
+        )
+        if reply != ThemedMessageBox.StandardButton.Yes:
+            return
+
     ok, message = set_steam_updates_blocked(not blocked)
 
     refresh_steam_updates_control(dialog)
