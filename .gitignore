@@ -2,7 +2,9 @@
 *.AppImage
 *.AppImage.bak
 *.tar.gz
+*tar.gz
 *.tar.gsz
+*tar.gsz
 *.zip
 *.sha256
 
