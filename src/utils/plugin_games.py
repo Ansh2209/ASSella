@@ -183,6 +183,7 @@ def register_plugin_game(
     installdir: str = "",
     depot_names: Optional[Dict[Union[str, int], str]] = None,
     dlc_appids: Optional[List[Union[str, int]]] = None,
+    is_dlc_only: Optional[bool] = None,
 ) -> bool:
     """
     Register a newly installed or downloaded game as plugin-managed.
@@ -193,9 +194,12 @@ def register_plugin_game(
         logger.warning(f"[PluginGames] Invalid AppID '{appid}' for registration")
         return False
 
-    # Normalise DLC AppIDs (if DLC-only mode was used)
-    clean_dlc_appids = [str(d).strip() for d in (dlc_appids or []) if str(d).strip().isdigit()]
-    is_dlc_only = bool(clean_dlc_appids)
+    # Entitlements and mode are separate: full games can have DLC AppIDs too.
+    clean_dlc_appids = list(dict.fromkeys(
+        str(d).strip() for d in (dlc_appids or [])
+        if str(d).strip().isdigit() and str(d).strip() != appid_str
+    ))
+    is_dlc_only = bool(clean_dlc_appids) if is_dlc_only is None else bool(is_dlc_only)
 
     # AdditionalDepots: Base AppIDs and DLC AppIDs must NEVER be in clean_depots
     if is_dlc_only:
@@ -204,7 +208,7 @@ def register_plugin_game(
     else:
         clean_depots = [
             str(d).strip() for d in depot_ids
-            if str(d).strip().isdigit() and str(d).strip() != appid_str and str(d).strip() not in clean_dlc_appids
+            if str(d).strip().isdigit() and str(d).strip() != appid_str
         ]
     clean_keys = {}
     if decryption_keys:
@@ -271,8 +275,10 @@ def register_plugin_game(
             for dlc_id in clean_dlc_appids:
                 editor.add_app(dlc_id, comment=f"{name} DLC ({dlc_id})")
         else:
-            # Normal mode: add base AppID
+            # Full game owns its base and discovered DLC entitlements.
             editor.add_app(appid_str, comment=name)
+            for dlc_id in clean_dlc_appids:
+                editor.add_app(dlc_id, comment=f"[DLC] {name} ({dlc_id})")
 
         # Add only the required depots with clear comments (never AppIDs!)
         # A depot can be refused by the editor's guards (it is already a
@@ -551,6 +557,10 @@ def sync_all_plugin_games_to_config() -> None:
                     editor.add_app(dlc_id, comment=f"{name} DLC ({dlc_id})")
             else:
                 editor.add_app(appid_str, comment=name)
+                # A full game can have DLC entitlements independently of its
+                # DLC-only mode; restore them before adding dual-identity depots.
+                for dlc_id in game.get("dlc_appids", []):
+                    editor.add_app(dlc_id, comment=f"[DLC] {name} ({dlc_id})")
 
             for did in game.get("depots", []):
                 if str(did) == appid_str:
@@ -1181,6 +1191,7 @@ def migrate_game_to_atom(
         installdir=installdir,
         depot_names=depot_names,
         dlc_appids=dlc_appids if is_dlc else None,
+        is_dlc_only=is_dlc,
     )
     if not registered:
         return {
@@ -1361,5 +1372,3 @@ def batch_convert_games_to_atom(
     if markers_retained:
         result["markers_retained"] = markers_retained
     return result
-
-

@@ -1951,6 +1951,7 @@ class LibraryActionsMixin:
                                     installdir=game_data.get("install_dir", ""),
                                     depot_names=d_names,
                                     dlc_appids=rec.get("dlc_appids", []),
+                                    is_dlc_only=bool(rec.get("dlc_only", False)),
                                 )
                             except Exception as _e:
                                 logger.warning(f"Could not sync AT0-M depots after selection: {_e}")

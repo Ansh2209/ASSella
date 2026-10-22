@@ -472,12 +472,16 @@ class PostInstallMixin:
                                 or self.game_data.get("install_dir")
                                 or ""
                             )
+                            from utils.plugin_games import load_plugin_library
+                            prior_record = load_plugin_library().get(str(appid), {})
                             register_plugin_game(
                                 appid=str(appid),
                                 name=self.game_data.get("game_name", f"App {appid}"),
                                 depot_ids=selected_depots,
                                 decryption_keys=depot_keys,
                                 installdir=installdir,
+                                dlc_appids=prior_record.get("dlc_appids", []),
+                                is_dlc_only=bool(prior_record.get("dlc_only", False)),
                             )
                             logger.info(f"[TaskManager] Successfully synchronized AT0-M / SLSsteam registration for {appid}")
                         except Exception as _reg_err:

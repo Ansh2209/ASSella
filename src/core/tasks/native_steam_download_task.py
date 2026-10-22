@@ -181,8 +181,13 @@ class NativeSteamDownloadTask(QObject):
         log_offset = sls_log.stat().st_size if sls_log.exists() else 0
 
         # 3. Patch config.yaml (BEFORE deploying plugins)
+        from utils.dlc_helpers import is_dlc_only_mode, get_all_dlcs_for_app
+        is_dlc = is_dlc_only_mode(appid) or bool(game_data.get("is_dlc_only"))
+        discovered_dlcs = get_all_dlcs_for_app(appid, game_data, allow_network=not is_dlc)
+        dlc_appids = [str(item["dlc_appid"]) for item in discovered_dlcs if item.get("dlc_appid")]
         patch_ok = self._patch_config(
-            config_path, appid, game_name, depot_keys, selected_depots=selected_depots, game_data=game_data
+            config_path, appid, game_name, depot_keys, selected_depots=selected_depots,
+            game_data=game_data, dlc_appids=dlc_appids,
         )
         if not patch_ok:
             msg = "Failed to patch SLSsteam config.yaml."
@@ -277,7 +282,7 @@ class NativeSteamDownloadTask(QObject):
             # Register into plugin_library so AT0-M tracks it
             try:
                 from utils.plugin_games import register_plugin_game
-                from utils.dlc_helpers import is_dlc_only_mode, get_dlc_only_info
+                from utils.dlc_helpers import is_dlc_only_mode, get_all_dlcs_for_app
 
                 depot_names: Dict[str, str] = {}
                 depots_meta = (game_data.get("depots") or {}) if game_data else {}
@@ -289,21 +294,19 @@ class NativeSteamDownloadTask(QObject):
 
                 is_dlc = is_dlc_only_mode(appid) or bool(game_data and game_data.get("is_dlc_only"))
                 dlc_appids: List[str] = []
-                if is_dlc:
-                    try:
-                        d_info = get_dlc_only_info(appid)
-                        if d_info:
-                            dlc_appids = [str(x["dlc_appid"]) for x in d_info if x.get("dlc_appid")]
-                    except Exception as e:
-                        logger.debug(f"[NativeSteamDL] DLC AppID lookup failed for {appid}: {e}")
-                    if not dlc_appids:
-                        for did in depot_keys.keys():
-                            did_str = str(did)
-                            meta = depots_meta.get(did_str) or depots_meta.get(int(did_str) if did_str.isdigit() else did_str) or {}
-                            if isinstance(meta, dict):
-                                dlc_id = str(meta.get("dlcappid") or "").strip()
-                                if dlc_id and dlc_id != appid and dlc_id not in dlc_appids:
-                                    dlc_appids.append(dlc_id)
+                try:
+                    d_info = get_all_dlcs_for_app(appid, game_data, allow_network=not is_dlc)
+                    dlc_appids = [str(x["dlc_appid"]) for x in d_info if x.get("dlc_appid")]
+                except Exception as e:
+                    logger.debug(f"[NativeSteamDL] DLC AppID lookup failed for {appid}: {e}")
+                if not dlc_appids:
+                    for did in depot_keys.keys():
+                        did_str = str(did)
+                        meta = depots_meta.get(did_str) or depots_meta.get(int(did_str) if did_str.isdigit() else did_str) or {}
+                        if isinstance(meta, dict):
+                            dlc_id = str(meta.get("dlcappid") or "").strip()
+                            if dlc_id and dlc_id != appid and dlc_id not in dlc_appids:
+                                dlc_appids.append(dlc_id)
 
                 installdir = game_data.get("install_dir") or game_data.get("installdir") or ""
                 register_plugin_game(
@@ -314,6 +317,7 @@ class NativeSteamDownloadTask(QObject):
                     installdir=installdir,
                     depot_names=depot_names,
                     dlc_appids=dlc_appids,
+                    is_dlc_only=is_dlc,
                 )
 
                 # Clean legacy ACCELA markers from install folder if any exist
@@ -615,7 +619,8 @@ class NativeSteamDownloadTask(QObject):
         resolved_dlc_appids = set(str(d) for d in (dlc_appids or []))
         if game_data:
             if game_data.get("dlcs"):
-                for d in game_data["dlcs"].keys():
+                dlc_iter = game_data["dlcs"].keys() if isinstance(game_data["dlcs"], dict) else game_data["dlcs"]
+                for d in dlc_iter:
                     resolved_dlc_appids.add(str(d))
             if game_data.get("depots"):
                 for dinfo in game_data["depots"].values():
@@ -692,6 +697,14 @@ class NativeSteamDownloadTask(QObject):
                     content = fixed_content
             else:
                 content = fixed_content.rstrip() + f"\n\nAdditionalApps:\n{entry_line}"
+            for did in sorted(dlc_appids, key=lambda x: int(x) if x.isdigit() else 0):
+                bounds = _get_section_bounds(content, "AdditionalApps")
+                section = content[bounds[1]:bounds[2]] if bounds else ""
+                if not re.search(rf"^[ \t]*-[ \t]*{re.escape(did)}(?:[ \t]*#[^\r\n]*)?$", section, re.MULTILINE):
+                    if bounds:
+                        content = _append_to_additional_apps(content, did, f"[DLC] {game_name} ({did})", bounds)
+                    else:
+                        content = content.rstrip() + f"\n\nAdditionalApps:\n  - {did} # [DLC] {game_name}\n"
 
         # 3. Format AdditionalDepots with descriptive comments
         from utils.yaml_config_manager import SHARED_REDISTS
@@ -706,7 +719,7 @@ class NativeSteamDownloadTask(QObject):
                     set(str(d) for d in game_data["depots"].keys()) if (game_data and game_data.get("depots")) else set()
                 )
             )
-            new_depot_ids = [d for d in raw_candidates if d != appid_str and d not in dlc_appids]
+            new_depot_ids = [d for d in raw_candidates if d != appid_str]
 
         # In AT0-M mode: Only include depots that have decryption keys (or are shared redists)
         # to prevent Steam "DepotWithoutKey" errors (e.g. blacklisted/missing depots like in 883710)
@@ -734,12 +747,12 @@ class NativeSteamDownloadTask(QObject):
                 if m:
                     did = m.group(1)
                     # Never keep base AppIDs in AdditionalDepots
-                    if did != appid_str and did not in dlc_appids:
+                    if did != appid_str:
                         existing_depots_comments[did] = m.group(2).strip() if m.group(2) else ""
 
         # If user explicitly selected depots, prune any depots of THIS game that are not selected
         if game_data and game_data.get("depots") and selected_depots:
-            all_game_depots = {str(d) for d in game_data["depots"].keys() if str(d) != appid_str and str(d) not in dlc_appids}
+            all_game_depots = {str(d) for d in game_data["depots"].keys() if str(d) != appid_str}
             user_depots_set = set(new_depot_ids)
             for d in all_game_depots:
                 if d in existing_depots_comments and d not in user_depots_set and d not in shared_redists:

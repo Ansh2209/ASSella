@@ -808,6 +808,10 @@ def init_depots_tab(dialog) -> None:
         # Pure license DLCs have no dedicated depot payload or decryption key
         content_dlcs = {d for d in dlc_id_set if (d in game_keys or d in lua_depots or d in gd_depots)}
         pure_license_dlcs = dlc_id_set - content_dlcs
+        dlc_content_depots = set(dlc_id_set)
+        for depot_id, depot_info in gd_depots.items():
+            if isinstance(depot_info, dict) and str(depot_info.get("dlcappid") or "").strip() in dlc_id_set:
+                dlc_content_depots.add(depot_id)
 
         # Build Depots list for THIS GAME ONLY:
         # Collect any shared redistributables explicitly required/referenced by this game
@@ -825,7 +829,8 @@ def init_depots_tab(dialog) -> None:
             | plugin_depots
             | set(game_keys.keys())
             | tagged_depots_from_config
-        ) - ALL_SHARED_REDISTS - {appid_str} - dlc_id_set
+            | set(gd_depots.keys())
+        ) - ALL_SHARED_REDISTS - {appid_str} - pure_license_dlcs
 
         from utils.yaml_config_manager import is_depot_shared_with_other_games
         from managers.db_manager import DatabaseManager
@@ -846,6 +851,8 @@ def init_depots_tab(dialog) -> None:
                 or (f"[DLC] {lua_dlcs.get(d)}" if d in lua_dlcs else None)
                 or f"Depot {d}"
             )
+            if d in dlc_content_depots and not desc.upper().startswith("[DLC]"):
+                desc = f"[DLC] {desc}"
             enrich_info = cached_enrichments.get(d) or cached_app_depots.get(d) or {}
 
             from utils.depot_tag_helpers import get_os_icon

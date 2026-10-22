@@ -751,34 +751,47 @@ def get_all_dlcs_for_app(appid: str, game_data: Optional[dict] = None, allow_net
     3. Steam Store API appdetails (if allow_network=True)
     """
     appid_str = str(appid).strip()
-    results = get_dlc_only_info(appid_str)
-    if results:
-        return results
-
     game_name = (game_data.get("game_name") if game_data else "") or ""
+    results_by_id = {
+        str(item.get("dlc_appid")): item
+        for item in get_dlc_only_info(appid_str)
+        if str(item.get("dlc_appid", "")).isdigit()
+        and str(item.get("dlc_appid")) != appid_str
+    }
 
     # Check game_data["dlcs"]
     if game_data and game_data.get("dlcs"):
         dlc_map = game_data["dlcs"]
         if isinstance(dlc_map, dict):
             for d_id, d_name in dlc_map.items():
-                results.append({
+                results_by_id.setdefault(str(d_id), {
                     "dlc_appid": str(d_id),
                     "dlc_name": str(d_name or f"DLC {d_id}"),
                     "base_game_name": game_name,
                 })
         elif isinstance(dlc_map, list):
             for d_id in dlc_map:
-                results.append({
+                results_by_id.setdefault(str(d_id), {
                     "dlc_appid": str(d_id),
                     "dlc_name": f"DLC {d_id}",
                     "base_game_name": game_name,
                 })
-        if results:
-            return results
 
+    # Some metadata describes the DLC on its content-depot record rather than
+    # in the app's explicit DLC array. Preserve that entitlement relationship.
+    if game_data and isinstance(game_data.get("depots"), dict):
+        for depot_info in game_data["depots"].values():
+            if not isinstance(depot_info, dict):
+                continue
+            dlc_id = str(depot_info.get("dlcappid") or "").strip()
+            if dlc_id.isdigit() and dlc_id != appid_str:
+                results_by_id.setdefault(dlc_id, {
+                    "dlc_appid": dlc_id,
+                    "dlc_name": str(depot_info.get("desc") or f"DLC {dlc_id}"),
+                    "base_game_name": game_name,
+                })
     if not allow_network:
-        return results
+        return list(results_by_id.values())
 
     # Fetch from Steam Store API (handles uninstalled/owned games with 64+ DLCs like 4678800)
     try:
@@ -796,7 +809,7 @@ def get_all_dlcs_for_app(appid: str, game_data: Optional[dict] = None, allow_net
                 game_name = app_info.get("name", "")
             dlc_ids = app_info.get("dlc", [])
             for d_id in dlc_ids:
-                results.append({
+                results_by_id.setdefault(str(d_id), {
                     "dlc_appid": str(d_id),
                     "dlc_name": (
                         f"{game_name} - DLC {d_id}" if game_name else f"DLC {d_id}"
@@ -806,7 +819,7 @@ def get_all_dlcs_for_app(appid: str, game_data: Optional[dict] = None, allow_net
     except Exception as e:
         logger.debug(f"Could not fetch DLC list for {appid_str} from Steam Store API: {e}")
 
-    return results
+    return list(results_by_id.values())
 
 
 def is_goldberg_applied(game_dir: str) -> bool:
@@ -1604,4 +1617,3 @@ def enrich_dlc_names_with_byparr_or_store(
                 logger.debug(f"[DLC] Store batch lookup failed for {chunk}: {exc}")
 
     return enriched
-
