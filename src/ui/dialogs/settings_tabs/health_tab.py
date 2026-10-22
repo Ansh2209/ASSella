@@ -787,8 +787,87 @@ def _launch_terminal_and_quit_app(dialog, cmd: list) -> bool:
     return False
 
 
+def _slssteam_config_path() -> Path:
+    """The SLSsteam config.yaml the user has to back up."""
+    try:
+        from utils.yaml_config_manager import get_user_config_path
+        return get_user_config_path()
+    except Exception as e:
+        logger.warning("Could not resolve the SLSsteam config path: %s", e)
+        from utils.assfixer import DEFAULT_CONFIG_PATH
+        return DEFAULT_CONFIG_PATH
+
+
+def _backup_slssteam_config(config_path: Path) -> Tuple[bool, str]:
+    """Copy config.yaml next to itself; the Health tab can restore it later.
+
+    Returns ``(ok, backup_path)``; the path is empty when there was nothing
+    to copy.
+    """
+    if not config_path.exists():
+        return True, ""
+    try:
+        from utils.assfixer import make_backup_with_rotation
+        backup = make_backup_with_rotation(config_path)
+    except Exception as e:
+        logger.error("Could not back up %s: %s", config_path, e)
+        return False, f"Could not back up {config_path}: {e}"
+    return True, str(backup)
+
+
+def _confirm_slssteam_backup(dialog, installer: str = "Headcrab") -> Tuple[bool, str]:
+    """Warn that the installer rewrites config.yaml, and offer the backup."""
+    config_path = _slssteam_config_path()
+
+    if installer == "smallcrab":
+        msg = (
+            "Headcrab - the installer smallcrab is forked from - rewrites the SLSsteam "
+            "configuration when it installs, and smallcrab patches the same Steam files.\n\n"
+            f"Config file:\n{config_path}\n\n"
+            "Back it up first if you keep custom settings there. ASSella can make the copy "
+            "for you and restore it later from Health -> SLS Config -> Restore Backup."
+        )
+    else:
+        msg = (
+            "Headcrab rewrites the SLSsteam configuration when it installs.\n\n"
+            f"Config file:\n{config_path}\n\n"
+            "Back it up first if you keep custom settings there. ASSella can make the copy "
+            "for you and restore it later from Health -> SLS Config -> Restore Backup."
+        )
+
+    choice = ThemedMessageBox.choices(
+        dialog,
+        "Back Up Your SLSsteam Config",
+        msg,
+        [
+            ("Back Up Now", "backup"),
+            ("Continue Without Backup", "skip"),
+            ("Cancel", "cancel"),
+        ],
+        default="backup",
+        severity="warning",
+    )
+
+    if choice == "cancel":
+        return False, ""
+    if choice != "backup":
+        return True, ""
+
+    ok, backup_path = _backup_slssteam_config(config_path)
+    if not ok:
+        ThemedMessageBox.warning(dialog, "Backup Failed", backup_path)
+        return True, ""
+    if not backup_path:
+        return True, ""
+    return True, f"\n\nBackup created: {backup_path}"
+
+
 def on_h3adcrab_clicked(dialog) -> None:
     """Prompt user with Headcrab mirror options and execute selected script in terminal."""
+    proceed, backup_note = _confirm_slssteam_backup(dialog, installer="Headcrab")
+    if not proceed:
+        return
+
     choice = ThemedMessageBox.choices(
         dialog,
         "Run Headcrab",
@@ -797,7 +876,8 @@ def on_h3adcrab_clicked(dialog) -> None:
         "curl -fsSL headcrab.pages.dev | bash\n\n"
         "Option 2: Alternative mirror (runn.i.ng / GitHub)\n"
         'curl -fsSL "https://runn.i.ng/Deadboy666/h3adcr-b/refs/heads/main/headcrab.sh" | bash\n\n'
-        "A terminal window will open and ASSella will close so Headcrab can safely configure SLSsteam without file conflicts.",
+        "A terminal window will open and ASSella will close so Headcrab can safely configure SLSsteam without file conflicts."
+        + backup_note,
         [
             ("Option 1 (Cloudflare)", "opt1"),
             ("Option 2 (runn.i.ng)", "opt2"),
@@ -897,69 +977,6 @@ def _refresh_main_window_status(dialog) -> None:
 SMALLCRAB_URL = "https://raw.githubusercontent.com/niwia/smallcrab/main/smallcrab.sh"
 
 
-def _slssteam_config_path() -> Path:
-    """The SLSsteam config.yaml the user has to back up."""
-    try:
-        from utils.yaml_config_manager import get_user_config_path
-        return get_user_config_path()
-    except Exception as e:
-        logger.warning("Could not resolve the SLSsteam config path: %s", e)
-        from utils.assfixer import DEFAULT_CONFIG_PATH
-        return DEFAULT_CONFIG_PATH
-
-
-def _backup_slssteam_config(config_path: Path) -> Tuple[bool, str]:
-    """Copy config.yaml next to itself; the Health tab can restore it later.
-
-    Returns ``(ok, backup_path)``; the path is empty when there was nothing
-    to copy.
-    """
-    if not config_path.exists():
-        return True, ""
-    try:
-        from utils.assfixer import make_backup_with_rotation
-        backup = make_backup_with_rotation(config_path)
-    except Exception as e:
-        logger.error("Could not back up %s: %s", config_path, e)
-        return False, f"Could not back up {config_path}: {e}"
-    return True, str(backup)
-
-
-def _confirm_slssteam_backup(dialog) -> Tuple[bool, str]:
-    """Warn that the installer rewrites config.yaml, and offer the backup."""
-    config_path = _slssteam_config_path()
-
-    choice = ThemedMessageBox.choices(
-        dialog,
-        "Back Up Your SLSsteam Config",
-        "Headcrab - the installer smallcrab is forked from - rewrites the SLSsteam "
-        "configuration when it installs, and smallcrab patches the same Steam files.\n\n"
-        f"Config file:\n{config_path}\n\n"
-        "Back it up first if you keep custom settings there. ASSella can make the copy "
-        "for you and restore it later from Health -> SLS Config -> Restore Backup.",
-        [
-            ("Back Up Now", "backup"),
-            ("Continue Without Backup", "skip"),
-            ("Cancel", "cancel"),
-        ],
-        default="backup",
-        severity="warning",
-    )
-
-    if choice == "cancel":
-        return False, ""
-    if choice != "backup":
-        return True, ""
-
-    ok, backup_path = _backup_slssteam_config(config_path)
-    if not ok:
-        ThemedMessageBox.warning(dialog, "Backup Failed", backup_path)
-        return True, ""
-    if not backup_path:
-        return True, ""
-    return True, f"\n\nBackup created: {backup_path}"
-
-
 def _confirm_smallcrab(dialog, backup_note: str = "") -> bool:
     """Explain what smallcrab does, then ask whether to run it."""
     choice = ThemedMessageBox.choices(
@@ -987,7 +1004,7 @@ def _confirm_smallcrab(dialog, backup_note: str = "") -> bool:
 
 def on_smallcrab_clicked(dialog) -> None:
     """Warn about the config rewrite, then run smallcrab in a terminal."""
-    proceed, backup_note = _confirm_slssteam_backup(dialog)
+    proceed, backup_note = _confirm_slssteam_backup(dialog, installer="smallcrab")
     if not proceed:
         return
     if not _confirm_smallcrab(dialog, backup_note):
