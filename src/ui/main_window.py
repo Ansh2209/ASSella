@@ -1510,39 +1510,8 @@ class MainWindow(QMainWindow):
 
     def check_steam_updates_blocked(self) -> bool:
         """Check if steam updates are blocked via steam.cfg."""
-        from pathlib import Path
-        possible_paths = [
-            Path.home() / ".steam/steam/steam.cfg",
-            Path.home() / ".steam/root/steam.cfg",
-            Path.home() / ".local/share/Steam/steam.cfg",
-            Path.home() / ".steam/steam.cfg",
-        ]
-        target_path = None
-        for p in possible_paths:
-            if p.exists():
-                target_path = p
-                break
-        if not target_path:
-            return False
-        try:
-            lines = target_path.read_text().splitlines()
-            inhibit = False
-            force_disable = False
-            for line in lines:
-                # strip comments
-                line = line.split('#')[0].split(';')[0].strip()
-                if '=' in line:
-                    k, v = line.split('=', 1)
-                    k = k.strip().lower()
-                    v = v.strip().lower()
-                    if k == "bootstrapperinhibitall" and v in ("enable", "enabled", "true", "1"):
-                        inhibit = True
-                    if k == "bootstrapperforceselfupdate" and v in ("disable", "disabled", "false", "0"):
-                        force_disable = True
-            return inhibit or force_disable
-        except Exception as e:
-            logger.error(f"Error reading steam.cfg: {e}")
-            return False
+        from utils.steam_updates import are_steam_updates_blocked
+        return are_steam_updates_blocked()
 
     def _get_status_style(self, state: str) -> str:
         """

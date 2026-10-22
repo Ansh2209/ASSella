@@ -185,7 +185,10 @@ jobs:
                        test_window_style \
                        test_top_bar_search \
                        test_luatools_gate \
-                       test_language_depots; do
+                       test_language_depots \
+                       test_depots_tab_state \
+                       test_update_checker \
+                       test_steam_updates; do
             echo "::group::$suite"
             QT_QPA_PLATFORM=offscreen XDG_RUNTIME_DIR=/tmp \
               python -u "scripts/$suite.py"
