@@ -105,5 +105,5 @@ QT_QPA_PLATFORM=offscreen /path/to/venv313/bin/python scripts/smoke_import_check
 ## Optional runtime components
 
 Large binaries (Goldberg, Steamless, SLScheevo) are **not** Python dependencies
-and are not in this file. They are downloaded on demand from R2. See
-`cloud/README.md`.
+and are not in this file. They are downloaded on demand from R2. See the
+[Optional Components Guide](/optional-components).

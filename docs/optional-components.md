@@ -24,7 +24,5 @@ download button instead.
 Installs are verified against a SHA-256 from `components_manifest.json`. A
 corrupt or interrupted download never replaces a working install.
 
-## For maintainers
-
-The procedure for updating, packaging and publishing these components lives in
-[`cloud/README.md`](https://github.com/niwia/ASSella/blob/beta/cloud/README.md).
+## Architecture
+The application downloads optional components on demand from Cloudflare R2, verifying their integrity via SHA-256 hashes against `components_manifest.json`.
